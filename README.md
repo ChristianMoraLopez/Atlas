@@ -72,11 +72,13 @@ If Ollama or the selected model is unavailable, Atlas displays setup instruction
 
 ## Excel safety and reruns
 
-For an existing workbook, Atlas requires a worksheet whose name matches the profile’s full name or Login ID. It maps columns by normalized header name, writes only the allowed columns on that sheet, and leaves other worksheets untouched. It prefers an unused preformatted row, which lets existing template formulas remain in place.
+Atlas supports the real `Circana Interactions Tracker V 1.0` layout: the `Data` table starts on row 2, date headers include their `(mm/dd/yyyy hh:mm)` suffixes, and `Incident Number` includes its `If applies` suffix. For an existing workbook, Atlas requires a worksheet whose name matches the profile’s full name or Login ID. It maps these labels safely even when they contain line breaks, writes only columns A–O on that sheet, and never writes the orange formula columns P–U.
+
+Existing `.xlsm` / `.xlsx` files are updated by replacing only the selected worksheet XML inside the Office package. All other package entries are copied byte-for-byte, including `vbaProject.bin`, external links, other worksheets, hidden lookup data, and workbook metadata. Within the selected sheet, existing cell styles, the `Data` table, formulas, validations, and conditional formatting remain in place. Atlas fills the first unused preformatted row inside the table and stops with a clear error if the table has no capacity; it never appends a malformed row beyond the template.
 
 Calendar and mail rows are keyed as `graph:calendar:<id>` and `graph:mail:<id>`. A second export updates the matching row. App-created manual rows use `manual:<uuid>` and are skipped—not modified—if that exact ID already exists. Rows without Atlas source IDs are treated as user-owned and are never updated or deleted.
 
-The writer first creates a complete temporary workbook and a safety copy before replacing an existing file. Close a workbook in Excel before exporting so Windows does not lock it.
+The writer first creates a complete temporary package and a safety copy before replacing an existing file. The hidden `_source_id` helper is placed immediately after the template columns and is not added to the visible `Data` table. Close a workbook in Excel before exporting so Windows does not lock it.
 
 ## Windows releases
 

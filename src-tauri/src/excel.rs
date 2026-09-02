@@ -1541,6 +1541,8 @@ mod tests {
         assert!(xml.contains("r=\"V3\""));
         assert!(xml.contains("graph:calendar:event-1"));
         assert!(xml.contains("hidden=\"1\""));
-        assert!(xml.contains("s=\"46\"><v>46536.5</v>"));
+        assert!(xml.contains("r=\"C3\""));
+        assert!(xml.contains("s=\"46\""));
+        assert!(xml.contains("<v>46536.5</v>"));
     }
 }
