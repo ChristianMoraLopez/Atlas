@@ -4,10 +4,14 @@ Atlas creates Circana interaction trackers from real Microsoft 365 activity.
 
 ## First launch
 
-1. Run `atlas-tracker.exe`.
+1. Extract the zip and run `Atlas.exe`. No installer is required.
 2. Sign in with your own Microsoft 365 account in the system browser.
 3. Enter your Corp ID, name, Area, Team Lead, and Circana Manager.
 4. Choose a workday, extract, review the rows, and export.
+
+Atlas uses Microsoft WebView2 for its interface. WebView2 is normally already installed on supported Windows 10 and Windows 11 systems; if Windows reports that it is missing, install the Evergreen WebView2 Runtime from Microsoft.
+
+For the supplied Circana workbook, choose **Use Circana template**. Your Atlas profile name must match the worksheet name (for example, `Sebastian Galindo`) so the app cannot write to another person's tab.
 
 For optional Teams chat suggestions, install [Ollama](https://ollama.com/download/windows) and run `ollama pull qwen2.5:3b`. Teams content is sent only to `127.0.0.1:11434`; no cloud LLM client is included.
 

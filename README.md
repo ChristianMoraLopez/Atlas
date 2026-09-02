@@ -82,7 +82,7 @@ The writer first creates a complete temporary package and a safety copy before r
 
 ## Windows releases
 
-Pushing a tag that starts with `v` runs [`.github/workflows/release.yml`](.github/workflows/release.yml). GitHub Actions builds the NSIS installer with `tauri-apps/tauri-action`, creates a GitHub Release, and adds a portable zip containing the compiled executable and setup instructions.
+Pushing a tag that starts with `v` runs [`.github/workflows/release.yml`](.github/workflows/release.yml). GitHub Actions uses `tauri-apps/tauri-action` to compile the Windows executable without an installer, then creates a GitHub Release containing one portable zip with `Atlas.exe` and setup instructions. The release job stops before compilation unless the `CIRCANA_AZURE_CLIENT_ID` and `CIRCANA_AZURE_TENANT_ID` repository variables are configured, preventing a binary that cannot sign in from being published.
 
 ```powershell
 git tag v0.1.0

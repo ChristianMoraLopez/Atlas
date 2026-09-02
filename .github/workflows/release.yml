@@ -15,6 +15,15 @@ jobs:
       CIRCANA_AZURE_TENANT_ID: ${{ vars.CIRCANA_AZURE_TENANT_ID }}
     steps:
       - uses: actions/checkout@v7
+      - name: Validate Entra build configuration
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:CIRCANA_AZURE_CLIENT_ID)) {
+            throw "Set the CIRCANA_AZURE_CLIENT_ID repository variable before publishing a release."
+          }
+          if ([string]::IsNullOrWhiteSpace($env:CIRCANA_AZURE_TENANT_ID)) {
+            throw "Set the CIRCANA_AZURE_TENANT_ID repository variable before publishing a release."
+          }
       - uses: actions/setup-node@v6
         with:
           node-version: 24
@@ -25,16 +34,10 @@ jobs:
           workspaces: ./src-tauri -> target
           cache-on-failure: true
       - run: npm ci
-      - name: Build installer and create GitHub Release
+      - name: Build portable Windows executable
         uses: tauri-apps/tauri-action@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: Atlas ${{ github.ref_name }}
-          releaseBody: Download the Windows installer or the portable zip below.
-          releaseDraft: false
-          prerelease: false
+          args: --no-bundle
       - name: Package portable executable
         shell: pwsh
         run: |
@@ -42,7 +45,10 @@ jobs:
           Copy-Item -LiteralPath src-tauri/target/release/atlas-tracker.exe -Destination portable/Atlas.exe
           Copy-Item -LiteralPath docs/PORTABLE_README.md -Destination portable/README.md
           Compress-Archive -Path portable/* -DestinationPath "Atlas_${{ github.ref_name }}_portable_windows_x64.zip"
-      - name: Attach portable zip
+      - name: Publish portable GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: Atlas_${{ github.ref_name }}_portable_windows_x64.zip
+          name: Atlas ${{ github.ref_name }}
+          body: Download the portable Windows zip, extract it, and run Atlas.exe. No installer is required.
+          fail_on_unmatched_files: true
