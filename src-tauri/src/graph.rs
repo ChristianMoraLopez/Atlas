@@ -304,7 +304,7 @@ async fn calendar(
             interaction_type: "Meeting".into(),
             reception_date_time: event_start.to_rfc3339(),
             interaction_date_time: event_start.to_rfc3339(),
-            resolution_date_time: Some(event_end.to_rfc3339()),
+            resolution_date_time: resolved.then(|| event_end.to_rfc3339()),
             client_type,
             end_client,
             status: if resolved { "Resolved" } else { "In Progress" }.into(),

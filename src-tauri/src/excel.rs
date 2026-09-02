@@ -160,6 +160,9 @@ fn ensure_source_column(
     headers: &mut HashMap<String, u32>,
 ) -> u32 {
     if let Some(col) = headers.get("sourceid").copied() {
+        sheet
+            .get_column_dimension_by_number_mut(&col)
+            .set_hidden(true);
         return col;
     }
     let col = sheet.get_highest_column() + 1;

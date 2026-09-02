@@ -23,6 +23,7 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: ./src-tauri -> target
+          cache-on-failure: true
       - run: npm ci
       - name: Build installer and create GitHub Release
         uses: tauri-apps/tauri-action@v1
