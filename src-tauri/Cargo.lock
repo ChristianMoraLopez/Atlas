@@ -245,6 +245,7 @@ dependencies = [
  "keyring",
  "oauth2",
  "open",
+ "quick-xml 0.37.5",
  "regex",
  "reqwest 0.12.28",
  "serde",
@@ -260,6 +261,7 @@ dependencies = [
  "umya-spreadsheet",
  "url",
  "uuid",
+ "zip",
 ]
 
 [[package]]

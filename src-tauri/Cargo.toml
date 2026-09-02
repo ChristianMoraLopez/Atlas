@@ -22,6 +22,8 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 oauth2 = { version = "5", default-features = false, features = ["reqwest", "rustls-tls"] }
 keyring = { version = "3", features = ["windows-native"] }
 umya-spreadsheet = "2.3"
+quick-xml = "0.37"
+zip = { version = "2.4", default-features = false, features = ["deflate"] }
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
 uuid = { version = "1", features = ["v4", "serde"] }
