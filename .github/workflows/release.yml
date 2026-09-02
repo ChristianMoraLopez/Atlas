@@ -1,0 +1,47 @@
+name: Publish Windows release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    env:
+      CIRCANA_AZURE_CLIENT_ID: ${{ vars.CIRCANA_AZURE_CLIENT_ID }}
+      CIRCANA_AZURE_TENANT_ID: ${{ vars.CIRCANA_AZURE_TENANT_ID }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+      - run: npm ci
+      - name: Build installer and create GitHub Release
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Atlas ${{ github.ref_name }}
+          releaseBody: Download the Windows installer or the portable zip below.
+          releaseDraft: false
+          prerelease: false
+      - name: Package portable executable
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path portable -Force | Out-Null
+          Copy-Item -LiteralPath src-tauri/target/release/atlas-tracker.exe -Destination portable/Atlas.exe
+          Copy-Item -LiteralPath docs/PORTABLE_README.md -Destination portable/README.md
+          Compress-Archive -Path portable/* -DestinationPath "Atlas_${{ github.ref_name }}_portable_windows_x64.zip"
+      - name: Attach portable zip
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Atlas_${{ github.ref_name }}_portable_windows_x64.zip

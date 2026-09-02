@@ -1,0 +1,32 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Atlas - Circana Tracker",
+  "version": "0.1.0",
+  "identifier": "com.capgemini.atlas-tracker",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [{
+      "title": "Atlas — Circana Interactions Tracker",
+      "width": 1440,
+      "height": 900,
+      "minWidth": 1100,
+      "minHeight": 720,
+      "center": true,
+      "resizable": true
+    }],
+    "security": { "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost data:; style-src 'self' 'unsafe-inline'; script-src 'self'" }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "shortDescription": "Build the Circana tracker from real Microsoft 365 interactions.",
+    "longDescription": "Atlas extracts real calendar, mail, and user-reviewed Teams interactions into the Circana Excel tracker without inventing filler data.",
+    "windows": { "nsis": { "installerIcon": "icons/icon.ico" } },
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"]
+  }
+}
