@@ -82,7 +82,9 @@ The writer first creates a complete temporary package and a safety copy before r
 
 ## Windows releases
 
-Pushing a tag that starts with `v` runs [`.github/workflows/release.yml`](.github/workflows/release.yml). GitHub Actions uses `tauri-apps/tauri-action` to compile the Windows executable without an installer, then creates a GitHub Release containing one portable zip with `Atlas.exe` and setup instructions. The release job stops before compilation unless the `CIRCANA_AZURE_CLIENT_ID` and `CIRCANA_AZURE_TENANT_ID` repository variables are configured, preventing a binary that cannot sign in from being published.
+Every push to `main` runs **Build Atlas Windows x64** from [`.github/workflows/ci.yml`](.github/workflows/ci.yml). After the tests pass, GitHub Actions compiles the portable executable and adds a downloadable `Atlas-0.1.0-Windows-x64` artifact to the workflow run. The artifact contains `Atlas.exe`, `README.md`, `SHA256SUMS.txt`, and the ready-to-extract `Atlas-0.1.0-Windows-x64.zip`; it is retained for seven days, matching the Telescope build workflow.
+
+Pushing a tag that starts with `v` runs [`.github/workflows/release.yml`](.github/workflows/release.yml). It creates a permanent GitHub Release containing one portable zip with `Atlas.exe` and setup instructions. The release job stops before compilation unless the `CIRCANA_AZURE_CLIENT_ID` and `CIRCANA_AZURE_TENANT_ID` repository variables are configured, preventing a permanent release that cannot sign in from being published.
 
 ```powershell
 git tag v0.1.0

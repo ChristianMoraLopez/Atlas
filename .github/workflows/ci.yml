@@ -1,4 +1,4 @@
-name: Windows CI
+name: Build Atlas Windows x64
 
 on:
   push:
@@ -6,9 +6,18 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: atlas-windows-x64-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  verify:
+  build:
+    name: Portable Windows x64
     runs-on: windows-latest
+    timeout-minutes: 30
     env:
       CIRCANA_AZURE_CLIENT_ID: ${{ vars.CIRCANA_AZURE_CLIENT_ID }}
       CIRCANA_AZURE_TENANT_ID: ${{ vars.CIRCANA_AZURE_TENANT_ID }}
@@ -26,3 +35,29 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: cargo test --manifest-path src-tauri/Cargo.toml
+      - name: Build portable Windows executable
+        uses: tauri-apps/tauri-action@v1
+        with:
+          args: --no-bundle
+      - name: Package and verify portable ZIP
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path release-staging -Force | Out-Null
+          Copy-Item -LiteralPath src-tauri/target/release/atlas-tracker.exe -Destination release-staging/Atlas.exe
+          Copy-Item -LiteralPath docs/PORTABLE_README.md -Destination release-staging/README.md
+          Compress-Archive -LiteralPath release-staging/Atlas.exe,release-staging/README.md -DestinationPath release-staging/Atlas-0.1.0-Windows-x64.zip
+          foreach ($requiredFile in @("release-staging/Atlas.exe", "release-staging/README.md", "release-staging/Atlas-0.1.0-Windows-x64.zip")) {
+            if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) {
+              throw "Missing packaged file: $requiredFile"
+            }
+          }
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath release-staging/Atlas-0.1.0-Windows-x64.zip).Hash
+          "$hash *Atlas-0.1.0-Windows-x64.zip" | Set-Content -Encoding ascii -LiteralPath release-staging/SHA256SUMS.txt
+      - name: Upload Atlas portable ZIP
+        uses: actions/upload-artifact@v6
+        with:
+          name: Atlas-0.1.0-Windows-x64
+          path: release-staging/
+          if-no-files-found: error
+          compression-level: 9
+          retention-days: 7
