@@ -18,6 +18,7 @@ impl Serialize for AppError {
     where
         S: serde::Serializer,
     {
+        crate::diagnostics::error("command", &self.to_string());
         serializer.serialize_str(&self.to_string())
     }
 }

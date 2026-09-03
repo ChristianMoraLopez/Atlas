@@ -24,6 +24,27 @@ pub struct MicrosoftConfig {
     pub tenant_id: String,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TrackerDestinationKind {
+    LocalExisting,
+    LocalNew,
+    SharePoint,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TrackerDestination {
+    pub kind: TrackerDestinationKind,
+    pub value: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct CachedAccessToken {
+    pub value: String,
+    pub expires_at: i64,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppStatus {
@@ -37,9 +58,13 @@ pub struct AppStatus {
     pub ollama_running: bool,
     pub ollama_model_available: bool,
     pub ollama_model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub destination: Option<TrackerDestination>,
+    pub auto_sync: bool,
+    pub log_path: String,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
     pub profile: Option<UserProfile>,
@@ -48,10 +73,31 @@ pub struct Settings {
     pub microsoft_config: Option<MicrosoftConfig>,
     #[serde(default = "default_model")]
     pub ollama_model: String,
+    #[serde(default)]
+    pub destination: Option<TrackerDestination>,
+    #[serde(default = "default_auto_sync")]
+    pub auto_sync: bool,
 }
 
 fn default_model() -> String {
     "qwen2.5:3b".into()
+}
+
+fn default_auto_sync() -> bool {
+    true
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            profile: None,
+            account: None,
+            microsoft_config: None,
+            ollama_model: default_model(),
+            destination: None,
+            auto_sync: default_auto_sync(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

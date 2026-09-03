@@ -1,6 +1,6 @@
 [package]
 name = "atlas-tracker"
-version = "0.1.1"
+version = "0.2.0"
 description = "Circana Interactions Tracker"
 authors = ["Christian Mora Lopez"]
 edition = "2021"
@@ -18,8 +18,8 @@ tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-oauth2 = { version = "5", default-features = false, features = ["reqwest", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls", "system-proxy"] }
+oauth2 = { version = "5", default-features = false, features = ["reqwest", "native-tls"] }
 keyring = { version = "3", features = ["windows-native"] }
 umya-spreadsheet = "2.3"
 quick-xml = "0.37"
@@ -28,13 +28,14 @@ chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
 uuid = { version = "1", features = ["v4", "serde"] }
 url = "2"
-open = "5"
+open = { version = "5", features = ["shellexecute-on-windows"] }
 thiserror = "2"
 tokio = { version = "1", features = ["time", "rt-multi-thread"] }
 regex = "1"
 html-escape = "0.2"
 sha2 = "0.10"
 hex = "0.4"
+base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3"

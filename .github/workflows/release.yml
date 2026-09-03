@@ -25,6 +25,8 @@ jobs:
           workspaces: ./src-tauri -> target
           cache-on-failure: true
       - run: npm ci
+      - run: npm run build
+      - run: cargo test --manifest-path src-tauri/Cargo.toml
       - name: Build portable Windows executable
         uses: tauri-apps/tauri-action@v1
         with:

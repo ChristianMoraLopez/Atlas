@@ -1,20 +1,22 @@
 mod auth;
+mod diagnostics;
 mod error;
 mod excel;
 mod graph;
 mod models;
 mod ollama;
+mod sharepoint;
 mod state;
 
 use crate::{
     error::{AppError, Result},
     models::{
         AppStatus, ExportResult, ExtractionResult, Interaction, MicrosoftConfig, SourceKind,
-        UserProfile,
+        TrackerDestination, TrackerDestinationKind, UserProfile,
     },
     state::AppState,
 };
-use std::collections::HashSet;
+use std::{collections::HashSet, path::Path};
 use tauri::Manager;
 
 async fn build_status(state: &AppState) -> Result<AppStatus> {
@@ -22,16 +24,26 @@ async fn build_status(state: &AppState) -> Result<AppStatus> {
     let microsoft_config = state.microsoft_config()?;
     let (ollama_running, ollama_model_available) =
         ollama::status(&state.http, &settings.ollama_model).await;
+    let token_available = match auth::has_token() {
+        Ok(value) => value,
+        Err(error) => {
+            diagnostics::error("auth/status", &error.to_string());
+            false
+        }
+    };
     Ok(AppStatus {
         configured: !microsoft_config.client_id.is_empty()
             && !microsoft_config.tenant_id.is_empty(),
-        signed_in: auth::has_token() && settings.account.is_some(),
+        signed_in: token_available && settings.account.is_some(),
         microsoft_config,
         account: settings.account,
         profile: settings.profile,
         ollama_running,
         ollama_model_available,
         ollama_model: settings.ollama_model,
+        destination: settings.destination,
+        auto_sync: settings.auto_sync,
+        log_path: diagnostics::path(),
     })
 }
 
@@ -42,7 +54,22 @@ async fn get_app_status(state: tauri::State<'_, AppState>) -> Result<AppStatus> 
 
 #[tauri::command]
 async fn sign_in(state: tauri::State<'_, AppState>) -> Result<AppStatus> {
-    let account = auth::sign_in(&state).await?;
+    let include_files = state
+        .read_settings()?
+        .destination
+        .is_some_and(|destination| destination.kind == TrackerDestinationKind::SharePoint);
+    let account = auth::sign_in(&state, include_files, false).await?;
+    state.update_settings(|settings| settings.account = Some(account))?;
+    build_status(&state).await
+}
+
+#[tauri::command]
+async fn connect_teams(state: tauri::State<'_, AppState>) -> Result<AppStatus> {
+    let include_files = state
+        .read_settings()?
+        .destination
+        .is_some_and(|destination| destination.kind == TrackerDestinationKind::SharePoint);
+    let account = auth::sign_in(&state, include_files, true).await?;
     state.update_settings(|settings| settings.account = Some(account))?;
     build_status(&state).await
 }
@@ -58,6 +85,11 @@ fn normalize_microsoft_config(client_id: String, tenant_id: String) -> Result<Mi
     let tenant_id = uuid::Uuid::parse_str(tenant_id).map_err(|_| {
         AppError::Message("Directory (tenant) ID must be a valid GUID from Microsoft Entra.".into())
     })?;
+    if client_id.is_nil() || tenant_id.is_nil() {
+        return Err(AppError::Message(
+            "Replace the all-zero placeholders with the real Application ID and Tenant ID from Microsoft Entra.".into(),
+        ));
+    }
     Ok(MicrosoftConfig {
         client_id: client_id.to_string(),
         tenant_id: tenant_id.to_string(),
@@ -73,7 +105,7 @@ async fn save_microsoft_config(
     let config = normalize_microsoft_config(client_id, tenant_id)?;
     let changed = state.microsoft_config()? != config;
     if changed {
-        auth::clear_token()?;
+        auth::clear_token(&state)?;
     }
     state.update_settings(|settings| {
         settings.microsoft_config = Some(config);
@@ -93,7 +125,7 @@ async fn save_microsoft_config(
 
 #[tauri::command]
 fn sign_out(state: tauri::State<'_, AppState>) -> Result<()> {
-    auth::clear_token()?;
+    auth::clear_token(&state)?;
     state.update_settings(|settings| settings.account = None)?;
     state
         .verified_sources
@@ -135,6 +167,97 @@ fn set_ollama_model(state: tauri::State<'_, AppState>, model: String) -> Result<
         ));
     }
     state.update_settings(|settings| settings.ollama_model = model.to_string())
+}
+
+fn normalize_local_destination(value: String, existing: bool) -> Result<TrackerDestination> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(AppError::Message("Choose an Excel workbook first.".into()));
+    }
+    let path = Path::new(value);
+    if !path.is_absolute() {
+        return Err(AppError::Message(
+            "Choose an absolute path for the Excel workbook.".into(),
+        ));
+    }
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if existing && !matches!(extension.as_str(), "xlsx" | "xlsm") {
+        return Err(AppError::Message(
+            "An existing tracker must be an .xlsx or .xlsm workbook.".into(),
+        ));
+    }
+    if !existing && extension != "xlsx" {
+        return Err(AppError::Message(
+            "A new tracker must use the .xlsx extension.".into(),
+        ));
+    }
+    if existing && !path.is_file() {
+        return Err(AppError::Message(
+            "The selected existing workbook no longer exists.".into(),
+        ));
+    }
+    let parent = path.parent().ok_or_else(|| {
+        AppError::Message("The workbook destination has no parent folder.".into())
+    })?;
+    if !parent.is_dir() {
+        return Err(AppError::Message(
+            "The workbook destination folder does not exist.".into(),
+        ));
+    }
+    Ok(TrackerDestination {
+        kind: if existing {
+            TrackerDestinationKind::LocalExisting
+        } else {
+            TrackerDestinationKind::LocalNew
+        },
+        value: value.to_string(),
+    })
+}
+
+#[tauri::command]
+async fn save_tracker_destination(
+    state: tauri::State<'_, AppState>,
+    destination: TrackerDestination,
+    auto_sync: bool,
+) -> Result<AppStatus> {
+    let destination = match destination.kind {
+        TrackerDestinationKind::LocalExisting => {
+            normalize_local_destination(destination.value, true)?
+        }
+        TrackerDestinationKind::LocalNew => normalize_local_destination(destination.value, false)?,
+        TrackerDestinationKind::SharePoint => {
+            let value = sharepoint::normalize_url(&destination.value)?;
+            let account = auth::sign_in(&state, true, false).await?;
+            state.update_settings(|settings| settings.account = Some(account))?;
+            let token = auth::access_token(&state).await?;
+            sharepoint::validate(&state, &token, &value).await?;
+            TrackerDestination {
+                kind: TrackerDestinationKind::SharePoint,
+                value,
+            }
+        }
+    };
+    diagnostics::info(
+        "settings",
+        match &destination.kind {
+            TrackerDestinationKind::SharePoint => "Saved SharePoint tracker destination",
+            _ => "Saved local tracker destination",
+        },
+    );
+    state.update_settings(|settings| {
+        settings.destination = Some(destination);
+        settings.auto_sync = auto_sync;
+    })?;
+    build_status(&state).await
+}
+
+#[tauri::command]
+fn log_frontend_error(context: String, message: String) {
+    diagnostics::error(&format!("frontend/{context}"), &message);
 }
 
 #[tauri::command]
@@ -221,31 +344,58 @@ fn validate_provenance(state: &AppState, interactions: &[Interaction]) -> Result
 }
 
 #[tauri::command]
-async fn export_tracker(
+async fn export_configured_tracker(
     state: tauri::State<'_, AppState>,
-    path: String,
-    existing: bool,
     date: String,
     profile: UserProfile,
     interactions: Vec<Interaction>,
 ) -> Result<ExportResult> {
     chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d")
         .map_err(|_| AppError::Message("Choose a valid export date.".into()))?;
-    let saved = state
-        .read_settings()?
+    let settings = state.read_settings()?;
+    let saved = settings
         .profile
         .ok_or_else(|| AppError::Message("Complete your profile before exporting.".into()))?;
+    let destination = settings.destination.ok_or_else(|| {
+        AppError::Message("Configure an Excel or SharePoint tracker before syncing.".into())
+    })?;
     if saved != profile {
         return Err(AppError::Message(
             "Your profile changed before export. Refresh the workspace and try again.".into(),
         ));
     }
     validate_provenance(&state, &interactions)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        excel::export(&path, existing, &saved, &interactions)
-    })
-    .await
-    .map_err(|e| AppError::Message(format!("Excel export task failed: {e}")))?
+    let result = match destination.kind {
+        TrackerDestinationKind::LocalExisting | TrackerDestinationKind::LocalNew => {
+            let existing = destination.kind == TrackerDestinationKind::LocalExisting;
+            let path = destination.value.clone();
+            let result = tauri::async_runtime::spawn_blocking(move || {
+                excel::export(&path, existing, &saved, &interactions)
+            })
+            .await
+            .map_err(|e| AppError::Message(format!("Excel export task failed: {e}")))??;
+            if !existing {
+                state.update_settings(|settings| {
+                    if let Some(saved_destination) = settings.destination.as_mut() {
+                        saved_destination.kind = TrackerDestinationKind::LocalExisting;
+                    }
+                })?;
+            }
+            result
+        }
+        TrackerDestinationKind::SharePoint => {
+            let token = auth::access_token(&state).await?;
+            sharepoint::export(&state, &token, &destination.value, &saved, &interactions).await?
+        }
+    };
+    diagnostics::info(
+        "export",
+        &format!(
+            "Tracker sync completed: {} inserted, {} updated, {} skipped",
+            result.inserted, result.updated, result.skipped
+        ),
+    );
+    Ok(result)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -258,18 +408,24 @@ pub fn run() {
                 .path()
                 .app_config_dir()
                 .map_err(|e| Box::<dyn std::error::Error>::from(e))?;
+            diagnostics::init(&config_dir).map_err(|e| Box::<dyn std::error::Error>::from(e))?;
+            diagnostics::install_panic_hook();
             app.manage(AppState::new(config_dir)?);
+            diagnostics::info("startup", "Atlas application state loaded");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_app_status,
             save_microsoft_config,
             sign_in,
+            connect_teams,
             sign_out,
             save_profile,
             set_ollama_model,
+            save_tracker_destination,
+            log_frontend_error,
             extract_interactions,
-            export_tracker
+            export_configured_tracker
         ])
         .run(tauri::generate_context!())
         .expect("error while running Atlas");
@@ -293,5 +449,10 @@ mod configuration_tests {
     #[test]
     fn rejects_invalid_microsoft_identifiers() {
         assert!(normalize_microsoft_config("not-an-id".into(), "also-not-an-id".into()).is_err());
+        assert!(normalize_microsoft_config(
+            "00000000-0000-0000-0000-000000000000".into(),
+            "00000000-0000-0000-0000-000000000000".into()
+        )
+        .is_err());
     }
 }

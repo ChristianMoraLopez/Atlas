@@ -1,17 +1,30 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AppStatus, ExportResult, ExtractionResult, Interaction, MicrosoftConfig, UserProfile } from "./types";
+import type { AppStatus, ExportResult, ExtractionResult, Interaction, MicrosoftConfig, TrackerDestination, UserProfile } from "./types";
+
+async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  try {
+    return await invoke<T>(command, args);
+  } catch (error) {
+    void invoke("log_frontend_error", { context: command, message: String(error) }).catch(() => undefined);
+    throw error;
+  }
+}
 
 export const api = {
-  status: () => invoke<AppStatus>("get_app_status"),
-  saveMicrosoftConfig: (config: MicrosoftConfig) => invoke<AppStatus>("save_microsoft_config", { clientId: config.clientId, tenantId: config.tenantId }),
-  signIn: () => invoke<AppStatus>("sign_in"),
-  signOut: () => invoke<void>("sign_out"),
-  saveProfile: (profile: UserProfile) => invoke<void>("save_profile", { profile }),
-  setOllamaModel: (model: string) => invoke<void>("set_ollama_model", { model }),
+  status: () => call<AppStatus>("get_app_status"),
+  saveMicrosoftConfig: (config: MicrosoftConfig) => call<AppStatus>("save_microsoft_config", { clientId: config.clientId, tenantId: config.tenantId }),
+  signIn: () => call<AppStatus>("sign_in"),
+  connectTeams: () => call<AppStatus>("connect_teams"),
+  signOut: () => call<void>("sign_out"),
+  saveProfile: (profile: UserProfile) => call<void>("save_profile", { profile }),
+  setOllamaModel: (model: string) => call<void>("set_ollama_model", { model }),
+  saveDestination: (destination: TrackerDestination, autoSync: boolean) =>
+    call<AppStatus>("save_tracker_destination", { destination, autoSync }),
   extract: (date: string, includeEmail: boolean, includeTeams: boolean, timezone: string) =>
-    invoke<ExtractionResult>("extract_interactions", { date, includeEmail, includeTeams, timezone }),
-  export: (path: string, existing: boolean, date: string, profile: UserProfile, interactions: Interaction[]) =>
-    invoke<ExportResult>("export_tracker", { path, existing, date, profile, interactions })
+    call<ExtractionResult>("extract_interactions", { date, includeEmail, includeTeams, timezone }),
+  export: (date: string, profile: UserProfile, interactions: Interaction[]) =>
+    call<ExportResult>("export_configured_tracker", { date, profile, interactions }),
+  logError: (context: string, message: string) => invoke<void>("log_frontend_error", { context, message })
 };
 
 export function localDate(): string {

@@ -18,6 +18,13 @@ export interface MicrosoftConfig {
   tenantId: string;
 }
 
+export type TrackerDestinationKind = "local_existing" | "local_new" | "share_point";
+
+export interface TrackerDestination {
+  kind: TrackerDestinationKind;
+  value: string;
+}
+
 export interface AppStatus {
   configured: boolean;
   signedIn: boolean;
@@ -27,6 +34,9 @@ export interface AppStatus {
   ollamaRunning: boolean;
   ollamaModelAvailable: boolean;
   ollamaModel: string;
+  destination?: TrackerDestination;
+  autoSync: boolean;
+  logPath: string;
 }
 
 export interface Interaction {

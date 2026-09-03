@@ -1,8 +1,9 @@
 use crate::{
+    diagnostics,
     error::{Context, Result},
-    models::{Interaction, MicrosoftConfig, Settings},
+    models::{CachedAccessToken, Interaction, MicrosoftConfig, Settings},
 };
-use std::{collections::HashMap, fs, path::PathBuf, sync::Mutex};
+use std::{collections::HashMap, fs, path::PathBuf, sync::Mutex, time::Duration};
 
 pub struct AppState {
     build_microsoft_config: MicrosoftConfig,
@@ -10,6 +11,7 @@ pub struct AppState {
     pub settings_path: PathBuf,
     pub settings: Mutex<Settings>,
     pub verified_sources: Mutex<HashMap<String, Interaction>>,
+    pub cached_access_token: Mutex<Option<CachedAccessToken>>,
 }
 
 impl AppState {
@@ -18,15 +20,31 @@ impl AppState {
             .context("Unable to create the application settings directory")?;
         let settings_path = config_dir.join("settings.json");
         let settings = if settings_path.exists() {
-            serde_json::from_slice(
-                &fs::read(&settings_path).context("Unable to read local settings")?,
-            )
-            .context("Local settings are invalid")?
+            let bytes = fs::read(&settings_path).context("Unable to read local settings")?;
+            match serde_json::from_slice(&bytes) {
+                Ok(settings) => settings,
+                Err(error) => {
+                    let backup = settings_path
+                        .with_file_name(format!("settings.invalid-{}.json", uuid::Uuid::new_v4()));
+                    let recovery = fs::rename(&settings_path, &backup)
+                        .map(|_| format!(" A backup was saved at {}.", backup.display()))
+                        .unwrap_or_else(|move_error| {
+                            format!(" The invalid file could not be moved: {move_error}.")
+                        });
+                    diagnostics::error(
+                        "settings",
+                        &format!("Invalid settings were reset: {error}.{recovery}"),
+                    );
+                    Settings::default()
+                }
+            }
         } else {
             Settings::default()
         };
         let http = reqwest::Client::builder()
-            .user_agent("Atlas-Circana-Tracker/0.1")
+            .user_agent("Atlas-Circana-Tracker/0.2")
+            .connect_timeout(Duration::from_secs(15))
+            .timeout(Duration::from_secs(60))
             .build()?;
         Ok(Self {
             build_microsoft_config: MicrosoftConfig {
@@ -43,6 +61,7 @@ impl AppState {
             settings_path,
             settings: Mutex::new(settings),
             verified_sources: Mutex::new(HashMap::new()),
+            cached_access_token: Mutex::new(None),
         })
     }
 

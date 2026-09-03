@@ -1,13 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { openPath, openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import {
-  AlertCircle, ArrowRight, Bot, CalendarDays, Check, ChevronDown, ExternalLink,
-  FilePlus2, FolderOpen, Inbox, Loader2, LogOut, Mail, PenLine, Plus, RefreshCw,
-  Save, Settings, ShieldCheck, Sparkles, Trash2, UserRound, X
+  AlertCircle, ArrowRight, Bot, CalendarDays, Check, ChevronDown, Cloud,
+  ExternalLink, FilePlus2, FileSpreadsheet, FileText, FolderOpen, HardDrive,
+  Inbox, Loader2, LogOut, Mail, PenLine, Plus, RefreshCw, Save, Settings,
+  ShieldCheck, Sparkles, Trash2, UserRound, X
 } from "lucide-react";
 import { api, fromLocalInput, localDate, toLocalInput } from "./lib";
-import type { AppStatus, ExportResult, Interaction, MicrosoftConfig, UserProfile } from "./types";
+import type { AppStatus, ExportResult, Interaction, MicrosoftConfig, TrackerDestination, TrackerDestinationKind, UserProfile } from "./types";
 
 const emptyProfile: UserProfile = {
   loginId: "", fullName: "", area: "Manufacturing", teamLead: "", circanaManager: ""
@@ -124,6 +125,47 @@ function SetupScreen({ status, onSaved }: { status: AppStatus; onSaved: (p: User
   return <main className="min-h-screen px-10 py-8"><header className="mx-auto flex max-w-6xl items-center justify-between"><Brand /><span className="chip bg-mint text-pine"><Check className="h-3 w-3" /> {status.account?.email}</span></header><div className="mx-auto grid min-h-[calc(100vh-6rem)] max-w-6xl place-items-center"><ProfileForm onSave={onSaved} /></div></main>;
 }
 
+function DestinationSetupScreen({ initial, initialAutoSync, onSave, onCancel }: { initial?: TrackerDestination; initialAutoSync: boolean; onSave: (destination: TrackerDestination, autoSync: boolean) => Promise<void>; onCancel?: () => void }) {
+  const [kind, setKind] = useState<TrackerDestinationKind>(initial?.kind ?? "local_existing");
+  const [value, setValue] = useState(initial?.value ?? "");
+  const [autoSync, setAutoSync] = useState(initialAutoSync);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const changeKind = (next: TrackerDestinationKind) => { setKind(next); setValue(next === initial?.kind ? initial.value : ""); setError(""); };
+  const chooseLocal = async () => {
+    const chosen = kind === "local_existing"
+      ? await open({ multiple: false, filters: [{ name: "Excel workbook", extensions: ["xlsx", "xlsm"] }] })
+      : await save({ defaultPath: `Tracker_${localDate()}.xlsx`, filters: [{ name: "Excel workbook", extensions: ["xlsx"] }] });
+    if (chosen) setValue(chosen as string);
+  };
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault(); setError("");
+    if (!value.trim()) return setError(kind === "share_point" ? "Paste the SharePoint workbook link." : "Choose an Excel workbook.");
+    setBusy(true);
+    try { await onSave({ kind, value: value.trim() }, autoSync); }
+    catch (failure) { setError(String(failure)); }
+    finally { setBusy(false); }
+  };
+  const options: { kind: TrackerDestinationKind; title: string; detail: string; icon: React.ReactNode }[] = [
+    { kind: "local_existing", title: "Existing Excel tracker", detail: "Keep macros, tables and formulas", icon: <HardDrive className="h-5 w-5" /> },
+    { kind: "local_new", title: "Create a new tracker", detail: "Create one compatible .xlsx file", icon: <FilePlus2 className="h-5 w-5" /> },
+    { kind: "share_point", title: "SharePoint link", detail: "Update the online .xlsx or .xlsm directly", icon: <Cloud className="h-5 w-5" /> },
+  ];
+  return <main className="mx-auto min-h-screen max-w-6xl px-10 py-10">
+    <header className="flex items-center justify-between"><Brand />{onCancel && <button className="btn-secondary" onClick={onCancel}>Cancel</button>}</header>
+    <form onSubmit={submit} className="card mx-auto mt-10 max-w-4xl p-9">
+      <p className="text-xs font-bold uppercase tracking-[.18em] text-pine">One-time tracker setup</p>
+      <h1 className="mt-2 font-display text-4xl">Where should Atlas write?</h1>
+      <p className="mt-3 max-w-2xl text-sm leading-6 text-ink/50">Choose this once. Atlas remembers the destination for manual saves and automatic calendar syncs.</p>
+      <div className="mt-8 grid grid-cols-3 gap-3">{options.map(option => <button type="button" key={option.kind} onClick={() => changeKind(option.kind)} className={`rounded-2xl border p-4 text-left ${kind === option.kind ? "border-pine/35 bg-mint/55" : "border-ink/10 bg-white"}`}><span className={`grid h-10 w-10 place-items-center rounded-xl ${kind === option.kind ? "bg-pine text-white" : "bg-cream text-ink/45"}`}>{option.icon}</span><b className="mt-4 block text-sm">{option.title}</b><span className="mt-1 block text-[11px] leading-5 text-ink/45">{option.detail}</span></button>)}</div>
+      <div className="mt-7">{kind === "share_point" ? <label><span className="label">SharePoint or OneDrive workbook link</span><textarea className="field min-h-24 resize-none font-mono text-xs" value={value} onChange={event => setValue(event.target.value)} placeholder="https://tenant-my.sharepoint.com/:x:/r/.../Tracker.xlsm?web=1" /><span className="mt-2 block text-[11px] leading-5 text-ink/45">Saving opens Microsoft once for delegated <code>Files.ReadWrite</code> consent. Atlas then downloads the workbook, preserves its macros, and uploads it only if nobody changed it meanwhile.</span></label> : <div><button type="button" className="btn-secondary" onClick={chooseLocal}><FolderOpen className="h-4 w-4" />{value ? "Change workbook" : "Choose workbook"}</button>{value && <p className="mt-3 break-all rounded-xl bg-cream p-3 text-xs text-ink/55">{value}</p>}</div>}</div>
+      <label className="mt-7 flex items-start gap-3 rounded-2xl border border-pine/15 bg-mint/35 p-4"><input type="checkbox" checked={autoSync} onChange={event => setAutoSync(event.target.checked)} className="mt-0.5 h-4 w-4 accent-pine" /><span><b className="block text-sm">Automatic calendar sync</b><span className="mt-1 block text-xs leading-5 text-ink/50">Sync today when Atlas opens, then every hour while it remains running. Manual tasks stay optional.</span></span></label>
+      {error && <div className="mt-5"><ErrorBanner message={error} /></div>}
+      <div className="mt-7 flex justify-end"><button className="btn-primary" disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}Save tracker setup</button></div>
+    </form>
+  </main>;
+}
+
 function Toggle({ checked, onChange, label, detail, icon }: { checked: boolean; onChange: (v: boolean) => void; label: string; detail: string; icon: React.ReactNode }) {
   return <button type="button" onClick={() => onChange(!checked)} className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left ${checked ? "border-pine/25 bg-mint/55" : "border-ink/10 bg-white"}`}>
     <span className={`grid h-9 w-9 place-items-center rounded-lg ${checked ? "bg-pine text-white" : "bg-cream text-ink/45"}`}>{icon}</span>
@@ -194,46 +236,48 @@ function ManualModal({ date, onClose, onAdd }: { date: string; onClose: () => vo
   </form></div>;
 }
 
-function ExportPanel({ date, profile, items, onDone }: { date: string; profile: UserProfile; items: Interaction[]; onDone: (r: ExportResult) => void }) {
-  const [mode, setMode] = useState<"new" | "existing">("existing"); const [path, setPath] = useState(""); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
-  useEffect(() => setPath(""), [mode]);
-  const choose = async () => {
-    if (mode === "existing") { const chosen = await open({ multiple: false, filters: [{ name: "Excel workbook", extensions: ["xlsx", "xlsm"] }] }); if (chosen) setPath(chosen as string); }
-    else { const chosen = await save({ defaultPath: `Tracker_${profile.loginId}_${date}.xlsx`, filters: [{ name: "Excel workbook", extensions: ["xlsx"] }] }); if (chosen) setPath(chosen); }
-  };
-  const submit = async () => { setError(""); if (!path) return setError("Choose an output file first."); if (!items.some(x => x.selected)) return setError("Select at least one real interaction to export."); setBusy(true); try { onDone(await api.export(path, mode === "existing", date, profile, items)); } catch (e) { setError(String(e)); } finally { setBusy(false); } };
-  return <aside className="card h-fit p-5"><p className="text-xs font-bold uppercase tracking-[.16em] text-pine">Export</p><h3 className="mt-2 font-display text-2xl">Ready for Excel</h3><p className="mt-2 text-xs leading-5 text-ink/45">Only selected and verified rows are written. Formula-driven orange columns remain untouched.</p>
-    <div className="mt-5 space-y-2">{(["existing", "new"] as const).map(value => <button key={value} onClick={() => setMode(value)} className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left ${mode === value ? "border-pine/30 bg-mint/50" : "border-ink/10 bg-white"}`}><span className={`grid h-8 w-8 place-items-center rounded-lg ${mode === value ? "bg-pine text-white" : "bg-cream text-ink/45"}`}>{value === "new" ? <FilePlus2 className="h-4 w-4" /> : <FolderOpen className="h-4 w-4" />}</span><span><b className="block text-xs">{value === "new" ? "Create compatible tracker" : "Use Circana template"}</b><span className="text-[10px] text-ink/40">{value === "new" ? "Start a clean .xlsx" : "Preserve tables, macros & formulas"}</span></span></button>)}</div>
-    <button className="btn-secondary mt-4 w-full" onClick={choose}><FolderOpen className="h-4 w-4" />{path ? "Change file" : "Choose file"}</button>{path && <p className="mt-2 break-all rounded-lg bg-cream/70 p-2 text-[10px] text-ink/50">{path}</p>}
-    {error && <div className="mt-4"><ErrorBanner message={error} /></div>}
-    <button className="btn-primary mt-4 w-full" onClick={submit} disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}Save tracker</button>
+function ExportPanel({ destination, autoSync, items, busy, onSave, onSync, onEdit }: { destination: TrackerDestination; autoSync: boolean; items: Interaction[]; busy: boolean; onSave: () => void; onSync: () => void; onEdit: () => void }) {
+  const isRemote = destination.kind === "share_point";
+  return <aside className="card h-fit p-5"><div className="flex items-start justify-between"><div><p className="text-xs font-bold uppercase tracking-[.16em] text-pine">Tracker</p><h3 className="mt-2 font-display text-2xl">Configured once</h3></div><span className={`grid h-9 w-9 place-items-center rounded-xl ${isRemote ? "bg-[#e7f0ff] text-[#315f9e]" : "bg-mint text-pine"}`}>{isRemote ? <Cloud className="h-4 w-4" /> : <FileSpreadsheet className="h-4 w-4" />}</span></div>
+    <p className="mt-3 text-xs leading-5 text-ink/45">Only selected, verified rows are written. Existing macros, formulas, and other worksheets are preserved.</p>
+    <p className="mt-4 line-clamp-4 break-all rounded-xl bg-cream p-3 text-[10px] leading-4 text-ink/55">{destination.value}</p>
+    <div className="mt-3 flex items-center justify-between"><span className={`chip ${autoSync ? "bg-mint text-pine" : "bg-cream text-ink/50"}`}>{autoSync ? "Auto-sync on" : "Auto-sync off"}</span><button className="text-[11px] font-bold text-pine hover:underline" onClick={onEdit}>Change setup</button></div>
+    <button className="btn-primary mt-5 w-full" onClick={onSync} disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}Sync today’s calendar</button>
+    <button className="btn-secondary mt-2 w-full" onClick={onSave} disabled={busy || !items.some(item => item.selected)}><Save className="h-4 w-4" />Save selected preview</button>
   </aside>;
 }
 
 function SuccessModal({ result, onClose }: { result: ExportResult; onClose: () => void }) {
-  return <div className="fixed inset-0 z-50 grid place-items-center bg-[#081c1a]/45 p-8 backdrop-blur-sm"><div className="card w-full max-w-lg p-8 text-center"><div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-mint text-pine"><Check className="h-7 w-7" /></div><h2 className="mt-5 font-display text-3xl">Tracker saved</h2><p className="mt-2 text-sm text-ink/50">{result.inserted} added · {result.updated} refreshed · {result.skipped} skipped</p><p className="mt-5 break-all rounded-xl bg-cream p-3 text-xs text-ink/55">{result.path}</p><div className="mt-6 grid grid-cols-2 gap-3"><button className="btn-secondary" onClick={() => revealItemInDir(result.path)}><FolderOpen className="h-4 w-4" />Open folder</button><button className="btn-primary" onClick={() => openPath(result.path)}><ExternalLink className="h-4 w-4" />Open file</button></div><button className="mt-5 text-xs font-bold text-ink/45 hover:text-ink" onClick={onClose}>Back to tracker</button></div></div>;
+  const remote = result.path.startsWith("https://");
+  return <div className="fixed inset-0 z-50 grid place-items-center bg-[#081c1a]/45 p-8 backdrop-blur-sm"><div className="card w-full max-w-lg p-8 text-center"><div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-mint text-pine"><Check className="h-7 w-7" /></div><h2 className="mt-5 font-display text-3xl">Tracker saved</h2><p className="mt-2 text-sm text-ink/50">{result.inserted} added · {result.updated} refreshed · {result.skipped} skipped</p><p className="mt-5 break-all rounded-xl bg-cream p-3 text-xs text-ink/55">{result.path}</p>{remote ? <button className="btn-primary mt-6 w-full" onClick={() => openUrl(result.path)}><ExternalLink className="h-4 w-4" />Open in SharePoint</button> : <div className="mt-6 grid grid-cols-2 gap-3"><button className="btn-secondary" onClick={() => revealItemInDir(result.path)}><FolderOpen className="h-4 w-4" />Open folder</button><button className="btn-primary" onClick={() => openPath(result.path)}><ExternalLink className="h-4 w-4" />Open file</button></div>}<button className="mt-5 text-xs font-bold text-ink/45 hover:text-ink" onClick={onClose}>Back to tracker</button></div></div>;
 }
 
-function Workspace({ status, refreshStatus, signOut, editMicrosoft }: { status: AppStatus; refreshStatus: () => Promise<void>; signOut: () => Promise<void>; editMicrosoft: () => void }) {
-  const profile = status.profile!; const [date, setDate] = useState(localDate()); const [includeEmail, setIncludeEmail] = useState(false); const [includeTeams, setIncludeTeams] = useState(false); const [items, setItems] = useState<Interaction[]>([]); const [warnings, setWarnings] = useState<string[]>([]); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [manual, setManual] = useState(false); const [editingProfile, setEditingProfile] = useState(false); const [settingsModel, setSettingsModel] = useState(status.ollamaModel); const [success, setSuccess] = useState<ExportResult>();
+function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestination }: { status: AppStatus; refreshStatus: () => Promise<void>; signOut: () => Promise<void>; editMicrosoft: () => void; editDestination: () => void }) {
+  const profile = status.profile!; const destination = status.destination!; const [date, setDate] = useState(localDate()); const [includeEmail, setIncludeEmail] = useState(false); const [includeTeams, setIncludeTeams] = useState(false); const [items, setItems] = useState<Interaction[]>([]); const [warnings, setWarnings] = useState<string[]>([]); const [busy, setBusy] = useState(false); const busyRef = useRef(false); const [error, setError] = useState(""); const [syncNotice, setSyncNotice] = useState(""); const [manual, setManual] = useState(false); const [editingProfile, setEditingProfile] = useState(false); const [settingsModel, setSettingsModel] = useState(status.ollamaModel); const [success, setSuccess] = useState<ExportResult>();
   const counts = useMemo(() => ({ all: items.length, selected: items.filter(i => i.selected).length, review: items.filter(i => !i.reviewed).length }), [items]);
-  const extract = async () => { setBusy(true); setError(""); setWarnings([]); try { const result = await api.extract(date, includeEmail, includeTeams, Intl.DateTimeFormat().resolvedOptions().timeZone); setItems(result.interactions); setWarnings(result.warnings); } catch (e) { setError(String(e)); } finally { setBusy(false); } };
+  const startWork = () => { if (busyRef.current) return false; busyRef.current = true; setBusy(true); setError(""); setSyncNotice(""); return true; };
+  const endWork = () => { busyRef.current = false; setBusy(false); };
+  const extract = async () => { if (!startWork()) return; setWarnings([]); try { const result = await api.extract(date, includeEmail, includeTeams, Intl.DateTimeFormat().resolvedOptions().timeZone); setItems(result.interactions); setWarnings(result.warnings); } catch (e) { setError(String(e)); } finally { endWork(); } };
+  const changeTeams = async (enabled: boolean) => { if (!enabled) return setIncludeTeams(false); if (!startWork()) return; try { await api.connectTeams(); setIncludeTeams(true); await refreshStatus(); } catch (e) { setError(`Teams access was not enabled: ${String(e)}`); } finally { endWork(); } };
+  const saveSelected = async () => { if (!items.some(item => item.selected)) return setError("Select at least one real interaction to save."); if (!startWork()) return; try { setSuccess(await api.export(date, profile, items)); await refreshStatus(); } catch (e) { setError(String(e)); } finally { endWork(); } };
+  const syncCalendar = async (automatic = false) => { if (!startWork()) return; const today = localDate(); setDate(today); setWarnings([]); try { const result = await api.extract(today, false, false, Intl.DateTimeFormat().resolvedOptions().timeZone); setItems(result.interactions); setWarnings(result.warnings); if (result.interactions.some(item => item.selected)) { const saved = await api.export(today, profile, result.interactions); if (automatic) setSyncNotice(`Automatic sync complete: ${saved.inserted} added, ${saved.updated} refreshed.`); else setSuccess(saved); await refreshStatus(); } else { setSyncNotice("Calendar checked: no tracker interactions were found for today."); } } catch (e) { setError(`${automatic ? "Automatic sync failed: " : ""}${String(e)}`); } finally { endWork(); } };
   const saveProfile = async (p: UserProfile) => { await api.saveProfile(p); await api.setOllamaModel(settingsModel); setEditingProfile(false); await refreshStatus(); };
+  useEffect(() => { if (!status.autoSync) return; const first = window.setTimeout(() => { void syncCalendar(true); }, 900); const interval = window.setInterval(() => { void syncCalendar(true); }, 60 * 60 * 1000); return () => { window.clearTimeout(first); window.clearInterval(interval); }; }, [status.autoSync, destination.value]);
   return <div className="min-h-screen">
-    <header className="sticky top-0 z-30 border-b border-white/70 bg-cream/80 px-8 py-4 backdrop-blur-xl"><div className="mx-auto flex max-w-[1540px] items-center justify-between"><Brand /><div className="flex items-center gap-2"><div className="mr-3 text-right"><p className="text-xs font-bold">{status.account?.displayName}</p><p className="text-[10px] text-ink/40">{status.account?.email}</p></div><button title="Microsoft connection" className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={editMicrosoft}><ShieldCheck className="h-4 w-4" /></button><button title="Profile settings" className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={() => setEditingProfile(true)}><Settings className="h-4 w-4" /></button><button title="Sign out" className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-red-50 hover:text-red-600" onClick={signOut}><LogOut className="h-4 w-4" /></button></div></div></header>
+    <header className="sticky top-0 z-30 border-b border-white/70 bg-cream/80 px-8 py-4 backdrop-blur-xl"><div className="mx-auto flex max-w-[1540px] items-center justify-between"><Brand /><div className="flex items-center gap-2"><div className="mr-3 text-right"><p className="text-xs font-bold">{status.account?.displayName}</p><p className="text-[10px] text-ink/40">{status.account?.email}</p></div><button title="Tracker destination" className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={editDestination}><FileSpreadsheet className="h-4 w-4" /></button><button title="Open failure log" className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={() => openPath(status.logPath)}><FileText className="h-4 w-4" /></button><button title="Microsoft connection" className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={editMicrosoft}><ShieldCheck className="h-4 w-4" /></button><button title="Profile settings" className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={() => setEditingProfile(true)}><Settings className="h-4 w-4" /></button><button title="Sign out" className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-red-50 hover:text-red-600" onClick={signOut}><LogOut className="h-4 w-4" /></button></div></div></header>
     <main className="mx-auto max-w-[1540px] px-8 py-8">
       <div className="grid grid-cols-[minmax(0,1fr)_290px] gap-6">
         <section className="min-w-0">
           <div className="mb-7 flex items-end justify-between"><div><p className="text-xs font-bold uppercase tracking-[.18em] text-pine">Daily workspace</p><h1 className="mt-2 font-display text-4xl">Build your interaction record.</h1><p className="mt-2 text-sm text-ink/50">Evidence first. Review it once. Export without duplicates.</p></div><div className="flex items-center gap-2"><span className="chip bg-white text-ink/55"><Inbox className="h-3 w-3" />{counts.all} found</span><span className="chip bg-mint text-pine"><Check className="h-3 w-3" />{counts.selected} selected</span>{counts.review > 0 && <span className="chip bg-[#fff0df] text-[#9a5a1e]">{counts.review} to review</span>}</div></div>
-          <div className="card p-5"><div className="grid grid-cols-[220px_1fr_1fr_auto] items-end gap-4"><label><span className="label">Workday</span><input type="date" max={localDate()} className="field" value={date} onChange={e => { setDate(e.target.value); setItems([]); }} /></label><Toggle checked={includeEmail} onChange={setIncludeEmail} label="Include mail" detail="You choose each message" icon={<Mail className="h-4 w-4" />} /><Toggle checked={includeTeams} onChange={setIncludeTeams} label="Teams chat suggestions" detail="Local Ollama · review required" icon={<Bot className="h-4 w-4" />} /><button className="btn-primary h-[46px] px-5" disabled={busy || (includeTeams && (!status.ollamaRunning || !status.ollamaModelAvailable))} onClick={extract}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}Extract</button></div>
+          <div className="card p-5"><div className="grid grid-cols-[220px_1fr_1fr_auto] items-end gap-4"><label><span className="label">Workday</span><input type="date" max={localDate()} className="field" value={date} onChange={e => { setDate(e.target.value); setItems([]); }} /></label><Toggle checked={includeEmail} onChange={setIncludeEmail} label="Include mail" detail="You choose each message" icon={<Mail className="h-4 w-4" />} /><Toggle checked={includeTeams} onChange={value => void changeTeams(value)} label="Teams chat suggestions" detail="Optional consent · local Ollama" icon={<Bot className="h-4 w-4" />} /><button className="btn-primary h-[46px] px-5" disabled={busy || (includeTeams && (!status.ollamaRunning || !status.ollamaModelAvailable))} onClick={extract}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}Extract</button></div>
             {includeTeams && !status.ollamaRunning && <div className="mt-4 flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900"><Bot className="h-5 w-5" /><span className="flex-1"><b>Ollama is not running.</b> Install it and start <code>{status.ollamaModel}</code>. Chat text is only sent to <code>127.0.0.1</code>.</span><button className="font-bold underline" onClick={() => openUrl("https://ollama.com/download/windows")}>Install Ollama</button><button className="font-bold underline" onClick={refreshStatus}>Recheck</button></div>}
             {includeTeams && status.ollamaRunning && !status.ollamaModelAvailable && <div className="mt-4 flex items-center rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900"><span className="flex-1">Ollama is running, but model <code>{status.ollamaModel}</code> is unavailable. Run <code>ollama pull {status.ollamaModel}</code>.</span><button className="font-bold underline" onClick={refreshStatus}>Recheck</button></div>}
           </div>
-          {error && <div className="mt-5"><ErrorBanner message={error} onClose={() => setError("")} /></div>}{warnings.map((w, i) => <div className="mt-3" key={i}><ErrorBanner message={w} /></div>)}
-          <div className="mt-6 flex items-center justify-between"><div><h2 className="font-display text-2xl">Preview</h2><p className="mt-1 text-xs text-ink/45">Mail remains unchecked until confirmed. AI chat suggestions are reference-only and must be logged through a blank manual form.</p></div><button className="btn-secondary" onClick={() => setManual(true)}><Plus className="h-4 w-4" />Add interaction manually</button></div>
+          {error && <div className="mt-5"><ErrorBanner message={error} onClose={() => setError("")} /></div>}{syncNotice && <div className="mt-5 flex items-center gap-3 rounded-xl border border-pine/15 bg-mint/55 px-4 py-3 text-sm text-pine"><Check className="h-4 w-4" />{syncNotice}</div>}{warnings.map((w, i) => <div className="mt-3" key={i}><ErrorBanner message={w} /></div>)}
+          <div className="mt-6 flex items-center justify-between"><div><h2 className="font-display text-2xl">Preview</h2><p className="mt-1 text-xs text-ink/45">Mail remains unchecked until confirmed. AI chat suggestions are reference-only and must be logged through a blank manual form.</p></div><button className="btn-secondary" onClick={() => setManual(true)}><Plus className="h-4 w-4" />Add a manual task</button></div>
           <div className="mt-4">{items.length ? <InteractionTable items={items} setItems={setItems} onLogAiManually={() => setManual(true)} /> : <div className="card grid min-h-64 place-items-center p-10 text-center"><div><div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-mint text-pine"><CalendarDays /></div><h3 className="mt-4 font-display text-xl">Choose a day and extract</h3><p className="mt-2 max-w-sm text-xs leading-5 text-ink/45">Atlas shows only interactions backed by your calendar, selected mail, chat evidence, or details you type manually.</p></div></div>}</div>
         </section>
-        <div className="space-y-5"><ExportPanel date={date} profile={profile} items={items} onDone={setSuccess} /><aside className="rounded-2xl bg-[#081c1a] p-5 text-white"><ShieldCheck className="h-5 w-5 text-[#8dd7c4]" /><h3 className="mt-4 font-display text-xl">Provenance protected</h3><p className="mt-2 text-xs leading-5 text-white/55">The exporter independently validates every source. There is no filler generator and no minimum row target.</p></aside></div>
+        <div className="space-y-5"><ExportPanel destination={destination} autoSync={status.autoSync} items={items} busy={busy} onSave={saveSelected} onSync={() => void syncCalendar(false)} onEdit={editDestination} /><aside className="rounded-2xl bg-[#081c1a] p-5 text-white"><ShieldCheck className="h-5 w-5 text-[#8dd7c4]" /><h3 className="mt-4 font-display text-xl">Provenance protected</h3><p className="mt-2 text-xs leading-5 text-white/55">The exporter independently validates every source. There is no filler generator and no minimum row target.</p></aside></div>
       </div>
     </main>
     {manual && <ManualModal date={date} onClose={() => setManual(false)} onAdd={item => { setItems(old => [...old, item]); setManual(false); }} />}
@@ -243,16 +287,19 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft }: { status: 
 }
 
 export default function App() {
-  const [status, setStatus] = useState<AppStatus>(); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [editingMicrosoft, setEditingMicrosoft] = useState(false);
+  const [status, setStatus] = useState<AppStatus>(); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [editingMicrosoft, setEditingMicrosoft] = useState(false); const [editingDestination, setEditingDestination] = useState(false);
   const refresh = async () => { setStatus(await api.status()); };
   useEffect(() => { refresh().catch(e => setError(String(e))); }, []);
+  useEffect(() => { const onError = (event: ErrorEvent) => { void api.logError("window", event.message); }; const onRejection = (event: PromiseRejectionEvent) => { void api.logError("promise", String(event.reason)); }; window.addEventListener("error", onError); window.addEventListener("unhandledrejection", onRejection); return () => { window.removeEventListener("error", onError); window.removeEventListener("unhandledrejection", onRejection); }; }, []);
   const signIn = async () => { setBusy(true); setError(""); try { setStatus(await api.signIn()); } catch (e) { setError(String(e)); } finally { setBusy(false); } };
   const signOut = async () => { await api.signOut(); await refresh(); };
   const saveProfile = async (p: UserProfile) => { await api.saveProfile(p); await refresh(); };
-  const saveMicrosoftAndSignIn = async (config: MicrosoftConfig) => { setBusy(true); setError(""); try { const configured = await api.saveMicrosoftConfig(config); setStatus(configured); setEditingMicrosoft(false); setStatus(await api.signIn()); } catch (e) { setError(String(e)); } finally { setBusy(false); } };
+  const saveDestination = async (destination: TrackerDestination, autoSync: boolean) => { const next = await api.saveDestination(destination, autoSync); setStatus(next); setEditingDestination(false); };
+  const saveMicrosoftAndSignIn = async (config: MicrosoftConfig) => { setBusy(true); setError(""); setEditingMicrosoft(true); try { const configured = await api.saveMicrosoftConfig(config); setStatus(configured); const signedIn = await api.signIn(); setStatus(signedIn); setEditingMicrosoft(false); } catch (e) { setError(String(e)); } finally { setBusy(false); } };
   if (!status) return error ? <main className="grid min-h-screen place-items-center p-10"><ErrorBanner message={error} /></main> : <LoadingScreen />;
   if (!status.configured || editingMicrosoft) return <MicrosoftSetupScreen initial={status.microsoftConfig} onSave={saveMicrosoftAndSignIn} onCancel={status.configured ? () => { setEditingMicrosoft(false); setError(""); } : undefined} busy={busy} error={error} />;
   if (!status.signedIn) return <LoginScreen onSignIn={signIn} onEditMicrosoft={() => { setError(""); setEditingMicrosoft(true); }} busy={busy} error={error} />;
   if (!status.profile) return <SetupScreen status={status} onSaved={saveProfile} />;
-  return <Workspace status={status} refreshStatus={refresh} signOut={signOut} editMicrosoft={() => { setError(""); setEditingMicrosoft(true); }} />;
+  if (!status.destination || editingDestination) return <DestinationSetupScreen initial={status.destination} initialAutoSync={status.autoSync} onSave={saveDestination} onCancel={status.destination ? () => setEditingDestination(false) : undefined} />;
+  return <Workspace status={status} refreshStatus={refresh} signOut={signOut} editMicrosoft={() => { setError(""); setEditingMicrosoft(true); }} editDestination={() => setEditingDestination(true)} />;
 }

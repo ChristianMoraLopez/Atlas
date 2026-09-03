@@ -1,6 +1,7 @@
 use crate::{
+    diagnostics,
     error::{AppError, Context, Result},
-    models::AccountInfo,
+    models::{AccountInfo, CachedAccessToken},
     state::AppState,
 };
 use chrono::{Duration, Utc};
@@ -19,50 +20,153 @@ use url::Url;
 
 const KEYRING_SERVICE: &str = "Atlas Circana Tracker";
 const KEYRING_USER: &str = "microsoft-oauth-token";
+const CREDENTIAL_CHUNK_SIZE: usize = 800;
+const MAX_CREDENTIAL_CHUNKS: usize = 32;
 
 type OAuthClient =
     BasicClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointSet>;
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct TokenRecord {
     access_token: String,
     refresh_token: Option<String>,
     expires_at: i64,
 }
 
-fn entry() -> Result<Entry> {
-    Entry::new(KEYRING_SERVICE, KEYRING_USER).context("Unable to access the OS credential store")
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct RefreshMetadata {
+    version: u8,
+    generation: String,
+    chunks: usize,
 }
 
-fn save_token(record: &TokenRecord) -> Result<()> {
-    entry()?
-        .set_password(&serde_json::to_string(record)?)
-        .context("Unable to store the Microsoft token securely")
+fn entry(user: &str) -> Result<Entry> {
+    Entry::new(KEYRING_SERVICE, user).context("Unable to access Windows Credential Manager")
 }
 
-fn load_token() -> Result<Option<TokenRecord>> {
-    match entry()?.get_password() {
-        Ok(value) => Ok(Some(
-            serde_json::from_str(&value).context("Stored Microsoft token is invalid")?,
-        )),
+fn credential_name(generation: &str, index: usize) -> String {
+    format!("{KEYRING_USER}-{generation}-{index}")
+}
+
+fn read_metadata_value() -> Result<Option<String>> {
+    match entry(KEYRING_USER)?.get_password() {
+        Ok(value) => Ok(Some(value)),
         Err(keyring::Error::NoEntry) => Ok(None),
         Err(e) => Err(AppError::Message(format!(
-            "Unable to read the OS credential store: {e}"
+            "Unable to read Windows Credential Manager: {e}"
         ))),
     }
 }
 
-pub fn has_token() -> bool {
-    load_token().ok().flatten().is_some()
-}
-
-pub fn clear_token() -> Result<()> {
-    match entry()?.delete_credential() {
+fn delete_entry(user: &str) -> Result<()> {
+    match entry(user)?.delete_credential() {
         Ok(_) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(e) => Err(AppError::Message(format!(
-            "Unable to remove the stored credential: {e}"
+            "Unable to remove a stored Microsoft credential: {e}"
         ))),
     }
+}
+
+fn save_refresh_token(refresh_token: &str) -> Result<()> {
+    if refresh_token.is_empty() {
+        return Err(AppError::Message(
+            "Microsoft did not return a refresh token. Ask your administrator to allow the offline_access delegated scope.".into(),
+        ));
+    }
+    let old_metadata = read_metadata_value()?
+        .and_then(|value| serde_json::from_str::<RefreshMetadata>(&value).ok());
+    let chunks = refresh_token
+        .as_bytes()
+        .chunks(CREDENTIAL_CHUNK_SIZE)
+        .map(|value| String::from_utf8(value.to_vec()))
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .context("Microsoft returned an invalid refresh token")?;
+    if chunks.is_empty() || chunks.len() > MAX_CREDENTIAL_CHUNKS {
+        return Err(AppError::Message(
+            "The Microsoft refresh token is too large for Windows Credential Manager.".into(),
+        ));
+    }
+    let generation = uuid::Uuid::new_v4().simple().to_string();
+    let mut written = Vec::new();
+    for (index, value) in chunks.iter().enumerate() {
+        let name = credential_name(&generation, index);
+        if let Err(error) = entry(&name)?.set_password(value) {
+            for saved in written {
+                let _ = delete_entry(&saved);
+            }
+            return Err(AppError::Message(format!(
+                "Unable to store the Microsoft session securely: {error}"
+            )));
+        }
+        written.push(name);
+    }
+    let metadata = RefreshMetadata {
+        version: 1,
+        generation,
+        chunks: chunks.len(),
+    };
+    entry(KEYRING_USER)?
+        .set_password(&serde_json::to_string(&metadata)?)
+        .context("Unable to finalize the Microsoft session in Windows Credential Manager")?;
+
+    if let Some(old) = old_metadata {
+        for index in 0..old.chunks.min(MAX_CREDENTIAL_CHUNKS) {
+            let _ = delete_entry(&credential_name(&old.generation, index));
+        }
+    }
+    Ok(())
+}
+
+fn load_refresh_token() -> Result<Option<String>> {
+    let Some(value) = read_metadata_value()? else {
+        return Ok(None);
+    };
+    if let Ok(metadata) = serde_json::from_str::<RefreshMetadata>(&value) {
+        if metadata.version != 1 || metadata.chunks == 0 || metadata.chunks > MAX_CREDENTIAL_CHUNKS
+        {
+            return Err(AppError::Message(
+                "The stored Microsoft session metadata is invalid. Sign out and sign in again."
+                    .into(),
+            ));
+        }
+        let mut refresh = String::new();
+        for index in 0..metadata.chunks {
+            let name = credential_name(&metadata.generation, index);
+            let chunk = entry(&name)?.get_password().map_err(|error| {
+                AppError::Message(format!(
+                    "A stored Microsoft session segment is unavailable: {error}. Sign in again."
+                ))
+            })?;
+            refresh.push_str(&chunk);
+        }
+        return Ok(Some(refresh));
+    }
+
+    // Version 0.1 stored access and refresh tokens together. Read that format once so
+    // existing users can migrate without being forced through login again.
+    let legacy: TokenRecord = serde_json::from_str(&value)
+        .context("The stored Microsoft session is invalid. Sign out and sign in again")?;
+    Ok(legacy.refresh_token)
+}
+
+pub fn has_token() -> Result<bool> {
+    Ok(load_refresh_token()?.is_some())
+}
+
+pub fn clear_token(state: &AppState) -> Result<()> {
+    if let Some(value) = read_metadata_value()? {
+        if let Ok(metadata) = serde_json::from_str::<RefreshMetadata>(&value) {
+            for index in 0..metadata.chunks.min(MAX_CREDENTIAL_CHUNKS) {
+                delete_entry(&credential_name(&metadata.generation, index))?;
+            }
+        }
+    }
+    delete_entry(KEYRING_USER)?;
+    *state
+        .cached_access_token
+        .lock()
+        .map_err(|_| AppError::Message("Microsoft session lock was poisoned".into()))? = None;
+    Ok(())
 }
 
 fn oauth_client(state: &AppState, redirect: Option<String>) -> Result<OAuthClient> {
@@ -92,7 +196,20 @@ fn oauth_client(state: &AppState, redirect: Option<String>) -> Result<OAuthClien
     }
 }
 
-pub async fn sign_in(state: &AppState) -> Result<AccountInfo> {
+pub async fn sign_in(
+    state: &AppState,
+    include_files: bool,
+    include_teams: bool,
+) -> Result<AccountInfo> {
+    diagnostics::info(
+        "auth",
+        match (include_files, include_teams) {
+            (true, true) => "Starting Microsoft PKCE sign-in with file and Teams access",
+            (true, false) => "Starting Microsoft PKCE sign-in with file access",
+            (false, true) => "Starting Microsoft PKCE sign-in with Teams access",
+            (false, false) => "Starting Microsoft PKCE sign-in",
+        },
+    );
     let listener = TcpListener::bind("127.0.0.1:0")
         .context("Unable to start the secure login callback on localhost")?;
     let port = listener.local_addr()?.port();
@@ -101,7 +218,7 @@ pub async fn sign_in(state: &AppState) -> Result<AccountInfo> {
     let redirect = format!("http://localhost:{port}");
     let client = oauth_client(state, Some(redirect))?;
     let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
-    let (auth_url, csrf) = client
+    let authorization = client
         .authorize_url(CsrfToken::new_random)
         .add_scope(Scope::new("openid".into()))
         .add_scope(Scope::new("profile".into()))
@@ -109,12 +226,25 @@ pub async fn sign_in(state: &AppState) -> Result<AccountInfo> {
         .add_scope(Scope::new("User.Read".into()))
         .add_scope(Scope::new("Calendars.Read".into()))
         .add_scope(Scope::new("Mail.Read".into()))
-        .add_scope(Scope::new("Chat.Read".into()))
-        .set_pkce_challenge(challenge)
-        .url();
+        .set_pkce_challenge(challenge);
+    let authorization = if include_files {
+        authorization.add_scope(Scope::new("Files.ReadWrite".into()))
+    } else {
+        authorization
+    };
+    let authorization = if include_teams {
+        authorization.add_scope(Scope::new("Chat.Read".into()))
+    } else {
+        authorization
+    };
+    let (auth_url, csrf) = authorization.url();
 
     open::that(auth_url.as_str())
         .context("Unable to open the system browser for Microsoft sign-in")?;
+    diagnostics::info(
+        "auth",
+        "System browser opened; waiting for loopback callback",
+    );
     let expected_state = csrf.secret().clone();
     let code = tokio::task::spawn_blocking(move || receive_code(listener, &expected_state))
         .await
@@ -134,8 +264,26 @@ pub async fn sign_in(state: &AppState) -> Result<AccountInfo> {
         refresh_token: token.refresh_token().map(|v| v.secret().clone()),
         expires_at: expires_at.timestamp(),
     };
-    save_token(&record)?;
-    get_account(state, &record.access_token).await
+    let account = get_account(state, &record.access_token).await?;
+    let refresh = record.refresh_token.as_deref().ok_or_else(|| {
+        AppError::Message(
+            "Microsoft did not return a refresh token. Ensure offline_access is allowed for this public client.".into(),
+        )
+    })?;
+    save_refresh_token(refresh)?;
+    *state
+        .cached_access_token
+        .lock()
+        .map_err(|_| AppError::Message("Microsoft session lock was poisoned".into()))? =
+        Some(CachedAccessToken {
+            value: record.access_token,
+            expires_at: record.expires_at,
+        });
+    diagnostics::info(
+        "auth",
+        "Microsoft sign-in completed and the session was stored",
+    );
+    Ok(account)
 }
 
 fn receive_code(listener: TcpListener, expected_state: &str) -> Result<String> {
@@ -144,44 +292,71 @@ fn receive_code(listener: TcpListener, expected_state: &str) -> Result<String> {
     loop {
         match listener.accept() {
             Ok((mut stream, _)) => {
+                let _ = stream.set_read_timeout(Some(StdDuration::from_secs(2)));
                 let mut buffer = [0_u8; 8192];
-                let read = stream.read(&mut buffer)?;
+                let read = match stream.read(&mut buffer) {
+                    Ok(0) => continue,
+                    Ok(read) => read,
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                        ) =>
+                    {
+                        continue
+                    }
+                    Err(error) => return Err(error.into()),
+                };
                 let request = String::from_utf8_lossy(&buffer[..read]);
-                let path = request
+                let Some(path) = request
                     .lines()
                     .next()
                     .and_then(|line| line.split_whitespace().nth(1))
-                    .ok_or_else(|| AppError::Message("Invalid browser callback.".into()))?;
-                let url = Url::parse(&format!("http://127.0.0.1{path}"))
-                    .context("Invalid browser callback URL")?;
+                else {
+                    continue;
+                };
+                let Ok(url) = Url::parse(&format!("http://127.0.0.1{path}")) else {
+                    continue;
+                };
                 let pairs: std::collections::HashMap<_, _> =
                     url.query_pairs().into_owned().collect();
-                let response = if let Some(error) = pairs.get("error") {
-                    format!(
-                        "Microsoft sign-in was not completed: {}",
-                        pairs.get("error_description").unwrap_or(error)
-                    )
-                } else {
-                    "Microsoft sign-in is complete. You can close this tab and return to Atlas."
-                        .into()
-                };
-                let body = format!("<!doctype html><meta charset=utf-8><title>Atlas sign-in</title><style>body{{font:16px Segoe UI;background:#f6f3ea;color:#17201f;display:grid;place-items:center;height:100vh;margin:0}}main{{max-width:520px;padding:40px;background:white;border-radius:20px;box-shadow:0 20px 60px #0c302a1a}}h1{{font-family:Georgia;color:#0f4f45}}</style><main><h1>Return to Atlas</h1><p>{response}</p></main>");
-                let http = format!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
-                stream.write_all(http.as_bytes())?;
+                // Browsers can preconnect or request a favicon before the OAuth redirect.
+                // Ignore those requests and keep waiting for a callback that carries OAuth data.
+                if !pairs.contains_key("code") && !pairs.contains_key("error") {
+                    write_browser_response(&mut stream, "Atlas is waiting for Microsoft sign-in.");
+                    continue;
+                }
                 if let Some(error) = pairs.get("error") {
+                    let description = pairs.get("error_description").unwrap_or(error);
+                    write_browser_response(
+                        &mut stream,
+                        &format!(
+                            "Microsoft sign-in was not completed: {}",
+                            html_escape::encode_text(description)
+                        ),
+                    );
                     return Err(AppError::Message(format!(
                         "Microsoft sign-in failed: {}",
-                        pairs.get("error_description").unwrap_or(error)
+                        description
                     )));
                 }
-                if pairs.get("state") != Some(&expected_state.to_string()) {
+                if pairs.get("state").map(String::as_str) != Some(expected_state) {
+                    write_browser_response(
+                        &mut stream,
+                        "Atlas rejected this callback because its security state did not match. Return to Atlas and try again.",
+                    );
                     return Err(AppError::Message(
                         "Microsoft sign-in state did not match. Please try again.".into(),
                     ));
                 }
-                return pairs.get("code").cloned().ok_or_else(|| {
+                let code = pairs.get("code").cloned().ok_or_else(|| {
                     AppError::Message("Microsoft did not return an authorization code.".into())
-                });
+                })?;
+                write_browser_response(
+                    &mut stream,
+                    "Microsoft sign-in is complete. You can close this tab and return to Atlas.",
+                );
+                return Ok(code);
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 if started.elapsed() > StdDuration::from_secs(300) {
@@ -196,26 +371,37 @@ fn receive_code(listener: TcpListener, expected_state: &str) -> Result<String> {
     }
 }
 
+fn write_browser_response(stream: &mut std::net::TcpStream, message: &str) {
+    let body = format!("<!doctype html><meta charset=utf-8><title>Atlas sign-in</title><style>body{{font:16px Segoe UI;background:#f6f3ea;color:#17201f;display:grid;place-items:center;height:100vh;margin:0}}main{{max-width:520px;padding:40px;background:white;border-radius:20px;box-shadow:0 20px 60px #0c302a1a}}h1{{font-family:Georgia;color:#0f4f45}}</style><main><h1>Return to Atlas</h1><p>{message}</p></main>");
+    let http = format!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
+    let _ = stream.write_all(http.as_bytes());
+}
+
 pub async fn access_token(state: &AppState) -> Result<String> {
-    let mut record =
-        load_token()?.ok_or_else(|| AppError::Message("Sign in with Microsoft first.".into()))?;
-    if record.expires_at > (Utc::now() + Duration::minutes(2)).timestamp() {
-        return Ok(record.access_token);
+    if let Some(cached) = state
+        .cached_access_token
+        .lock()
+        .map_err(|_| AppError::Message("Microsoft session lock was poisoned".into()))?
+        .clone()
+    {
+        if cached.expires_at > (Utc::now() + Duration::minutes(2)).timestamp() {
+            return Ok(cached.value);
+        }
     }
-    let refresh = record.refresh_token.clone().ok_or_else(|| {
-        AppError::Message("Your Microsoft session expired. Sign in again.".into())
-    })?;
+    let refresh = load_refresh_token()?
+        .ok_or_else(|| AppError::Message("Sign in with Microsoft first.".into()))?;
+    diagnostics::info("auth", "Refreshing the Microsoft access token");
     let client = oauth_client(state, None)?;
     let response = client
         .exchange_refresh_token(&RefreshToken::new(refresh))
         .request_async(&state.http)
         .await
         .context("Unable to refresh your Microsoft session. Sign in again")?;
-    record.access_token = response.access_token().secret().clone();
+    let access_token = response.access_token().secret().clone();
     if let Some(next) = response.refresh_token() {
-        record.refresh_token = Some(next.secret().clone());
+        save_refresh_token(next.secret())?;
     }
-    record.expires_at = (Utc::now()
+    let expires_at = (Utc::now()
         + Duration::from_std(
             response
                 .expires_in()
@@ -223,16 +409,23 @@ pub async fn access_token(state: &AppState) -> Result<String> {
         )
         .unwrap_or(Duration::hours(1)))
     .timestamp();
-    save_token(&record)?;
-    Ok(record.access_token)
+    *state
+        .cached_access_token
+        .lock()
+        .map_err(|_| AppError::Message("Microsoft session lock was poisoned".into()))? =
+        Some(CachedAccessToken {
+            value: access_token.clone(),
+            expires_at,
+        });
+    Ok(access_token)
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GraphMe {
-    display_name: String,
+    display_name: Option<String>,
     mail: Option<String>,
-    user_principal_name: String,
+    user_principal_name: Option<String>,
 }
 
 async fn get_account(state: &AppState, token: &str) -> Result<AccountInfo> {
@@ -241,17 +434,26 @@ async fn get_account(state: &AppState, token: &str) -> Result<AccountInfo> {
         .get("https://graph.microsoft.com/v1.0/me?$select=displayName,mail,userPrincipalName")
         .bearer_auth(token)
         .send()
-        .await?;
+        .await
+        .context("Unable to contact Microsoft Graph for your profile")?;
     if !response.status().is_success() {
         return Err(AppError::Message(format!(
             "Microsoft Graph could not read your profile ({}).",
             response.status()
         )));
     }
-    let me: GraphMe = response.json().await?;
+    let me: GraphMe = response
+        .json()
+        .await
+        .context("Microsoft Graph returned an invalid profile")?;
+    let email = me.mail.or(me.user_principal_name).ok_or_else(|| {
+        AppError::Message(
+            "Microsoft Graph did not return an email address for this account.".into(),
+        )
+    })?;
     Ok(AccountInfo {
-        display_name: me.display_name,
-        email: me.mail.unwrap_or(me.user_principal_name),
+        display_name: me.display_name.unwrap_or_else(|| email.clone()),
+        email,
     })
 }
 

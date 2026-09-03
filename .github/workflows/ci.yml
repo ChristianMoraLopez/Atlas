@@ -40,23 +40,27 @@ jobs:
         with:
           args: --no-bundle
       - name: Package and verify portable ZIP
+        id: package
         shell: pwsh
         run: |
+          $version = (Get-Content -Raw -LiteralPath package.json | ConvertFrom-Json).version
+          $archive = "Atlas-$version-Windows-x64.zip"
           New-Item -ItemType Directory -Path release-staging -Force | Out-Null
           Copy-Item -LiteralPath src-tauri/target/release/atlas-tracker.exe -Destination release-staging/Atlas.exe
           Copy-Item -LiteralPath docs/PORTABLE_README.md -Destination release-staging/README.md
-          Compress-Archive -LiteralPath release-staging/Atlas.exe,release-staging/README.md -DestinationPath release-staging/Atlas-0.1.1-Windows-x64.zip
-          foreach ($requiredFile in @("release-staging/Atlas.exe", "release-staging/README.md", "release-staging/Atlas-0.1.1-Windows-x64.zip")) {
+          Compress-Archive -LiteralPath release-staging/Atlas.exe,release-staging/README.md -DestinationPath "release-staging/$archive"
+          foreach ($requiredFile in @("release-staging/Atlas.exe", "release-staging/README.md", "release-staging/$archive")) {
             if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) {
               throw "Missing packaged file: $requiredFile"
             }
           }
-          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath release-staging/Atlas-0.1.1-Windows-x64.zip).Hash
-          "$hash *Atlas-0.1.1-Windows-x64.zip" | Set-Content -Encoding ascii -LiteralPath release-staging/SHA256SUMS.txt
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath "release-staging/$archive").Hash
+          "$hash *$archive" | Set-Content -Encoding ascii -LiteralPath release-staging/SHA256SUMS.txt
+          "artifact=Atlas-$version-Windows-x64" >> $env:GITHUB_OUTPUT
       - name: Upload Atlas portable ZIP
         uses: actions/upload-artifact@v6
         with:
-          name: Atlas-0.1.1-Windows-x64
+          name: ${{ steps.package.outputs.artifact }}
           path: release-staging/
           if-no-files-found: error
           compression-level: 9
