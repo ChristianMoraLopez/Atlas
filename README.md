@@ -31,12 +31,12 @@ Create one Microsoft Entra app registration for the team:
    - `Chat.Read` only when the optional Teams-chat feature will be used
 5. Do not add application permissions or a client secret. Atlas is a public desktop client.
 
-Add these public identifiers as GitHub repository **Actions variables** (not secrets):
+On first launch, Atlas asks for these public identifiers:
 
-- `CIRCANA_AZURE_CLIENT_ID` — Application (client) ID
-- `CIRCANA_AZURE_TENANT_ID` — Directory (tenant) ID
+- Application (client) ID
+- Directory (tenant) ID
 
-They are compiled into the executable at build time. A build without them opens a configuration screen and cannot start authentication.
+They are saved in the user's local Atlas settings and can be changed from the Microsoft connection button in the app. Changing either identifier clears the previous Microsoft token and starts a new PKCE login. No client secret is used or requested. Build-time `CIRCANA_AZURE_CLIENT_ID` and `CIRCANA_AZURE_TENANT_ID` values remain optional defaults for managed team builds.
 
 ## Local development
 
@@ -82,13 +82,13 @@ The writer first creates a complete temporary package and a safety copy before r
 
 ## Windows releases
 
-Every push to `main` runs **Build Atlas Windows x64** from [`.github/workflows/ci.yml`](.github/workflows/ci.yml). After the tests pass, GitHub Actions compiles the portable executable and adds a downloadable `Atlas-0.1.0-Windows-x64` artifact to the workflow run. The artifact contains `Atlas.exe`, `README.md`, `SHA256SUMS.txt`, and the ready-to-extract `Atlas-0.1.0-Windows-x64.zip`; it is retained for seven days, matching the Telescope build workflow.
+Every push to `main` runs **Build Atlas Windows x64** from [`.github/workflows/ci.yml`](.github/workflows/ci.yml). After the tests pass, GitHub Actions compiles the portable executable and adds a downloadable `Atlas-0.1.1-Windows-x64` artifact to the workflow run. The artifact contains `Atlas.exe`, `README.md`, `SHA256SUMS.txt`, and the ready-to-extract `Atlas-0.1.1-Windows-x64.zip`; it is retained for seven days, matching the Telescope build workflow.
 
-Pushing a tag that starts with `v` runs [`.github/workflows/release.yml`](.github/workflows/release.yml). It creates a permanent GitHub Release containing one portable zip with `Atlas.exe` and setup instructions. The release job stops before compilation unless the `CIRCANA_AZURE_CLIENT_ID` and `CIRCANA_AZURE_TENANT_ID` repository variables are configured, preventing a permanent release that cannot sign in from being published.
+Pushing a tag that starts with `v` runs [`.github/workflows/release.yml`](.github/workflows/release.yml). It creates a permanent GitHub Release containing one portable zip with `Atlas.exe` and setup instructions. Repository variables can provide managed defaults, but are not required because users can enter the public identifiers inside Atlas.
 
 ```powershell
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
 Unsigned internal builds can trigger Microsoft SmartScreen. Configure Windows code signing in the release workflow before broad distribution.

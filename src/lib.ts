@@ -1,8 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AppStatus, ExportResult, ExtractionResult, Interaction, UserProfile } from "./types";
+import type { AppStatus, ExportResult, ExtractionResult, Interaction, MicrosoftConfig, UserProfile } from "./types";
 
 export const api = {
   status: () => invoke<AppStatus>("get_app_status"),
+  saveMicrosoftConfig: (config: MicrosoftConfig) => invoke<AppStatus>("save_microsoft_config", { clientId: config.clientId, tenantId: config.tenantId }),
   signIn: () => invoke<AppStatus>("sign_in"),
   signOut: () => invoke<void>("sign_out"),
   saveProfile: (profile: UserProfile) => invoke<void>("save_profile", { profile }),

@@ -15,15 +15,6 @@ jobs:
       CIRCANA_AZURE_TENANT_ID: ${{ vars.CIRCANA_AZURE_TENANT_ID }}
     steps:
       - uses: actions/checkout@v7
-      - name: Validate Entra build configuration
-        shell: pwsh
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:CIRCANA_AZURE_CLIENT_ID)) {
-            throw "Set the CIRCANA_AZURE_CLIENT_ID repository variable before publishing a release."
-          }
-          if ([string]::IsNullOrWhiteSpace($env:CIRCANA_AZURE_TENANT_ID)) {
-            throw "Set the CIRCANA_AZURE_TENANT_ID repository variable before publishing a release."
-          }
       - uses: actions/setup-node@v6
         with:
           node-version: 24

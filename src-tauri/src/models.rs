@@ -17,11 +17,19 @@ pub struct AccountInfo {
     pub email: String,
 }
 
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MicrosoftConfig {
+    pub client_id: String,
+    pub tenant_id: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppStatus {
     pub configured: bool,
     pub signed_in: bool,
+    pub microsoft_config: MicrosoftConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub account: Option<AccountInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -36,6 +44,8 @@ pub struct AppStatus {
 pub struct Settings {
     pub profile: Option<UserProfile>,
     pub account: Option<AccountInfo>,
+    #[serde(default)]
+    pub microsoft_config: Option<MicrosoftConfig>,
     #[serde(default = "default_model")]
     pub ollama_model: String,
 }

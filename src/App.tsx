@@ -7,7 +7,7 @@ import {
   Save, Settings, ShieldCheck, Sparkles, Trash2, UserRound, X
 } from "lucide-react";
 import { api, fromLocalInput, localDate, toLocalInput } from "./lib";
-import type { AppStatus, ExportResult, Interaction, UserProfile } from "./types";
+import type { AppStatus, ExportResult, Interaction, MicrosoftConfig, UserProfile } from "./types";
 
 const emptyProfile: UserProfile = {
   loginId: "", fullName: "", area: "Manufacturing", teamLead: "", circanaManager: ""
@@ -35,28 +35,37 @@ function Brand() {
   </div>;
 }
 
-function ConfigurationScreen() {
+function MicrosoftSetupScreen({ initial, onSave, onCancel, busy, error }: { initial: MicrosoftConfig; onSave: (config: MicrosoftConfig) => Promise<void>; onCancel?: () => void; busy: boolean; error: string }) {
+  const [config, setConfig] = useState(initial);
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await onSave({ clientId: config.clientId.trim(), tenantId: config.tenantId.trim() });
+  };
   return <main className="mx-auto flex min-h-screen max-w-6xl items-center px-10 py-12">
     <section className="grid w-full grid-cols-[1.1fr_.9fr] overflow-hidden rounded-[2rem] bg-[#081c1a] text-white shadow-panel">
       <div className="p-14">
         <div className="mb-16"><Brand /></div>
-        <p className="mb-4 text-xs font-bold uppercase tracking-[.2em] text-[#8dd7c4]">One-time build setup</p>
+        <p className="mb-4 text-xs font-bold uppercase tracking-[.2em] text-[#8dd7c4]">One-time Microsoft setup</p>
         <h1 className="max-w-xl font-display text-5xl leading-[1.05]">Connect Atlas to your Microsoft 365 tenant.</h1>
-        <p className="mt-6 max-w-xl text-base leading-7 text-white/65">This build is missing its public Azure application identifiers. Add them as GitHub repository variables, then publish a new version tag.</p>
+        <p className="mt-6 max-w-xl text-base leading-7 text-white/65">Enter the two public identifiers from your Microsoft Entra app registration. Atlas stores them only in its local settings, then opens Microsoft’s secure sign-in page.</p>
+        <div className="mt-10 flex items-center gap-3 text-xs font-semibold text-white/55"><ShieldCheck className="h-5 w-5 text-[#8dd7c4]" /> Public IDs only · No client secret · OAuth PKCE login</div>
       </div>
-      <div className="m-4 rounded-[1.4rem] bg-white p-10 text-ink">
-        <h2 className="font-display text-2xl">Required variables</h2>
-        <div className="mt-7 space-y-4">
-          {[["CIRCANA_AZURE_CLIENT_ID", "Application (client) ID"], ["CIRCANA_AZURE_TENANT_ID", "Directory (tenant) ID"]].map(([key, desc]) =>
-            <div key={key} className="rounded-xl border border-ink/10 bg-cream/60 p-4"><code className="text-sm font-bold text-pine">{key}</code><p className="mt-1 text-xs text-ink/55">{desc}</p></div>)}
+      <form onSubmit={submit} className="m-4 rounded-[1.4rem] bg-white p-10 text-ink">
+        <h2 className="font-display text-2xl">Microsoft connection</h2>
+        <p className="mt-2 text-xs leading-5 text-ink/50">In Entra, open <b>App registrations → your app → Overview</b> and copy these values.</p>
+        <div className="mt-7 space-y-5">
+          <label><span className="label">Application (client) ID</span><input className="field font-mono text-xs" value={config.clientId} onChange={e => setConfig(old => ({ ...old, clientId: e.target.value }))} placeholder="00000000-0000-0000-0000-000000000000" autoComplete="off" required /></label>
+          <label><span className="label">Directory (tenant) ID</span><input className="field font-mono text-xs" value={config.tenantId} onChange={e => setConfig(old => ({ ...old, tenantId: e.target.value }))} placeholder="00000000-0000-0000-0000-000000000000" autoComplete="off" required /></label>
         </div>
-        <button className="btn-primary mt-8" onClick={() => openUrl("https://entra.microsoft.com")}>Open Microsoft Entra <ExternalLink className="h-4 w-4" /></button>
-      </div>
+        {error && <div className="mt-5"><ErrorBanner message={error} /></div>}
+        <div className="mt-7 flex flex-wrap gap-3"><button type="submit" className="btn-primary" disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}Save and sign in</button>{onCancel && <button type="button" className="btn-secondary" onClick={onCancel} disabled={busy}>Cancel</button>}</div>
+        <button type="button" className="mt-6 flex items-center gap-2 text-xs font-bold text-pine hover:underline" onClick={() => openUrl("https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade")}>Open Microsoft Entra <ExternalLink className="h-4 w-4" /></button>
+      </form>
     </section>
   </main>;
 }
 
-function LoginScreen({ onSignIn, busy, error }: { onSignIn: () => void; busy: boolean; error: string }) {
+function LoginScreen({ onSignIn, onEditMicrosoft, busy, error }: { onSignIn: () => void; onEditMicrosoft: () => void; busy: boolean; error: string }) {
   return <main className="mx-auto flex min-h-screen max-w-6xl items-center px-10 py-12">
     <section className="grid w-full grid-cols-[1.05fr_.95fr] overflow-hidden rounded-[2rem] bg-[#081c1a] shadow-panel">
       <div className="relative overflow-hidden p-14 text-white">
@@ -79,6 +88,7 @@ function LoginScreen({ onSignIn, busy, error }: { onSignIn: () => void; busy: bo
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden><path fill="#f35325" d="M1 1h10v10H1z"/><path fill="#81bc06" d="M13 1h10v10H13z"/><path fill="#05a6f0" d="M1 13h10v10H1z"/><path fill="#ffba08" d="M13 13h10v10H13z"/></svg>}
           Sign in with Microsoft <ArrowRight className="h-4 w-4" />
         </button>
+        <button className="mt-4 text-xs font-bold text-pine hover:underline" onClick={onEditMicrosoft} disabled={busy}>Change Microsoft connection</button>
         <p className="mt-5 text-center text-[11px] leading-5 text-ink/40">Your refresh token is stored by Windows Credential Manager and is never written to a project file.</p>
       </div>
     </section>
@@ -204,13 +214,13 @@ function SuccessModal({ result, onClose }: { result: ExportResult; onClose: () =
   return <div className="fixed inset-0 z-50 grid place-items-center bg-[#081c1a]/45 p-8 backdrop-blur-sm"><div className="card w-full max-w-lg p-8 text-center"><div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-mint text-pine"><Check className="h-7 w-7" /></div><h2 className="mt-5 font-display text-3xl">Tracker saved</h2><p className="mt-2 text-sm text-ink/50">{result.inserted} added · {result.updated} refreshed · {result.skipped} skipped</p><p className="mt-5 break-all rounded-xl bg-cream p-3 text-xs text-ink/55">{result.path}</p><div className="mt-6 grid grid-cols-2 gap-3"><button className="btn-secondary" onClick={() => revealItemInDir(result.path)}><FolderOpen className="h-4 w-4" />Open folder</button><button className="btn-primary" onClick={() => openPath(result.path)}><ExternalLink className="h-4 w-4" />Open file</button></div><button className="mt-5 text-xs font-bold text-ink/45 hover:text-ink" onClick={onClose}>Back to tracker</button></div></div>;
 }
 
-function Workspace({ status, refreshStatus, signOut }: { status: AppStatus; refreshStatus: () => Promise<void>; signOut: () => Promise<void> }) {
+function Workspace({ status, refreshStatus, signOut, editMicrosoft }: { status: AppStatus; refreshStatus: () => Promise<void>; signOut: () => Promise<void>; editMicrosoft: () => void }) {
   const profile = status.profile!; const [date, setDate] = useState(localDate()); const [includeEmail, setIncludeEmail] = useState(false); const [includeTeams, setIncludeTeams] = useState(false); const [items, setItems] = useState<Interaction[]>([]); const [warnings, setWarnings] = useState<string[]>([]); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [manual, setManual] = useState(false); const [editingProfile, setEditingProfile] = useState(false); const [settingsModel, setSettingsModel] = useState(status.ollamaModel); const [success, setSuccess] = useState<ExportResult>();
   const counts = useMemo(() => ({ all: items.length, selected: items.filter(i => i.selected).length, review: items.filter(i => !i.reviewed).length }), [items]);
   const extract = async () => { setBusy(true); setError(""); setWarnings([]); try { const result = await api.extract(date, includeEmail, includeTeams, Intl.DateTimeFormat().resolvedOptions().timeZone); setItems(result.interactions); setWarnings(result.warnings); } catch (e) { setError(String(e)); } finally { setBusy(false); } };
   const saveProfile = async (p: UserProfile) => { await api.saveProfile(p); await api.setOllamaModel(settingsModel); setEditingProfile(false); await refreshStatus(); };
   return <div className="min-h-screen">
-    <header className="sticky top-0 z-30 border-b border-white/70 bg-cream/80 px-8 py-4 backdrop-blur-xl"><div className="mx-auto flex max-w-[1540px] items-center justify-between"><Brand /><div className="flex items-center gap-2"><div className="mr-3 text-right"><p className="text-xs font-bold">{status.account?.displayName}</p><p className="text-[10px] text-ink/40">{status.account?.email}</p></div><button title="Profile settings" className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={() => setEditingProfile(true)}><Settings className="h-4 w-4" /></button><button title="Sign out" className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-red-50 hover:text-red-600" onClick={signOut}><LogOut className="h-4 w-4" /></button></div></div></header>
+    <header className="sticky top-0 z-30 border-b border-white/70 bg-cream/80 px-8 py-4 backdrop-blur-xl"><div className="mx-auto flex max-w-[1540px] items-center justify-between"><Brand /><div className="flex items-center gap-2"><div className="mr-3 text-right"><p className="text-xs font-bold">{status.account?.displayName}</p><p className="text-[10px] text-ink/40">{status.account?.email}</p></div><button title="Microsoft connection" className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={editMicrosoft}><ShieldCheck className="h-4 w-4" /></button><button title="Profile settings" className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={() => setEditingProfile(true)}><Settings className="h-4 w-4" /></button><button title="Sign out" className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-red-50 hover:text-red-600" onClick={signOut}><LogOut className="h-4 w-4" /></button></div></div></header>
     <main className="mx-auto max-w-[1540px] px-8 py-8">
       <div className="grid grid-cols-[minmax(0,1fr)_290px] gap-6">
         <section className="min-w-0">
@@ -233,15 +243,16 @@ function Workspace({ status, refreshStatus, signOut }: { status: AppStatus; refr
 }
 
 export default function App() {
-  const [status, setStatus] = useState<AppStatus>(); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
+  const [status, setStatus] = useState<AppStatus>(); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [editingMicrosoft, setEditingMicrosoft] = useState(false);
   const refresh = async () => { setStatus(await api.status()); };
   useEffect(() => { refresh().catch(e => setError(String(e))); }, []);
   const signIn = async () => { setBusy(true); setError(""); try { setStatus(await api.signIn()); } catch (e) { setError(String(e)); } finally { setBusy(false); } };
   const signOut = async () => { await api.signOut(); await refresh(); };
   const saveProfile = async (p: UserProfile) => { await api.saveProfile(p); await refresh(); };
+  const saveMicrosoftAndSignIn = async (config: MicrosoftConfig) => { setBusy(true); setError(""); try { const configured = await api.saveMicrosoftConfig(config); setStatus(configured); setEditingMicrosoft(false); setStatus(await api.signIn()); } catch (e) { setError(String(e)); } finally { setBusy(false); } };
   if (!status) return error ? <main className="grid min-h-screen place-items-center p-10"><ErrorBanner message={error} /></main> : <LoadingScreen />;
-  if (!status.configured) return <ConfigurationScreen />;
-  if (!status.signedIn) return <LoginScreen onSignIn={signIn} busy={busy} error={error} />;
+  if (!status.configured || editingMicrosoft) return <MicrosoftSetupScreen initial={status.microsoftConfig} onSave={saveMicrosoftAndSignIn} onCancel={status.configured ? () => { setEditingMicrosoft(false); setError(""); } : undefined} busy={busy} error={error} />;
+  if (!status.signedIn) return <LoginScreen onSignIn={signIn} onEditMicrosoft={() => { setError(""); setEditingMicrosoft(true); }} busy={busy} error={error} />;
   if (!status.profile) return <SetupScreen status={status} onSaved={saveProfile} />;
-  return <Workspace status={status} refreshStatus={refresh} signOut={signOut} />;
+  return <Workspace status={status} refreshStatus={refresh} signOut={signOut} editMicrosoft={() => { setError(""); setEditingMicrosoft(true); }} />;
 }

@@ -66,16 +66,17 @@ pub fn clear_token() -> Result<()> {
 }
 
 fn oauth_client(state: &AppState, redirect: Option<String>) -> Result<OAuthClient> {
-    if state.azure.client_id.is_empty() || state.azure.tenant_id.is_empty() {
+    let config = state.microsoft_config()?;
+    if config.client_id.is_empty() || config.tenant_id.is_empty() {
         return Err(AppError::Message(
-            "This build is missing its Azure client ID or tenant ID.".into(),
+            "Enter the Microsoft Application ID and Tenant ID in Atlas first.".into(),
         ));
     }
     let authority = format!(
         "https://login.microsoftonline.com/{}/oauth2/v2.0",
-        state.azure.tenant_id
+        config.tenant_id
     );
-    let client = BasicClient::new(ClientId::new(state.azure.client_id.clone()))
+    let client = BasicClient::new(ClientId::new(config.client_id))
         .set_auth_uri(
             AuthUrl::new(format!("{authority}/authorize"))
                 .context("Invalid Microsoft authorization endpoint")?,

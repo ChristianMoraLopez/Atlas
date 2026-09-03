@@ -1,17 +1,11 @@
 use crate::{
     error::{Context, Result},
-    models::{Interaction, Settings},
+    models::{Interaction, MicrosoftConfig, Settings},
 };
 use std::{collections::HashMap, fs, path::PathBuf, sync::Mutex};
 
-#[derive(Clone)]
-pub struct AzureConfig {
-    pub client_id: String,
-    pub tenant_id: String,
-}
-
 pub struct AppState {
-    pub azure: AzureConfig,
+    build_microsoft_config: MicrosoftConfig,
     pub http: reqwest::Client,
     pub settings_path: PathBuf,
     pub settings: Mutex<Settings>,
@@ -35,7 +29,7 @@ impl AppState {
             .user_agent("Atlas-Circana-Tracker/0.1")
             .build()?;
         Ok(Self {
-            azure: AzureConfig {
+            build_microsoft_config: MicrosoftConfig {
                 client_id: option_env!("CIRCANA_AZURE_CLIENT_ID")
                     .unwrap_or("")
                     .trim()
@@ -57,6 +51,13 @@ impl AppState {
             .lock()
             .map(|v| v.clone())
             .map_err(|_| crate::error::AppError::Message("Settings lock was poisoned".into()))
+    }
+
+    pub fn microsoft_config(&self) -> Result<MicrosoftConfig> {
+        Ok(self
+            .read_settings()?
+            .microsoft_config
+            .unwrap_or_else(|| self.build_microsoft_config.clone()))
     }
 
     pub fn update_settings(&self, f: impl FnOnce(&mut Settings)) -> Result<()> {

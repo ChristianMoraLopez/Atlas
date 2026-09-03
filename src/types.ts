@@ -13,9 +13,15 @@ export interface AccountInfo {
   email: string;
 }
 
+export interface MicrosoftConfig {
+  clientId: string;
+  tenantId: string;
+}
+
 export interface AppStatus {
   configured: boolean;
   signedIn: boolean;
+  microsoftConfig: MicrosoftConfig;
   account?: AccountInfo;
   profile?: UserProfile;
   ollamaRunning: boolean;

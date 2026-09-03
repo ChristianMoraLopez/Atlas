@@ -8,7 +8,10 @@ mod state;
 
 use crate::{
     error::{AppError, Result},
-    models::{AppStatus, ExportResult, ExtractionResult, Interaction, SourceKind, UserProfile},
+    models::{
+        AppStatus, ExportResult, ExtractionResult, Interaction, MicrosoftConfig, SourceKind,
+        UserProfile,
+    },
     state::AppState,
 };
 use std::collections::HashSet;
@@ -16,11 +19,14 @@ use tauri::Manager;
 
 async fn build_status(state: &AppState) -> Result<AppStatus> {
     let settings = state.read_settings()?;
+    let microsoft_config = state.microsoft_config()?;
     let (ollama_running, ollama_model_available) =
         ollama::status(&state.http, &settings.ollama_model).await;
     Ok(AppStatus {
-        configured: !state.azure.client_id.is_empty() && !state.azure.tenant_id.is_empty(),
-        signed_in: auth::has_token(),
+        configured: !microsoft_config.client_id.is_empty()
+            && !microsoft_config.tenant_id.is_empty(),
+        signed_in: auth::has_token() && settings.account.is_some(),
+        microsoft_config,
         account: settings.account,
         profile: settings.profile,
         ollama_running,
@@ -38,6 +44,50 @@ async fn get_app_status(state: tauri::State<'_, AppState>) -> Result<AppStatus> 
 async fn sign_in(state: tauri::State<'_, AppState>) -> Result<AppStatus> {
     let account = auth::sign_in(&state).await?;
     state.update_settings(|settings| settings.account = Some(account))?;
+    build_status(&state).await
+}
+
+fn normalize_microsoft_config(client_id: String, tenant_id: String) -> Result<MicrosoftConfig> {
+    let client_id = client_id.trim();
+    let tenant_id = tenant_id.trim();
+    let client_id = uuid::Uuid::parse_str(client_id).map_err(|_| {
+        AppError::Message(
+            "Application (client) ID must be a valid GUID from Microsoft Entra.".into(),
+        )
+    })?;
+    let tenant_id = uuid::Uuid::parse_str(tenant_id).map_err(|_| {
+        AppError::Message("Directory (tenant) ID must be a valid GUID from Microsoft Entra.".into())
+    })?;
+    Ok(MicrosoftConfig {
+        client_id: client_id.to_string(),
+        tenant_id: tenant_id.to_string(),
+    })
+}
+
+#[tauri::command]
+async fn save_microsoft_config(
+    state: tauri::State<'_, AppState>,
+    client_id: String,
+    tenant_id: String,
+) -> Result<AppStatus> {
+    let config = normalize_microsoft_config(client_id, tenant_id)?;
+    let changed = state.microsoft_config()? != config;
+    if changed {
+        auth::clear_token()?;
+    }
+    state.update_settings(|settings| {
+        settings.microsoft_config = Some(config);
+        if changed {
+            settings.account = None;
+        }
+    })?;
+    if changed {
+        state
+            .verified_sources
+            .lock()
+            .map_err(|_| AppError::Message("Provenance cache lock was poisoned".into()))?
+            .clear();
+    }
     build_status(&state).await
 }
 
@@ -213,6 +263,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_app_status,
+            save_microsoft_config,
             sign_in,
             sign_out,
             save_profile,
@@ -222,4 +273,25 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Atlas");
+}
+
+#[cfg(test)]
+mod configuration_tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_valid_microsoft_identifiers() {
+        let config = normalize_microsoft_config(
+            " 11111111-1111-4111-8111-111111111111 ".into(),
+            "22222222-2222-4222-8222-222222222222".into(),
+        )
+        .unwrap();
+        assert_eq!(config.client_id, "11111111-1111-4111-8111-111111111111");
+        assert_eq!(config.tenant_id, "22222222-2222-4222-8222-222222222222");
+    }
+
+    #[test]
+    fn rejects_invalid_microsoft_identifiers() {
+        assert!(normalize_microsoft_config("not-an-id".into(), "also-not-an-id".into()).is_err());
+    }
 }
