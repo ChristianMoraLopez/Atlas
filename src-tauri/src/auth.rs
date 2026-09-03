@@ -87,7 +87,7 @@ fn save_refresh_token(refresh_token: &str) -> Result<()> {
         ));
     }
     let generation = uuid::Uuid::new_v4().simple().to_string();
-    let mut written = Vec::new();
+    let mut written: Vec<String> = Vec::new();
     for (index, value) in chunks.iter().enumerate() {
         let name = credential_name(&generation, index);
         if let Err(error) = entry(&name)?.set_password(value) {
