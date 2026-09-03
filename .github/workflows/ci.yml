@@ -17,7 +17,7 @@ jobs:
   build:
     name: Portable Windows x64
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     env:
       CIRCANA_AZURE_CLIENT_ID: ${{ vars.CIRCANA_AZURE_CLIENT_ID }}
       CIRCANA_AZURE_TENANT_ID: ${{ vars.CIRCANA_AZURE_TENANT_ID }}
@@ -32,6 +32,11 @@ jobs:
         with:
           workspaces: ./src-tauri -> target
           cache-on-failure: true
+      - name: Restore bundled Local AI cache
+        uses: actions/cache@v4
+        with:
+          path: .atlas-ai-cache
+          key: atlas-ai-windows-x64-ollama-0.30.8-qwen2.5-1.5b-q4km
       - run: npm ci
       - run: npm run build
       - run: cargo test --manifest-path src-tauri/Cargo.toml
@@ -45,23 +50,13 @@ jobs:
         run: |
           $version = (Get-Content -Raw -LiteralPath package.json | ConvertFrom-Json).version
           $archive = "Atlas-$version-Windows-x64.zip"
-          New-Item -ItemType Directory -Path release-staging -Force | Out-Null
-          Copy-Item -LiteralPath src-tauri/target/release/atlas-tracker.exe -Destination release-staging/Atlas.exe
-          Copy-Item -LiteralPath docs/PORTABLE_README.md -Destination release-staging/README.md
-          Compress-Archive -LiteralPath release-staging/Atlas.exe,release-staging/README.md -DestinationPath "release-staging/$archive"
-          foreach ($requiredFile in @("release-staging/Atlas.exe", "release-staging/README.md", "release-staging/$archive")) {
-            if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) {
-              throw "Missing packaged file: $requiredFile"
-            }
-          }
-          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath "release-staging/$archive").Hash
-          "$hash *$archive" | Set-Content -Encoding ascii -LiteralPath release-staging/SHA256SUMS.txt
+          .github/scripts/package-portable.ps1 -AtlasExecutable src-tauri/target/release/atlas-tracker.exe -ArchiveName $archive
           "artifact=Atlas-$version-Windows-x64" >> $env:GITHUB_OUTPUT
       - name: Upload Atlas portable ZIP
         uses: actions/upload-artifact@v6
         with:
           name: ${{ steps.package.outputs.artifact }}
-          path: release-staging/
+          path: release-output/
           if-no-files-found: error
-          compression-level: 9
+          compression-level: 0
           retention-days: 7

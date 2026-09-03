@@ -34,6 +34,7 @@ export interface AppStatus {
   ollamaRunning: boolean;
   ollamaModelAvailable: boolean;
   ollamaModel: string;
+  localAiError?: string;
   destination?: TrackerDestination;
   autoSync: boolean;
   logPath: string;

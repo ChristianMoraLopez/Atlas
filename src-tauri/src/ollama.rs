@@ -1,12 +1,237 @@
-use crate::error::{AppError, Context, Result};
+use crate::{
+    diagnostics,
+    error::{AppError, Context, Result},
+};
 use chrono::{DateTime, Utc};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    fs::OpenOptions,
+    path::{Path, PathBuf},
+    process::{Child, Command, Stdio},
+    sync::Mutex,
+    time::Duration,
+};
 use url::Url;
 
-const OLLAMA_GENERATE_URL: &str = "http://127.0.0.1:11434/api/generate";
-const OLLAMA_TAGS_URL: &str = "http://127.0.0.1:11434/api/tags";
+pub const BUNDLED_MODEL: &str = "qwen2.5:1.5b-instruct-q4_K_M";
+const OLLAMA_HOST: &str = "127.0.0.1:11435";
+const OLLAMA_GENERATE_URL: &str = "http://127.0.0.1:11435/api/generate";
+const OLLAMA_TAGS_URL: &str = "http://127.0.0.1:11435/api/tags";
+const MODEL_BLOB: &str =
+    "models/blobs/sha256-183715c435899236895da3869489cc30ac241476b4971a20285b1a462818a5b4";
+const MODEL_BLOB_SIZE: u64 = 986_048_512;
+
+pub struct ManagedRuntime {
+    root: PathBuf,
+    log_path: PathBuf,
+    child: Mutex<Option<Child>>,
+}
+
+impl ManagedRuntime {
+    pub fn discover(log_path: PathBuf) -> Self {
+        #[cfg(debug_assertions)]
+        let configured_root = std::env::var_os("ATLAS_AI_ROOT").map(PathBuf::from);
+        #[cfg(not(debug_assertions))]
+        let configured_root: Option<PathBuf> = None;
+
+        let root = configured_root.unwrap_or_else(|| {
+            std::env::current_exe()
+                .ok()
+                .and_then(|path| path.parent().map(Path::to_path_buf))
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("AtlasAI")
+        });
+        Self {
+            root,
+            log_path,
+            child: Mutex::new(None),
+        }
+    }
+
+    fn executable(&self) -> PathBuf {
+        self.root.join("ollama.exe")
+    }
+
+    fn models(&self) -> PathBuf {
+        self.root.join("models")
+    }
+
+    fn validate_bundle(&self) -> Result<()> {
+        let executable = self.executable();
+        if !executable.is_file() {
+            return Err(AppError::Message(format!(
+                "The bundled Local AI runtime is missing at {}. Extract the complete Atlas portable ZIP and try again.",
+                executable.display()
+            )));
+        }
+        let model = self.root.join(MODEL_BLOB);
+        let metadata =
+            std::fs::metadata(&model).context("Unable to inspect the bundled AI model")?;
+        if !metadata.is_file() || metadata.len() != MODEL_BLOB_SIZE {
+            return Err(AppError::Message(format!(
+                "The bundled Local AI model is missing or incomplete at {}. Extract the complete Atlas portable ZIP and try again.",
+                model.display()
+            )));
+        }
+        Ok(())
+    }
+
+    fn start_if_needed(&self) -> Result<()> {
+        self.validate_bundle()?;
+        let mut child = self
+            .child
+            .lock()
+            .map_err(|_| AppError::Message("Local AI process lock was poisoned".into()))?;
+        if let Some(process) = child.as_mut() {
+            match process.try_wait() {
+                Ok(None) => return Ok(()),
+                Ok(Some(status)) => diagnostics::error(
+                    "local-ai/process",
+                    &format!("Bundled Ollama exited unexpectedly with {status}"),
+                ),
+                Err(error) => {
+                    return Err(AppError::Message(format!(
+                        "Unable to inspect the bundled Local AI process: {error}"
+                    )))
+                }
+            }
+        }
+
+        let output = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.log_path)
+            .context("Unable to open the Local AI diagnostic log")?;
+        let error_output = output
+            .try_clone()
+            .context("Unable to prepare the Local AI diagnostic log")?;
+        let mut command = Command::new(self.executable());
+        command
+            .arg("serve")
+            .current_dir(&self.root)
+            .env("OLLAMA_HOST", OLLAMA_HOST)
+            .env("OLLAMA_MODELS", self.models())
+            .env("OLLAMA_NOHISTORY", "1")
+            .env("OLLAMA_KEEP_ALIVE", "5m")
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(output))
+            .stderr(Stdio::from(error_output));
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x0800_0000);
+        }
+        let process = command
+            .spawn()
+            .context("Unable to start the bundled Local AI runtime")?;
+        diagnostics::info(
+            "local-ai/process",
+            &format!(
+                "Started bundled Ollama process {} on {OLLAMA_HOST}",
+                process.id()
+            ),
+        );
+        *child = Some(process);
+        Ok(())
+    }
+
+    fn child_is_running(&self) -> Result<bool> {
+        let mut child = self
+            .child
+            .lock()
+            .map_err(|_| AppError::Message("Local AI process lock was poisoned".into()))?;
+        let Some(process) = child.as_mut() else {
+            return Ok(false);
+        };
+        match process.try_wait() {
+            Ok(None) => Ok(true),
+            Ok(Some(status)) => {
+                diagnostics::error(
+                    "local-ai/process",
+                    &format!("Bundled Ollama stopped with {status}"),
+                );
+                *child = None;
+                Ok(false)
+            }
+            Err(error) => Err(AppError::Message(format!(
+                "Unable to inspect the bundled Local AI process: {error}"
+            ))),
+        }
+    }
+
+    pub async fn ensure_ready(&self, client: &Client) -> Result<()> {
+        let initial = probe(client).await;
+        let owned_process = self.child_is_running()?;
+        if initial == (true, true) && owned_process {
+            return Ok(());
+        }
+        if initial.0 {
+            return Err(AppError::Message(format!(
+                "Another Local AI service is already using {OLLAMA_HOST}. Close it and restart Atlas so Teams content is handled only by the bundled runtime."
+            )));
+        }
+
+        self.start_if_needed()?;
+        for _ in 0..80 {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            let current = probe(client).await;
+            if current == (true, true) {
+                return Ok(());
+            }
+            if current.0 {
+                return Err(AppError::Message(format!(
+                    "The bundled Local AI runtime started, but model {BUNDLED_MODEL} was not found in the portable package."
+                )));
+            }
+            if !self.child_is_running()? {
+                return Err(AppError::Message(format!(
+                    "The bundled Local AI runtime stopped during startup. See {} for details.",
+                    self.log_path.display()
+                )));
+            }
+        }
+        Err(AppError::Message(format!(
+            "The bundled Local AI runtime did not become ready within 20 seconds. See {} for details.",
+            self.log_path.display()
+        )))
+    }
+
+    pub async fn status(&self, client: &Client) -> (bool, bool, Option<String>) {
+        match self.ensure_ready(client).await {
+            Ok(()) => (true, true, None),
+            Err(error) => {
+                let message = error.to_string();
+                diagnostics::error("local-ai/status", &message);
+                (false, false, Some(message))
+            }
+        }
+    }
+
+    pub fn stop(&self) {
+        let Ok(mut child) = self.child.lock() else {
+            return;
+        };
+        if let Some(mut process) = child.take() {
+            if let Err(error) = process.kill() {
+                diagnostics::error(
+                    "local-ai/process",
+                    &format!("Unable to stop bundled Ollama: {error}"),
+                );
+            } else {
+                let _ = process.wait();
+                diagnostics::info("local-ai/process", "Stopped bundled Ollama");
+            }
+        }
+    }
+}
+
+impl Drop for ManagedRuntime {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct ChatEvidence {
@@ -30,6 +255,7 @@ struct TagsResponse {
     #[serde(default)]
     models: Vec<ModelInfo>,
 }
+
 #[derive(Deserialize)]
 struct ModelInfo {
     name: String,
@@ -40,7 +266,7 @@ fn localhost_url(value: &str) -> Result<Url> {
     let ip = url
         .host_str()
         .and_then(|host| host.parse::<std::net::IpAddr>().ok());
-    if url.scheme() != "http" || !ip.is_some_and(|v| v.is_loopback()) {
+    if url.scheme() != "http" || !ip.is_some_and(|value| value.is_loopback()) {
         return Err(AppError::Message(
             "Refused a local-AI request because its destination was not a loopback address.".into(),
         ));
@@ -48,16 +274,11 @@ fn localhost_url(value: &str) -> Result<Url> {
     Ok(url)
 }
 
-pub async fn status(client: &Client, model: &str) -> (bool, bool) {
+async fn probe(client: &Client) -> (bool, bool) {
     let Ok(url) = localhost_url(OLLAMA_TAGS_URL) else {
         return (false, false);
     };
-    let Ok(response) = client
-        .get(url)
-        .timeout(std::time::Duration::from_secs(2))
-        .send()
-        .await
-    else {
+    let Ok(response) = client.get(url).timeout(Duration::from_secs(2)).send().await else {
         return (false, false);
     };
     if !response.status().is_success() {
@@ -66,12 +287,9 @@ pub async fn status(client: &Client, model: &str) -> (bool, bool) {
     let Ok(tags) = response.json::<TagsResponse>().await else {
         return (true, false);
     };
-    let base = model.split(':').next().unwrap_or(model);
     (
         true,
-        tags.models
-            .iter()
-            .any(|v| v.name == model || v.name.split(':').next() == Some(base)),
+        tags.models.iter().any(|model| model.name == BUNDLED_MODEL),
     )
 }
 
@@ -83,19 +301,24 @@ struct GenerateRequest<'a> {
     format: &'static str,
     options: GenerateOptions,
 }
+
 #[derive(Serialize)]
 struct GenerateOptions {
     temperature: f32,
+    num_ctx: u32,
 }
+
 #[derive(Deserialize)]
 struct GenerateResponse {
     response: String,
 }
+
 #[derive(Deserialize)]
 struct ModelOutput {
     #[serde(default)]
     interactions: Vec<ModelCandidate>,
 }
+
 #[derive(Deserialize)]
 struct ModelCandidate {
     #[serde(default)]
@@ -114,16 +337,21 @@ pub async fn summarize(
     if evidence.is_empty() {
         return Ok(Vec::new());
     }
+    if model != BUNDLED_MODEL {
+        return Err(AppError::Message(
+            "Refused to use an unbundled Local AI model.".into(),
+        ));
+    }
     let url = localhost_url(OLLAMA_GENERATE_URL)?;
     let lines = evidence
         .iter()
-        .map(|m| {
+        .map(|message| {
             format!(
                 "[id={}] [{}] {}: {}",
-                m.id,
-                m.created.to_rfc3339(),
-                m.author,
-                m.text
+                message.id,
+                message.created.to_rfc3339(),
+                message.author,
+                message.text
             )
         })
         .collect::<Vec<_>>()
@@ -138,30 +366,36 @@ MESSAGES:
     );
     let response = client
         .post(url)
-        .timeout(std::time::Duration::from_secs(90))
+        .timeout(Duration::from_secs(180))
         .json(&GenerateRequest {
             model,
             prompt,
             stream: false,
             format: "json",
-            options: GenerateOptions { temperature: 0.0 },
+            options: GenerateOptions {
+                temperature: 0.0,
+                num_ctx: 4096,
+            },
         })
         .send()
         .await
-        .context("The local Ollama request failed")?;
+        .context("The bundled Local AI request failed")?;
     if !response.status().is_success() {
         return Err(AppError::Message(format!(
-            "Local Ollama returned {}. No chat suggestions were created.",
+            "Bundled Local AI returned {}. No chat suggestions were created.",
             response.status()
         )));
     }
     let raw: GenerateResponse = response
         .json()
         .await
-        .context("Ollama returned an invalid response envelope")?;
-    let parsed: ModelOutput =
-        serde_json::from_str(raw.response.trim()).context("Ollama did not return valid JSON")?;
-    let by_id: HashMap<&str, &ChatEvidence> = evidence.iter().map(|v| (v.id.as_str(), v)).collect();
+        .context("Bundled Local AI returned an invalid response envelope")?;
+    let parsed: ModelOutput = serde_json::from_str(raw.response.trim())
+        .context("Bundled Local AI did not return valid JSON")?;
+    let by_id: HashMap<&str, &ChatEvidence> = evidence
+        .iter()
+        .map(|value| (value.id.as_str(), value))
+        .collect();
     let mut seen = HashSet::new();
     let mut result = Vec::new();
     for candidate in parsed.interactions {
@@ -179,7 +413,7 @@ MESSAGES:
             .iter()
             .filter_map(|id| by_id.get(id.as_str()).copied())
             .collect();
-        matched.sort_by_key(|v| v.created);
+        matched.sort_by_key(|value| value.created);
         let start = matched.first().unwrap().created;
         let end = matched.last().unwrap().created;
         result.push(SuggestedInteraction {
@@ -196,10 +430,25 @@ MESSAGES:
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
-    fn ollama_destinations_are_compile_time_loopback_only() {
+    fn local_ai_destinations_are_compile_time_loopback_only() {
         assert!(localhost_url(OLLAMA_GENERATE_URL).is_ok());
         assert!(localhost_url("https://example.com/api").is_err());
-        assert!(localhost_url("http://localhost:11434/api/generate").is_err());
+        assert!(localhost_url("http://localhost:11435/api/generate").is_err());
+    }
+
+    #[test]
+    fn runtime_is_discovered_beside_atlas() {
+        let runtime = ManagedRuntime {
+            root: PathBuf::from(r"C:\Atlas\AtlasAI"),
+            log_path: PathBuf::from(r"C:\logs\local-ai.log"),
+            child: Mutex::new(None),
+        };
+        assert_eq!(
+            runtime.executable(),
+            PathBuf::from(r"C:\Atlas\AtlasAI\ollama.exe")
+        );
+        assert_eq!(runtime.models(), PathBuf::from(r"C:\Atlas\AtlasAI\models"));
     }
 }

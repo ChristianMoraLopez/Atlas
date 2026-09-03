@@ -10,6 +10,7 @@ permissions:
 jobs:
   publish:
     runs-on: windows-latest
+    timeout-minutes: 90
     env:
       CIRCANA_AZURE_CLIENT_ID: ${{ vars.CIRCANA_AZURE_CLIENT_ID }}
       CIRCANA_AZURE_TENANT_ID: ${{ vars.CIRCANA_AZURE_TENANT_ID }}
@@ -24,6 +25,11 @@ jobs:
         with:
           workspaces: ./src-tauri -> target
           cache-on-failure: true
+      - name: Restore bundled Local AI cache
+        uses: actions/cache@v4
+        with:
+          path: .atlas-ai-cache
+          key: atlas-ai-windows-x64-ollama-0.30.8-qwen2.5-1.5b-q4km
       - run: npm ci
       - run: npm run build
       - run: cargo test --manifest-path src-tauri/Cargo.toml
@@ -34,14 +40,13 @@ jobs:
       - name: Package portable executable
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Path portable -Force | Out-Null
-          Copy-Item -LiteralPath src-tauri/target/release/atlas-tracker.exe -Destination portable/Atlas.exe
-          Copy-Item -LiteralPath docs/PORTABLE_README.md -Destination portable/README.md
-          Compress-Archive -Path portable/* -DestinationPath "Atlas_${{ github.ref_name }}_portable_windows_x64.zip"
+          .github/scripts/package-portable.ps1 -AtlasExecutable src-tauri/target/release/atlas-tracker.exe -ArchiveName "Atlas_${{ github.ref_name }}_portable_windows_x64.zip"
       - name: Publish portable GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: Atlas_${{ github.ref_name }}_portable_windows_x64.zip
+          files: |
+            release-output/Atlas_${{ github.ref_name }}_portable_windows_x64.zip
+            release-output/SHA256SUMS.txt
           name: Atlas ${{ github.ref_name }}
-          body: Download the portable Windows zip, extract it, and run Atlas.exe. No installer is required.
+          body: Download the portable Windows zip, extract the complete folder, and run Atlas.exe. The managed CPU-only Ollama runtime and Qwen2.5 model are included; no separate AI installation is required.
           fail_on_unmatched_files: true

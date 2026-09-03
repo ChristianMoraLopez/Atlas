@@ -1,5 +1,7 @@
 node_modules/
 dist/
+.atlas-ai-cache/
+release-output/
 src-tauri/target/
 .env
 .env.*

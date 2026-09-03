@@ -14,10 +14,8 @@ export const api = {
   status: () => call<AppStatus>("get_app_status"),
   saveMicrosoftConfig: (config: MicrosoftConfig) => call<AppStatus>("save_microsoft_config", { clientId: config.clientId, tenantId: config.tenantId }),
   signIn: () => call<AppStatus>("sign_in"),
-  connectTeams: () => call<AppStatus>("connect_teams"),
   signOut: () => call<void>("sign_out"),
   saveProfile: (profile: UserProfile) => call<void>("save_profile", { profile }),
-  setOllamaModel: (model: string) => call<void>("set_ollama_model", { model }),
   saveDestination: (destination: TrackerDestination, autoSync: boolean) =>
     call<AppStatus>("save_tracker_destination", { destination, autoSync }),
   extract: (date: string, includeEmail: boolean, includeTeams: boolean, timezone: string) =>

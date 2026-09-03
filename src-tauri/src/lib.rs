@@ -22,8 +22,8 @@ use tauri::Manager;
 async fn build_status(state: &AppState) -> Result<AppStatus> {
     let settings = state.read_settings()?;
     let microsoft_config = state.microsoft_config()?;
-    let (ollama_running, ollama_model_available) =
-        ollama::status(&state.http, &settings.ollama_model).await;
+    let (ollama_running, ollama_model_available, local_ai_error) =
+        state.local_ai.status(&state.http).await;
     let token_available = match auth::has_token() {
         Ok(value) => value,
         Err(error) => {
@@ -40,7 +40,8 @@ async fn build_status(state: &AppState) -> Result<AppStatus> {
         profile: settings.profile,
         ollama_running,
         ollama_model_available,
-        ollama_model: settings.ollama_model,
+        ollama_model: ollama::BUNDLED_MODEL.into(),
+        local_ai_error,
         destination: settings.destination,
         auto_sync: settings.auto_sync,
         log_path: diagnostics::path(),
@@ -58,18 +59,7 @@ async fn sign_in(state: tauri::State<'_, AppState>) -> Result<AppStatus> {
         .read_settings()?
         .destination
         .is_some_and(|destination| destination.kind == TrackerDestinationKind::SharePoint);
-    let account = auth::sign_in(&state, include_files, false).await?;
-    state.update_settings(|settings| settings.account = Some(account))?;
-    build_status(&state).await
-}
-
-#[tauri::command]
-async fn connect_teams(state: tauri::State<'_, AppState>) -> Result<AppStatus> {
-    let include_files = state
-        .read_settings()?
-        .destination
-        .is_some_and(|destination| destination.kind == TrackerDestinationKind::SharePoint);
-    let account = auth::sign_in(&state, include_files, true).await?;
+    let account = auth::sign_in(&state, include_files).await?;
     state.update_settings(|settings| settings.account = Some(account))?;
     build_status(&state).await
 }
@@ -153,22 +143,6 @@ fn save_profile(state: tauri::State<'_, AppState>, mut profile: UserProfile) -> 
     state.update_settings(|settings| settings.profile = Some(profile))
 }
 
-#[tauri::command]
-fn set_ollama_model(state: tauri::State<'_, AppState>, model: String) -> Result<()> {
-    let model = model.trim();
-    if model.is_empty()
-        || model.len() > 100
-        || !model
-            .chars()
-            .all(|v| v.is_ascii_alphanumeric() || ":._-/".contains(v))
-    {
-        return Err(AppError::Message(
-            "Enter a valid local Ollama model name.".into(),
-        ));
-    }
-    state.update_settings(|settings| settings.ollama_model = model.to_string())
-}
-
 fn normalize_local_destination(value: String, existing: bool) -> Result<TrackerDestination> {
     let value = value.trim();
     if value.is_empty() {
@@ -231,7 +205,7 @@ async fn save_tracker_destination(
         TrackerDestinationKind::LocalNew => normalize_local_destination(destination.value, false)?,
         TrackerDestinationKind::SharePoint => {
             let value = sharepoint::normalize_url(&destination.value)?;
-            let account = auth::sign_in(&state, true, false).await?;
+            let account = auth::sign_in(&state, true).await?;
             state.update_settings(|settings| settings.account = Some(account))?;
             let token = auth::access_token(&state).await?;
             sharepoint::validate(&state, &token, &value).await?;
@@ -274,7 +248,9 @@ async fn extract_interactions(
         ));
     }
     let token = auth::access_token(&state).await?;
-    let model = state.read_settings()?.ollama_model;
+    if include_teams {
+        state.local_ai.ensure_ready(&state.http).await?;
+    }
     let result = graph::extract(
         &state,
         &token,
@@ -282,7 +258,7 @@ async fn extract_interactions(
         &timezone,
         include_email,
         include_teams,
-        &model,
+        ollama::BUNDLED_MODEL,
     )
     .await?;
     let mut cache = state
@@ -418,10 +394,8 @@ pub fn run() {
             get_app_status,
             save_microsoft_config,
             sign_in,
-            connect_teams,
             sign_out,
             save_profile,
-            set_ollama_model,
             save_tracker_destination,
             log_frontend_error,
             extract_interactions,

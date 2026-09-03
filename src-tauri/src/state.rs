@@ -2,6 +2,7 @@ use crate::{
     diagnostics,
     error::{Context, Result},
     models::{CachedAccessToken, Interaction, MicrosoftConfig, Settings},
+    ollama::ManagedRuntime,
 };
 use std::{collections::HashMap, fs, path::PathBuf, sync::Mutex, time::Duration};
 
@@ -12,6 +13,7 @@ pub struct AppState {
     pub settings: Mutex<Settings>,
     pub verified_sources: Mutex<HashMap<String, Interaction>>,
     pub cached_access_token: Mutex<Option<CachedAccessToken>>,
+    pub local_ai: ManagedRuntime,
 }
 
 impl AppState {
@@ -62,6 +64,7 @@ impl AppState {
             settings: Mutex::new(settings),
             verified_sources: Mutex::new(HashMap::new()),
             cached_access_token: Mutex::new(None),
+            local_ai: ManagedRuntime::discover(config_dir.join("logs").join("local-ai.log")),
         })
     }
 

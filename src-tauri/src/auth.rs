@@ -101,7 +101,7 @@ fn save_refresh_token(refresh_token: &str) -> Result<()> {
         written.push(name);
     }
     let metadata = RefreshMetadata {
-        version: 1,
+        version: 2,
         generation,
         chunks: chunks.len(),
     };
@@ -122,10 +122,10 @@ fn load_refresh_token() -> Result<Option<String>> {
         return Ok(None);
     };
     if let Ok(metadata) = serde_json::from_str::<RefreshMetadata>(&value) {
-        if metadata.version != 1 || metadata.chunks == 0 || metadata.chunks > MAX_CREDENTIAL_CHUNKS
+        if metadata.version != 2 || metadata.chunks == 0 || metadata.chunks > MAX_CREDENTIAL_CHUNKS
         {
             return Err(AppError::Message(
-                "The stored Microsoft session metadata is invalid. Sign out and sign in again."
+                "Atlas now requires Teams access. Sign in again to approve the updated Microsoft permissions."
                     .into(),
             ));
         }
@@ -142,11 +142,10 @@ fn load_refresh_token() -> Result<Option<String>> {
         return Ok(Some(refresh));
     }
 
-    // Version 0.1 stored access and refresh tokens together. Read that format once so
-    // existing users can migrate without being forced through login again.
-    let legacy: TokenRecord = serde_json::from_str(&value)
-        .context("The stored Microsoft session is invalid. Sign out and sign in again")?;
-    Ok(legacy.refresh_token)
+    Err(AppError::Message(
+        "Atlas now requires Teams access. Sign in again to approve the updated Microsoft permissions."
+            .into(),
+    ))
 }
 
 pub fn has_token() -> Result<bool> {
@@ -196,18 +195,12 @@ fn oauth_client(state: &AppState, redirect: Option<String>) -> Result<OAuthClien
     }
 }
 
-pub async fn sign_in(
-    state: &AppState,
-    include_files: bool,
-    include_teams: bool,
-) -> Result<AccountInfo> {
+pub async fn sign_in(state: &AppState, include_files: bool) -> Result<AccountInfo> {
     diagnostics::info(
         "auth",
-        match (include_files, include_teams) {
-            (true, true) => "Starting Microsoft PKCE sign-in with file and Teams access",
-            (true, false) => "Starting Microsoft PKCE sign-in with file access",
-            (false, true) => "Starting Microsoft PKCE sign-in with Teams access",
-            (false, false) => "Starting Microsoft PKCE sign-in",
+        match include_files {
+            true => "Starting Microsoft PKCE sign-in with Teams and file access",
+            false => "Starting Microsoft PKCE sign-in with Teams access",
         },
     );
     let listener = TcpListener::bind("127.0.0.1:0")
@@ -226,14 +219,10 @@ pub async fn sign_in(
         .add_scope(Scope::new("User.Read".into()))
         .add_scope(Scope::new("Calendars.Read".into()))
         .add_scope(Scope::new("Mail.Read".into()))
+        .add_scope(Scope::new("Chat.Read".into()))
         .set_pkce_challenge(challenge);
     let authorization = if include_files {
         authorization.add_scope(Scope::new("Files.ReadWrite".into()))
-    } else {
-        authorization
-    };
-    let authorization = if include_teams {
-        authorization.add_scope(Scope::new("Chat.Read".into()))
     } else {
         authorization
     };

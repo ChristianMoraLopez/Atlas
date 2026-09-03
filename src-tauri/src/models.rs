@@ -59,6 +59,8 @@ pub struct AppStatus {
     pub ollama_model_available: bool,
     pub ollama_model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_ai_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub destination: Option<TrackerDestination>,
     pub auto_sync: bool,
     pub log_path: String,
@@ -71,16 +73,10 @@ pub struct Settings {
     pub account: Option<AccountInfo>,
     #[serde(default)]
     pub microsoft_config: Option<MicrosoftConfig>,
-    #[serde(default = "default_model")]
-    pub ollama_model: String,
     #[serde(default)]
     pub destination: Option<TrackerDestination>,
     #[serde(default = "default_auto_sync")]
     pub auto_sync: bool,
-}
-
-fn default_model() -> String {
-    "qwen2.5:3b".into()
 }
 
 fn default_auto_sync() -> bool {
@@ -93,7 +89,6 @@ impl Default for Settings {
             profile: None,
             account: None,
             microsoft_config: None,
-            ollama_model: default_model(),
             destination: None,
             auto_sync: default_auto_sync(),
         }
