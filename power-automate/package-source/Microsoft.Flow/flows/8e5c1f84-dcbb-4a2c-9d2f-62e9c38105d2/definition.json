@@ -1,0 +1,393 @@
+{
+  "name": "8e5c1f84-dcbb-4a2c-9d2f-62e9c38105d2",
+  "id": "/providers/Microsoft.Flow/flows/8e5c1f84-dcbb-4a2c-9d2f-62e9c38105d2",
+  "type": "Microsoft.Flow/flows",
+  "properties": {
+    "apiId": "/providers/Microsoft.PowerApps/apis/shared_logicflows",
+    "displayName": "Atlas - Export evidence to OneDrive",
+    "definition": {
+      "metadata": {
+        "workflowEntityId": null,
+        "provisioningMethod": "FromDefinition",
+        "failureAlertSubscription": true,
+        "clientLastModifiedTime": "2026-09-07T00:00:00Z",
+        "creator": {
+          "id": "7e2e1c20-4505-48a3-b443-ef068294d24f",
+          "type": "User",
+          "tenantId": "5539dce4-fdf0-42cc-b5ac-b0f8eb6c5341"
+        }
+      },
+      "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+      "contentVersion": "1.0.0.0",
+      "parameters": {
+        "$connections": {
+          "defaultValue": {},
+          "type": "Object"
+        },
+        "$authentication": {
+          "defaultValue": {},
+          "type": "SecureObject"
+        }
+      },
+      "triggers": {
+        "Every_hour": {
+          "type": "Recurrence",
+          "recurrence": {
+            "frequency": "Hour",
+            "interval": 1,
+            "timeZone": "SA Pacific Standard Time"
+          }
+        }
+      },
+      "actions": {
+        "TargetDate": {
+          "type": "Compose",
+          "inputs": "@formatDateTime(convertTimeZone(utcNow(),'UTC','SA Pacific Standard Time'),'yyyy-MM-dd')",
+          "runAfter": {}
+        },
+        "StartUtc": {
+          "type": "Compose",
+          "inputs": "@convertToUtc(concat(outputs('TargetDate'),'T00:00:00'),'SA Pacific Standard Time','yyyy-MM-ddTHH:mm:ssZ')",
+          "runAfter": {
+            "TargetDate": ["Succeeded"]
+          }
+        },
+        "EndUtc": {
+          "type": "Compose",
+          "inputs": "@convertToUtc(concat(formatDateTime(addDays(outputs('TargetDate'),1),'yyyy-MM-dd'),'T00:00:00'),'SA Pacific Standard Time','yyyy-MM-ddTHH:mm:ssZ')",
+          "runAfter": {
+            "StartUtc": ["Succeeded"]
+          }
+        },
+        "Initialize_CalendarEvidence": {
+          "type": "InitializeVariable",
+          "inputs": {
+            "variables": [
+              {
+                "name": "CalendarEvidence",
+                "type": "array",
+                "value": []
+              }
+            ]
+          },
+          "runAfter": {
+            "EndUtc": ["Succeeded"]
+          }
+        },
+        "Initialize_MailEvidence": {
+          "type": "InitializeVariable",
+          "inputs": {
+            "variables": [
+              {
+                "name": "MailEvidence",
+                "type": "array",
+                "value": []
+              }
+            ]
+          },
+          "runAfter": {
+            "Initialize_CalendarEvidence": ["Succeeded"]
+          }
+        },
+        "Initialize_TeamsEvidence": {
+          "type": "InitializeVariable",
+          "inputs": {
+            "variables": [
+              {
+                "name": "TeamsEvidence",
+                "type": "array",
+                "value": []
+              }
+            ]
+          },
+          "runAfter": {
+            "Initialize_MailEvidence": ["Succeeded"]
+          }
+        },
+        "Calendar_evidence": {
+          "type": "Scope",
+          "actions": {
+            "Get_calendars_V2": {
+              "type": "OpenApiConnection",
+              "inputs": {
+                "host": {
+                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_office365",
+                  "connectionName": "shared_office365",
+                  "operationId": "CalendarGetTables_V2"
+                },
+                "parameters": {},
+                "authentication": "@parameters('$authentication')"
+              },
+              "runAfter": {}
+            },
+            "Get_calendar_view_of_events_V3": {
+              "type": "OpenApiConnection",
+              "inputs": {
+                "host": {
+                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_office365",
+                  "connectionName": "shared_office365",
+                  "operationId": "GetEventsCalendarViewV3"
+                },
+                "parameters": {
+                  "calendarId": "@first(body('Get_calendars_V2')?['value'])?['id']",
+                  "startDateTimeUtc": "@outputs('StartUtc')",
+                  "endDateTimeUtc": "@outputs('EndUtc')",
+                  "$top": 500
+                },
+                "authentication": "@parameters('$authentication')"
+              },
+              "runAfter": {
+                "Get_calendars_V2": ["Succeeded"]
+              }
+            },
+            "Select_calendar_fields": {
+              "type": "Select",
+              "inputs": {
+                "from": "@body('Get_calendar_view_of_events_V3')?['value']",
+                "select": {
+                  "id": "@item()?['id']",
+                  "subject": "@coalesce(item()?['subject'],'')",
+                  "start": "@item()?['startWithTimeZone']",
+                  "end": "@item()?['endWithTimeZone']",
+                  "organizerAddress": "@coalesce(item()?['organizer'],'')",
+                  "isCancelled": false
+                }
+              },
+              "runAfter": {
+                "Get_calendar_view_of_events_V3": ["Succeeded"]
+              }
+            },
+            "Set_CalendarEvidence": {
+              "type": "SetVariable",
+              "inputs": {
+                "name": "CalendarEvidence",
+                "value": "@body('Select_calendar_fields')"
+              },
+              "runAfter": {
+                "Select_calendar_fields": ["Succeeded"]
+              }
+            }
+          },
+          "runAfter": {
+            "Initialize_TeamsEvidence": ["Succeeded"]
+          }
+        },
+        "Mail_evidence": {
+          "type": "Scope",
+          "actions": {
+            "Get_emails_V3": {
+              "type": "OpenApiConnection",
+              "inputs": {
+                "host": {
+                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_office365",
+                  "connectionName": "shared_office365",
+                  "operationId": "GetEmailsV3"
+                },
+                "parameters": {
+                  "folderPath": "Inbox",
+                  "fetchOnlyUnread": false,
+                  "includeAttachments": false,
+                  "top": 1000
+                },
+                "authentication": "@parameters('$authentication')"
+              },
+              "runAfter": {}
+            },
+            "Filter_email_to_target_day": {
+              "type": "Query",
+              "inputs": {
+                "from": "@body('Get_emails_V3')?['value']",
+                "where": "@and(not(empty(item()?['receivedDateTime'])),greaterOrEquals(ticks(item()?['receivedDateTime']),ticks(outputs('StartUtc'))),less(ticks(item()?['receivedDateTime']),ticks(outputs('EndUtc'))))"
+              },
+              "runAfter": {
+                "Get_emails_V3": ["Succeeded"]
+              }
+            },
+            "Select_mail_fields": {
+              "type": "Select",
+              "inputs": {
+                "from": "@body('Filter_email_to_target_day')",
+                "select": {
+                  "id": "@item()?['id']",
+                  "subject": "@coalesce(item()?['subject'],'')",
+                  "receivedDateTime": "@item()?['receivedDateTime']",
+                  "senderAddress": "@coalesce(item()?['from'],'')",
+                  "isDraft": false
+                }
+              },
+              "runAfter": {
+                "Filter_email_to_target_day": ["Succeeded"]
+              }
+            },
+            "Set_MailEvidence": {
+              "type": "SetVariable",
+              "inputs": {
+                "name": "MailEvidence",
+                "value": "@body('Select_mail_fields')"
+              },
+              "runAfter": {
+                "Select_mail_fields": ["Succeeded"]
+              }
+            }
+          },
+          "runAfter": {
+            "Initialize_TeamsEvidence": ["Succeeded"]
+          }
+        },
+        "Teams_evidence": {
+          "type": "Scope",
+          "actions": {
+            "List_chats": {
+              "type": "OpenApiConnection",
+              "inputs": {
+                "host": {
+                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_teams",
+                  "connectionName": "shared_teams",
+                  "operationId": "GetChats"
+                },
+                "parameters": {
+                  "chatType": "all",
+                  "topic": "all"
+                },
+                "authentication": "@parameters('$authentication')"
+              },
+              "runAfter": {}
+            },
+            "For_each_chat": {
+              "type": "Foreach",
+              "foreach": "@body('List_chats')?['value']",
+              "actions": {
+                "Get_messages_in_chat": {
+                  "type": "OpenApiConnection",
+                  "inputs": {
+                    "host": {
+                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_teams",
+                      "connectionName": "shared_teams",
+                      "operationId": "GetMessagesFromChat"
+                    },
+                    "parameters": {
+                      "chatId": "@items('For_each_chat')?['id']",
+                      "$filter": "@concat('createdDateTime lt ',outputs('EndUtc'))",
+                      "$orderby": "createdDateTime desc",
+                      "$top": "50"
+                    },
+                    "authentication": "@parameters('$authentication')"
+                  },
+                  "runAfter": {}
+                },
+                "Filter_messages_to_target_day": {
+                  "type": "Query",
+                  "inputs": {
+                    "from": "@body('Get_messages_in_chat')?['value']",
+                    "where": "@and(not(empty(item()?['createdDateTime'])),greaterOrEquals(ticks(item()?['createdDateTime']),ticks(outputs('StartUtc'))),less(ticks(item()?['createdDateTime']),ticks(outputs('EndUtc'))))"
+                  },
+                  "runAfter": {
+                    "Get_messages_in_chat": ["Succeeded"]
+                  }
+                },
+                "For_each_message": {
+                  "type": "Foreach",
+                  "foreach": "@body('Filter_messages_to_target_day')",
+                  "actions": {
+                    "Append_TeamsEvidence": {
+                      "type": "AppendToArrayVariable",
+                      "inputs": {
+                        "name": "TeamsEvidence",
+                        "value": {
+                          "id": "@items('For_each_message')?['id']",
+                          "chatId": "@items('For_each_chat')?['id']",
+                          "topic": "@coalesce(items('For_each_chat')?['topic'],'')",
+                          "createdDateTime": "@items('For_each_message')?['createdDateTime']",
+                          "author": "@coalesce(items('For_each_message')?['from']?['user']?['displayName'],'')",
+                          "content": "@coalesce(items('For_each_message')?['body']?['content'],'')",
+                          "messageType": "@coalesce(items('For_each_message')?['messageType'],'message')"
+                        }
+                      },
+                      "runAfter": {}
+                    }
+                  },
+                  "runAfter": {
+                    "Filter_messages_to_target_day": ["Succeeded"]
+                  },
+                  "runtimeConfiguration": {
+                    "concurrency": {
+                      "repetitions": 1
+                    }
+                  }
+                }
+              },
+              "runAfter": {
+                "List_chats": ["Succeeded"]
+              },
+              "runtimeConfiguration": {
+                "concurrency": {
+                  "repetitions": 1
+                }
+              }
+            }
+          },
+          "runAfter": {
+            "Initialize_TeamsEvidence": ["Succeeded"]
+          }
+        },
+        "Compose_Atlas_bundle": {
+          "type": "Compose",
+          "inputs": {
+            "schemaVersion": 1,
+            "exportedAt": "@utcNow()",
+            "targetDate": "@outputs('TargetDate')",
+            "calendar": "@variables('CalendarEvidence')",
+            "mail": "@variables('MailEvidence')",
+            "teams": "@variables('TeamsEvidence')"
+          },
+          "runAfter": {
+            "Calendar_evidence": ["Succeeded"],
+            "Mail_evidence": ["Succeeded", "Failed", "Skipped", "TimedOut"],
+            "Teams_evidence": ["Succeeded", "Failed", "Skipped", "TimedOut"]
+          }
+        },
+        "Create_Atlas_evidence_file": {
+          "type": "OpenApiConnection",
+          "inputs": {
+            "host": {
+              "apiId": "/providers/Microsoft.PowerApps/apis/shared_onedriveforbusiness",
+              "connectionName": "shared_onedriveforbusiness",
+              "operationId": "CreateFile"
+            },
+            "parameters": {
+              "folderPath": "/AtlasBridge/inbox",
+              "name": "@concat('atlas-evidence-',outputs('TargetDate'),'-',formatDateTime(utcNow(),'yyyyMMddTHHmmssZ'),'.json')",
+              "body": "@string(outputs('Compose_Atlas_bundle'))"
+            },
+            "authentication": "@parameters('$authentication')"
+          },
+          "runAfter": {
+            "Compose_Atlas_bundle": ["Succeeded"]
+          }
+        }
+      },
+      "outputs": {}
+    },
+    "connectionReferences": {
+      "shared_office365": {
+        "connectionName": "shared-office365-atlas-template",
+        "source": "Embedded",
+        "id": "/providers/Microsoft.PowerApps/apis/shared_office365",
+        "tier": "NotSpecified"
+      },
+      "shared_teams": {
+        "connectionName": "shared-teams-atlas-template",
+        "source": "Embedded",
+        "id": "/providers/Microsoft.PowerApps/apis/shared_teams",
+        "tier": "NotSpecified"
+      },
+      "shared_onedriveforbusiness": {
+        "connectionName": "shared-onedriveforbusiness-atlas-template",
+        "source": "Embedded",
+        "id": "/providers/Microsoft.PowerApps/apis/shared_onedriveforbusiness",
+        "tier": "NotSpecified"
+      }
+    },
+    "flowFailureAlertSubscribed": false
+  }
+}

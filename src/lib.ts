@@ -13,6 +13,7 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
 export const api = {
   status: () => call<AppStatus>("get_app_status"),
   saveMicrosoftConfig: (config: MicrosoftConfig) => call<AppStatus>("save_microsoft_config", { clientId: config.clientId, tenantId: config.tenantId }),
+  savePowerAutomateFolder: (folder: string) => call<AppStatus>("save_power_automate_folder", { folder }),
   signIn: () => call<AppStatus>("sign_in"),
   signOut: () => call<void>("sign_out"),
   saveProfile: (profile: UserProfile) => call<void>("save_profile", { profile }),

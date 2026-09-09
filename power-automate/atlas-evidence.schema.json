@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.local/schemas/atlas-evidence-v1.json",
+  "title": "Atlas Power Automate evidence bundle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "exportedAt", "targetDate", "calendar", "mail", "teams"],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "exportedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "targetDate": {
+      "type": "string",
+      "format": "date"
+    },
+    "calendar": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "subject", "start", "end", "organizerAddress", "isCancelled"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "subject": { "type": "string" },
+          "start": { "type": "string", "format": "date-time" },
+          "end": { "type": "string", "format": "date-time" },
+          "organizerAddress": { "type": "string" },
+          "isCancelled": { "type": "boolean" }
+        }
+      }
+    },
+    "mail": {
+      "type": "array",
+      "maxItems": 2000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "subject", "receivedDateTime", "senderAddress", "isDraft"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "subject": { "type": "string" },
+          "receivedDateTime": { "type": "string", "format": "date-time" },
+          "senderAddress": { "type": "string" },
+          "isDraft": { "type": "boolean" }
+        }
+      }
+    },
+    "teams": {
+      "type": "array",
+      "maxItems": 20000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "chatId", "topic", "createdDateTime", "author", "content", "messageType"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "chatId": { "type": "string" },
+          "topic": { "type": "string" },
+          "createdDateTime": { "type": "string", "format": "date-time" },
+          "author": { "type": "string" },
+          "content": { "type": "string" },
+          "messageType": { "type": "string" }
+        }
+      }
+    }
+  }
+}

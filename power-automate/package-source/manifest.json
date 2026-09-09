@@ -1,0 +1,100 @@
+{
+  "schema": "1.0",
+  "details": {
+    "displayName": "Atlas - Export evidence to OneDrive",
+    "description": "Exports today's Outlook calendar, mail metadata, and recent Teams chat evidence to the AtlasBridge OneDrive inbox.",
+    "createdTime": "2026-09-07T00:00:00Z",
+    "packageTelemetryId": "d8f3f75d-7df1-4c15-91dc-c7e837aba321",
+    "creator": "Atlas",
+    "sourceEnvironment": ""
+  },
+  "resources": {
+    "8e5c1f84-dcbb-4a2c-9d2f-62e9c38105d2": {
+      "type": "Microsoft.Flow/flows",
+      "suggestedCreationType": "New",
+      "creationType": "Existing, New, Update",
+      "details": {
+        "displayName": "Atlas - Export evidence to OneDrive"
+      },
+      "configurableBy": "User",
+      "hierarchy": "Root",
+      "dependsOn": [
+        "7b1e07f9-6928-48a3-8aca-63346ed992db",
+        "566130ab-984b-4387-990d-fb92de184a5d",
+        "d3c07da4-f1f1-466f-a75c-e45e8830c311",
+        "f395f93d-d14a-43dd-9f33-33c07d01ae90",
+        "6e634762-dc88-4270-8b82-15cc46e04a15",
+        "9f24a9ed-50f3-4137-852b-6cf68756be6c"
+      ]
+    },
+    "7b1e07f9-6928-48a3-8aca-63346ed992db": {
+      "id": "/providers/Microsoft.PowerApps/apis/shared_office365",
+      "name": "shared_office365",
+      "type": "Microsoft.PowerApps/apis",
+      "suggestedCreationType": "Existing",
+      "details": {
+        "displayName": "Office 365 Outlook"
+      },
+      "configurableBy": "System",
+      "hierarchy": "Child",
+      "dependsOn": []
+    },
+    "566130ab-984b-4387-990d-fb92de184a5d": {
+      "type": "Microsoft.PowerApps/apis/connections",
+      "suggestedCreationType": "Existing",
+      "creationType": "Existing",
+      "details": {
+        "displayName": "Choose your Office 365 Outlook connection"
+      },
+      "configurableBy": "User",
+      "hierarchy": "Child",
+      "dependsOn": ["7b1e07f9-6928-48a3-8aca-63346ed992db"]
+    },
+    "d3c07da4-f1f1-466f-a75c-e45e8830c311": {
+      "id": "/providers/Microsoft.PowerApps/apis/shared_teams",
+      "name": "shared_teams",
+      "type": "Microsoft.PowerApps/apis",
+      "suggestedCreationType": "Existing",
+      "details": {
+        "displayName": "Microsoft Teams"
+      },
+      "configurableBy": "System",
+      "hierarchy": "Child",
+      "dependsOn": []
+    },
+    "f395f93d-d14a-43dd-9f33-33c07d01ae90": {
+      "type": "Microsoft.PowerApps/apis/connections",
+      "suggestedCreationType": "Existing",
+      "creationType": "Existing",
+      "details": {
+        "displayName": "Choose your Microsoft Teams connection"
+      },
+      "configurableBy": "User",
+      "hierarchy": "Child",
+      "dependsOn": ["d3c07da4-f1f1-466f-a75c-e45e8830c311"]
+    },
+    "6e634762-dc88-4270-8b82-15cc46e04a15": {
+      "id": "/providers/Microsoft.PowerApps/apis/shared_onedriveforbusiness",
+      "name": "shared_onedriveforbusiness",
+      "type": "Microsoft.PowerApps/apis",
+      "suggestedCreationType": "Existing",
+      "details": {
+        "displayName": "OneDrive for Business"
+      },
+      "configurableBy": "System",
+      "hierarchy": "Child",
+      "dependsOn": []
+    },
+    "9f24a9ed-50f3-4137-852b-6cf68756be6c": {
+      "type": "Microsoft.PowerApps/apis/connections",
+      "suggestedCreationType": "Existing",
+      "creationType": "Existing",
+      "details": {
+        "displayName": "Choose your OneDrive for Business connection"
+      },
+      "configurableBy": "User",
+      "hierarchy": "Child",
+      "dependsOn": ["6e634762-dc88-4270-8b82-15cc46e04a15"]
+    }
+  }
+}

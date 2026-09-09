@@ -24,6 +24,14 @@ pub struct MicrosoftConfig {
     pub tenant_id: String,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceMode {
+    #[default]
+    MicrosoftGraph,
+    PowerAutomateFolder,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TrackerDestinationKind {
@@ -50,6 +58,9 @@ pub struct CachedAccessToken {
 pub struct AppStatus {
     pub configured: bool,
     pub signed_in: bool,
+    pub source_mode: SourceMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bridge_folder: Option<String>,
     pub microsoft_config: MicrosoftConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub account: Option<AccountInfo>,
@@ -72,6 +83,10 @@ pub struct Settings {
     pub profile: Option<UserProfile>,
     pub account: Option<AccountInfo>,
     #[serde(default)]
+    pub source_mode: SourceMode,
+    #[serde(default)]
+    pub bridge_folder: Option<String>,
+    #[serde(default)]
     pub microsoft_config: Option<MicrosoftConfig>,
     #[serde(default)]
     pub destination: Option<TrackerDestination>,
@@ -88,6 +103,8 @@ impl Default for Settings {
         Self {
             profile: None,
             account: None,
+            source_mode: SourceMode::default(),
+            bridge_folder: None,
             microsoft_config: None,
             destination: None,
             auto_sync: default_auto_sync(),

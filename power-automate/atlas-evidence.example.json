@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "exportedAt": "2026-09-07T22:00:00Z",
+  "targetDate": "2026-09-07",
+  "calendar": [
+    {
+      "id": "event-example-1",
+      "subject": "Customer review",
+      "start": "2026-09-07T14:00:00Z",
+      "end": "2026-09-07T15:00:00Z",
+      "organizerAddress": "owner@circana.com",
+      "isCancelled": false
+    }
+  ],
+  "mail": [
+    {
+      "id": "mail-example-1",
+      "subject": "Incident follow-up",
+      "receivedDateTime": "2026-09-07T16:00:00Z",
+      "senderAddress": "customer@example.com",
+      "isDraft": false
+    }
+  ],
+  "teams": [
+    {
+      "id": "message-example-1",
+      "chatId": "chat-example-1",
+      "topic": "Support coordination",
+      "createdDateTime": "2026-09-07T17:00:00Z",
+      "author": "Example colleague",
+      "content": "Reviewed the reported issue and confirmed the next action.",
+      "messageType": "message"
+    }
+  ]
+}

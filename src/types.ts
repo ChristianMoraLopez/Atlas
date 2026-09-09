@@ -18,6 +18,8 @@ export interface MicrosoftConfig {
   tenantId: string;
 }
 
+export type SourceMode = "microsoft_graph" | "power_automate_folder";
+
 export type TrackerDestinationKind = "local_existing" | "local_new" | "share_point";
 
 export interface TrackerDestination {
@@ -28,6 +30,8 @@ export interface TrackerDestination {
 export interface AppStatus {
   configured: boolean;
   signedIn: boolean;
+  sourceMode: SourceMode;
+  bridgeFolder?: string;
   microsoftConfig: MicrosoftConfig;
   account?: AccountInfo;
   profile?: UserProfile;

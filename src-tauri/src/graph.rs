@@ -89,7 +89,7 @@ struct MessageUser {
     display_name: Option<String>,
 }
 
-fn day_bounds(date: &str, timezone: &str) -> Result<(DateTime<Utc>, DateTime<Utc>)> {
+pub(crate) fn day_bounds(date: &str, timezone: &str) -> Result<(DateTime<Utc>, DateTime<Utc>)> {
     let date = NaiveDate::parse_from_str(date, "%Y-%m-%d").context("Choose a valid workday")?;
     let tz: Tz = timezone.parse().unwrap_or(chrono_tz::UTC);
     let start_local = tz
@@ -113,7 +113,7 @@ fn day_bounds(date: &str, timezone: &str) -> Result<(DateTime<Utc>, DateTime<Utc
     ))
 }
 
-fn parse_graph_time(value: &str) -> Result<DateTime<Utc>> {
+pub(crate) fn parse_graph_time(value: &str) -> Result<DateTime<Utc>> {
     if let Ok(value) = DateTime::parse_from_rfc3339(value) {
         return Ok(value.with_timezone(&Utc));
     }
@@ -167,7 +167,7 @@ async fn graph_get<T: serde::de::DeserializeOwned>(
         .context("Microsoft Graph returned invalid data")
 }
 
-fn excluded_subject(subject: &str) -> bool {
+pub(crate) fn excluded_subject(subject: &str) -> bool {
     let clean = subject
         .to_lowercase()
         .replace(['-', '_', ':'], " ")
@@ -180,7 +180,7 @@ fn excluded_subject(subject: &str) -> bool {
         || clean.contains("hora del tracker")
 }
 
-fn classify_client(address: Option<&str>) -> (String, String) {
+pub(crate) fn classify_client(address: Option<&str>) -> (String, String) {
     let domain = address
         .and_then(|v| v.split('@').nth(1))
         .unwrap_or("")

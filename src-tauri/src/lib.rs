@@ -1,4 +1,5 @@
 mod auth;
+mod bridge;
 mod diagnostics;
 mod error;
 mod excel;
@@ -12,7 +13,7 @@ use crate::{
     error::{AppError, Result},
     models::{
         AppStatus, ExportResult, ExtractionResult, Interaction, MicrosoftConfig, SourceKind,
-        TrackerDestination, TrackerDestinationKind, UserProfile,
+        SourceMode, TrackerDestination, TrackerDestinationKind, UserProfile,
     },
     state::AppState,
 };
@@ -31,10 +32,23 @@ async fn build_status(state: &AppState) -> Result<AppStatus> {
             false
         }
     };
+    let configured = match settings.source_mode {
+        SourceMode::MicrosoftGraph => {
+            !microsoft_config.client_id.is_empty() && !microsoft_config.tenant_id.is_empty()
+        }
+        SourceMode::PowerAutomateFolder => settings
+            .bridge_folder
+            .as_deref()
+            .is_some_and(|folder| Path::new(folder).is_dir()),
+    };
     Ok(AppStatus {
-        configured: !microsoft_config.client_id.is_empty()
-            && !microsoft_config.tenant_id.is_empty(),
-        signed_in: token_available && settings.account.is_some(),
+        configured,
+        signed_in: match settings.source_mode {
+            SourceMode::MicrosoftGraph => token_available && settings.account.is_some(),
+            SourceMode::PowerAutomateFolder => configured,
+        },
+        source_mode: settings.source_mode,
+        bridge_folder: settings.bridge_folder,
         microsoft_config,
         account: settings.account,
         profile: settings.profile,
@@ -98,6 +112,7 @@ async fn save_microsoft_config(
         auth::clear_token(&state)?;
     }
     state.update_settings(|settings| {
+        settings.source_mode = SourceMode::MicrosoftGraph;
         settings.microsoft_config = Some(config);
         if changed {
             settings.account = None;
@@ -110,6 +125,50 @@ async fn save_microsoft_config(
             .map_err(|_| AppError::Message("Provenance cache lock was poisoned".into()))?
             .clear();
     }
+    build_status(&state).await
+}
+
+fn normalize_bridge_folder(value: String) -> Result<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(AppError::Message(
+            "Choose the locally synced Power Automate inbox folder.".into(),
+        ));
+    }
+    let path = Path::new(value);
+    if !path.is_absolute() || !path.is_dir() {
+        return Err(AppError::Message(
+            "The Power Automate inbox must be an existing local folder.".into(),
+        ));
+    }
+    Ok(path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+async fn save_power_automate_folder(
+    state: tauri::State<'_, AppState>,
+    folder: String,
+) -> Result<AppStatus> {
+    let folder = normalize_bridge_folder(folder)?;
+    auth::clear_token(&state)?;
+    state.update_settings(|settings| {
+        settings.source_mode = SourceMode::PowerAutomateFolder;
+        settings.bridge_folder = Some(folder);
+        settings.account = None;
+        if settings
+            .destination
+            .as_ref()
+            .is_some_and(|destination| destination.kind == TrackerDestinationKind::SharePoint)
+        {
+            settings.destination = None;
+        }
+    })?;
+    state
+        .verified_sources
+        .lock()
+        .map_err(|_| AppError::Message("Provenance cache lock was poisoned".into()))?
+        .clear();
+    diagnostics::info("settings", "Power Automate inbox mode enabled");
     build_status(&state).await
 }
 
@@ -198,12 +257,18 @@ async fn save_tracker_destination(
     destination: TrackerDestination,
     auto_sync: bool,
 ) -> Result<AppStatus> {
+    let source_mode = state.read_settings()?.source_mode;
     let destination = match destination.kind {
         TrackerDestinationKind::LocalExisting => {
             normalize_local_destination(destination.value, true)?
         }
         TrackerDestinationKind::LocalNew => normalize_local_destination(destination.value, false)?,
         TrackerDestinationKind::SharePoint => {
+            if source_mode == SourceMode::PowerAutomateFolder {
+                return Err(AppError::Message(
+                    "Direct SharePoint access is unavailable in Power Automate Inbox mode. Choose the locally synced copy of the workbook instead.".into(),
+                ));
+            }
             let value = sharepoint::normalize_url(&destination.value)?;
             let account = auth::sign_in(&state, true).await?;
             state.update_settings(|settings| settings.account = Some(account))?;
@@ -242,25 +307,44 @@ async fn extract_interactions(
     include_teams: bool,
     timezone: String,
 ) -> Result<ExtractionResult> {
-    if state.read_settings()?.profile.is_none() {
+    let settings = state.read_settings()?;
+    if settings.profile.is_none() {
         return Err(AppError::Message(
             "Complete your profile before extracting interactions.".into(),
         ));
     }
-    let token = auth::access_token(&state).await?;
-    if include_teams {
-        state.local_ai.ensure_ready(&state.http).await?;
-    }
-    let result = graph::extract(
-        &state,
-        &token,
-        &date,
-        &timezone,
-        include_email,
-        include_teams,
-        ollama::BUNDLED_MODEL,
-    )
-    .await?;
+    let result = match settings.source_mode {
+        SourceMode::MicrosoftGraph => {
+            let token = auth::access_token(&state).await?;
+            if include_teams {
+                state.local_ai.ensure_ready(&state.http).await?;
+            }
+            graph::extract(
+                &state,
+                &token,
+                &date,
+                &timezone,
+                include_email,
+                include_teams,
+                ollama::BUNDLED_MODEL,
+            )
+            .await?
+        }
+        SourceMode::PowerAutomateFolder => {
+            let folder = settings.bridge_folder.ok_or_else(|| {
+                AppError::Message("Configure the Power Automate inbox folder first.".into())
+            })?;
+            bridge::extract(
+                &state,
+                Path::new(&folder),
+                &date,
+                &timezone,
+                include_email,
+                include_teams,
+            )
+            .await?
+        }
+    };
     let mut cache = state
         .verified_sources
         .lock()
@@ -292,13 +376,13 @@ fn validate_provenance(state: &AppState, interactions: &[Interaction]) -> Result
         }
         let trusted = cache.get(&item.source_id).ok_or_else(|| {
             AppError::Message(format!(
-                "Rejected '{}': it was not returned by Microsoft Graph during this extraction.",
+                "Rejected '{}': it was not returned by the configured evidence source during this extraction.",
                 item.evidence_label
             ))
         })?;
         if trusted.source_kind != item.source_kind {
             return Err(AppError::Message(
-                "Rejected an interaction whose source kind does not match its Graph evidence."
+                "Rejected an interaction whose source kind does not match its verified evidence."
                     .into(),
             ));
         }
@@ -360,6 +444,11 @@ async fn export_configured_tracker(
             result
         }
         TrackerDestinationKind::SharePoint => {
+            if settings.source_mode == SourceMode::PowerAutomateFolder {
+                return Err(AppError::Message(
+                    "Direct SharePoint export is unavailable in Power Automate Inbox mode.".into(),
+                ));
+            }
             let token = auth::access_token(&state).await?;
             sharepoint::export(&state, &token, &destination.value, &saved, &interactions).await?
         }
@@ -393,6 +482,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_app_status,
             save_microsoft_config,
+            save_power_automate_folder,
             sign_in,
             sign_out,
             save_profile,
