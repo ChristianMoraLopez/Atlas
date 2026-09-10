@@ -23,9 +23,10 @@ try {
     [xml] $types = Read-Entry '[Content_Types].xml'
     if ($solution.ImportExportXml.SolutionManifest.UniqueName -ne 'AtlasBridge') { throw 'Unexpected solution identity.' }
     if ($solution.ImportExportXml.SolutionManifest.Managed -ne '0') { throw 'Expected unmanaged solution.' }
-    if ($solution.ImportExportXml.SolutionManifest.Version -ne '1.0.0.0') { throw 'Unexpected version.' }
+    if ($solution.ImportExportXml.SolutionManifest.Version -ne '1.1.0.0') { throw 'Unexpected version.' }
     $workflows = @($custom.ImportExportXml.Workflows.Workflow)
     if ($workflows.Count -ne 1 -or $workflows[0].Category -ne '5') { throw 'Expected one cloud flow.' }
+    if ($workflows[0].StateCode -ne '1' -or $workflows[0].StatusCode -ne '2') { throw 'Cloud flow must be exported as active.' }
     if ($workflows[0].WorkflowId -ne '{8e5c1f84-dcbb-4a2c-9d2f-62e9c38105d2}') { throw 'Flow identity changed; unsafe for retries.' }
     $workflowName = $workflows[0].JsonFileName.TrimStart('/')
     $flowText = Read-Entry $workflowName
@@ -60,7 +61,7 @@ try {
                 $alias = $action.inputs.host.connectionName
                 if (-not $expected.ContainsKey($alias)) { throw 'Nonstandard or unknown connector.' }
                 if ($action.inputs.host.apiId -ne "/providers/Microsoft.PowerApps/apis/$alias") { throw 'Connector identity mismatch.' }
-            } elseif ($action.type -notin @('Compose','InitializeVariable','SetVariable','Scope','Select','Query','Foreach','AppendToArrayVariable','If','Terminate')) {
+            } elseif ($action.type -notin @('Compose','InitializeVariable','SetVariable','Scope','Select','Query','Foreach','AppendToArrayVariable')) {
                 throw "Unexpected action type: $($action.type)"
             }
             $nestedActions = Get-OptionalProperty $action 'actions'
@@ -72,11 +73,16 @@ try {
     }
     Validate-Actions $flow.properties.definition.actions
     $actions = $flow.properties.definition.actions
+    if ($actions.Compose_Atlas_bundle.inputs.schemaVersion -ne 2) { throw 'Expected evidence contract v2.' }
+    foreach ($source in @('calendar', 'mail', 'teams')) {
+        if (-not $actions.Compose_Atlas_bundle.inputs.sources.$source) { throw "Missing source health flag: $source" }
+    }
     foreach ($scope in @('Calendar_evidence', 'Mail_evidence', 'Teams_evidence')) {
-        if (@($actions.Compose_Atlas_bundle.runAfter.$scope).Count -ne 1 -or $actions.Compose_Atlas_bundle.runAfter.$scope[0] -ne 'Succeeded') { throw 'New solution must verify all three sources.' }
+        $states = @($actions.Compose_Atlas_bundle.runAfter.$scope | Sort-Object)
+        if (($states -join ',') -ne 'Failed,Skipped,Succeeded,TimedOut') { throw 'Bundle must survive a partial connector failure.' }
     }
     if ($actions.Create_Atlas_evidence_file.inputs.parameters.folderPath -ne '/AtlasBridge/inbox') { throw 'Unexpected cloud inbox.' }
     if ($actions.Create_Atlas_evidence_file.inputs.parameters.name -notmatch 'AtlasInstallationId') { throw 'Missing installation correlation.' }
     if ($names.Count -ne 4) { throw 'Unexpected files in solution.' }
-    Write-Host 'PASS: solution XML, cloud flow, three standard references, source parity, no user connection IDs, correlation and strict source completion.'
+    Write-Host 'PASS: active cloud flow, three standard references, source parity, no user connection IDs, correlation and partial-source reporting.'
 } finally { $archive.Dispose() }

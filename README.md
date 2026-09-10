@@ -2,9 +2,9 @@
 
 For tenants that block the Atlas Entra application, Atlas includes a portal-assisted Power Automate solution installer. It prepares `AtlasBridge/inbox`, opens Microsoft's official portal, records user-confirmed setup stages, and completes only after a correlated evidence file passes the bundled schema. It does not copy browser cookies, automate credentials/MFA, call private portal endpoints, or distribute PAC. See [`power-automate/INSTALLER.md`](power-automate/INSTALLER.md).
 
-Atlas is a Tauri v2 Windows desktop application that builds the Circana Interactions Tracker from a user's own Microsoft 365 calendar, mail, and Teams evidence. It remembers one local Excel or SharePoint destination, can sync today's activity automatically while it is running, and keeps manual tasks optional. The portable package includes and manages its own local Ollama runtime and model for Teams interpretation.
+Atlas is a Tauri v2 Windows desktop application that builds the Circana Interactions Tracker from a user's own Microsoft 365 calendar, mail, and Teams evidence. It remembers one local Excel or SharePoint destination and can sync today's activity automatically while it is running. If one of the three required daily categories is missing, Atlas alerts the user and accepts a factual manual entry. The portable package includes and manages its own local Ollama runtime and model for Teams interpretation.
 
-> **Atlas never invents interactions on its own.** Every exported row comes from exactly one of three sources: a real Microsoft Graph calendar event, a real Microsoft Graph email, or a manual entry the user typed. Manual entries are optional. There is no filler generator, minimum-row target, or blocking “add more” prompt.
+> **Atlas never invents interactions on its own.** Every exported row comes from real Microsoft 365 evidence or a factual manual entry. A daily export requires at least one Meeting, one E-Mail, and one Task. Atlas blocks an incomplete export and identifies the category the user must review or enter.
 
 ## What it does
 
@@ -37,12 +37,7 @@ Create one Microsoft Entra app registration for the team:
    - `Chat.Read`
 5. Do not add application permissions or a client secret. Atlas is a public desktop client.
 
-On first launch, Atlas asks for these public identifiers:
-
-- Application (client) ID
-- Directory (tenant) ID
-
-They are saved in the user's local Atlas settings and can be changed from the Microsoft connection button in the app. Changing either identifier clears the previous Microsoft token and starts a new PKCE login. Atlas requests profile, calendar, mail, and Teams delegated access during normal sign-in, then asks for `Files.ReadWrite` when a SharePoint destination is configured. No client secret is used or requested. Build-time `CIRCANA_AZURE_CLIENT_ID` and `CIRCANA_AZURE_TENANT_ID` values remain optional defaults for managed team builds.
+The application owner embeds the public client ID at build time through `CIRCANA_AZURE_CLIENT_ID`; end users never enter client or tenant identifiers. When no Atlas app registration is configured, first launch opens the Power Automate connector assistant instead. No client secret is used or requested.
 
 ## One-time tracker setup
 
@@ -99,8 +94,8 @@ Every push to `main` runs **Build Atlas Windows x64** from [`.github/workflows/c
 Pushing a tag that starts with `v` runs [`.github/workflows/release.yml`](.github/workflows/release.yml). It creates a permanent GitHub Release containing the self-contained portable ZIP and checksum. Repository variables can provide managed defaults, but are not required because users can enter the public identifiers inside Atlas.
 
 ```powershell
-git tag v0.2.1
-git push origin v0.2.1
+git tag v0.2.2
+git push origin v0.2.2
 ```
 
 Unsigned internal builds can trigger Microsoft SmartScreen. Configure Windows code signing in the release workflow before broad distribution.

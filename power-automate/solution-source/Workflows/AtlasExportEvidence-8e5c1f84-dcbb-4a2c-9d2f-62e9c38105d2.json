@@ -57,7 +57,7 @@
           "type": "Compose",
           "inputs": "@formatDateTime(convertTimeZone(utcNow(),'UTC','SA Pacific Standard Time'),'yyyy-MM-dd')",
           "runAfter": {
-            "AtlasCalendarName": [
+            "AtlasInstallationId": [
               "Succeeded"
             ]
           }
@@ -147,11 +147,21 @@
               },
               "runAfter": {}
             },
-            "Filter_calendar": {
-              "type": "Query",
+            "Get_calendar_view_of_events_V3": {
+              "type": "OpenApiConnection",
               "inputs": {
-                "from": "@body('Get_calendars_V2')?['value']",
-                "where": "@or(empty(outputs('AtlasCalendarName')),equals(item()?['name'],outputs('AtlasCalendarName')))"
+                "host": {
+                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_office365",
+                  "connectionName": "shared_office365",
+                  "operationId": "GetEventsCalendarViewV3"
+                },
+                "parameters": {
+                  "calendarId": "@first(body('Get_calendars_V2')?['value'])?['id']",
+                  "startDateTimeUtc": "@outputs('StartUtc')",
+                  "endDateTimeUtc": "@outputs('EndUtc')",
+                  "$top": 500
+                },
+                "authentication": "@parameters('$authentication')"
               },
               "runAfter": {
                 "Get_calendars_V2": [
@@ -159,84 +169,52 @@
                 ]
               }
             },
-            "Require_unique_calendar": {
-              "type": "If",
-              "expression": "@equals(length(body('Filter_calendar')),1)",
-              "actions": {
-                "Get_calendar_view_of_events_V3": {
-                  "type": "OpenApiConnection",
-                  "inputs": {
-                    "host": {
-                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_office365",
-                      "connectionName": "shared_office365",
-                      "operationId": "GetEventsCalendarViewV3"
-                    },
-                    "parameters": {
-                      "calendarId": "@first(body('Filter_calendar'))?['id']",
-                      "startDateTimeUtc": "@outputs('StartUtc')",
-                      "endDateTimeUtc": "@outputs('EndUtc')",
-                      "$top": 500
-                    },
-                    "authentication": "@parameters('$authentication')"
-                  },
-                  "runAfter": {}
-                },
-                "Select_calendar_fields": {
-                  "type": "Select",
-                  "inputs": {
-                    "from": "@body('Get_calendar_view_of_events_V3')?['value']",
-                    "select": {
-                      "id": "@item()?['id']",
-                      "subject": "@coalesce(item()?['subject'],'')",
-                      "start": "@item()?['startWithTimeZone']",
-                      "end": "@item()?['endWithTimeZone']",
-                      "organizerAddress": "@coalesce(item()?['organizer'],'')",
-                      "isCancelled": false
-                    }
-                  },
-                  "runAfter": {
-                    "Get_calendar_view_of_events_V3": [
-                      "Succeeded"
-                    ]
-                  }
-                },
-                "Set_CalendarEvidence": {
-                  "type": "SetVariable",
-                  "inputs": {
-                    "name": "CalendarEvidence",
-                    "value": "@body('Select_calendar_fields')"
-                  },
-                  "runAfter": {
-                    "Select_calendar_fields": [
-                      "Succeeded"
-                    ]
-                  }
-                }
-              },
-              "else": {
-                "actions": {
-                  "Calendar_not_unique": {
-                    "type": "Terminate",
-                    "inputs": {
-                      "runStatus": "Failed",
-                      "runError": {
-                        "code": "AtlasCalendarNotUnique",
-                        "message": "Choose the exact calendar name in the Atlas installer and import its updated solution."
-                      }
-                    },
-                    "runAfter": {}
-                  }
+            "Select_calendar_fields": {
+              "type": "Select",
+              "inputs": {
+                "from": "@body('Get_calendar_view_of_events_V3')?['value']",
+                "select": {
+                  "id": "@item()?['id']",
+                  "subject": "@coalesce(item()?['subject'],'')",
+                  "start": "@item()?['startWithTimeZone']",
+                  "end": "@item()?['endWithTimeZone']",
+                  "organizerAddress": "@coalesce(item()?['organizer'],'')",
+                  "isCancelled": false
                 }
               },
               "runAfter": {
-                "Filter_calendar": [
+                "Get_calendar_view_of_events_V3": [
+                  "Succeeded"
+                ]
+              }
+            },
+            "Set_CalendarEvidence": {
+              "type": "SetVariable",
+              "inputs": {
+                "name": "CalendarEvidence",
+                "value": "@body('Select_calendar_fields')"
+              },
+              "runAfter": {
+                "Select_calendar_fields": [
+                  "Succeeded"
+                ]
+              }
+            },
+            "Set_CalendarSourceReady": {
+              "type": "SetVariable",
+              "inputs": {
+                "name": "CalendarSourceReady",
+                "value": true
+              },
+              "runAfter": {
+                "Set_CalendarEvidence": [
                   "Succeeded"
                 ]
               }
             }
           },
           "runAfter": {
-            "Initialize_TeamsEvidence": [
+            "Initialize_TeamsSourceReady": [
               "Succeeded"
             ]
           }
@@ -303,10 +281,22 @@
                   "Succeeded"
                 ]
               }
+            },
+            "Set_MailSourceReady": {
+              "type": "SetVariable",
+              "inputs": {
+                "name": "MailSourceReady",
+                "value": true
+              },
+              "runAfter": {
+                "Set_MailEvidence": [
+                  "Succeeded"
+                ]
+              }
             }
           },
           "runAfter": {
-            "Initialize_TeamsEvidence": [
+            "Initialize_TeamsSourceReady": [
               "Succeeded"
             ]
           }
@@ -407,10 +397,22 @@
                   "repetitions": 1
                 }
               }
+            },
+            "Set_TeamsSourceReady": {
+              "type": "SetVariable",
+              "inputs": {
+                "name": "TeamsSourceReady",
+                "value": true
+              },
+              "runAfter": {
+                "For_each_chat": [
+                  "Succeeded"
+                ]
+              }
             }
           },
           "runAfter": {
-            "Initialize_TeamsEvidence": [
+            "Initialize_TeamsSourceReady": [
               "Succeeded"
             ]
           }
@@ -418,22 +420,36 @@
         "Compose_Atlas_bundle": {
           "type": "Compose",
           "inputs": {
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "exportedAt": "@utcNow()",
             "targetDate": "@outputs('TargetDate')",
+            "sources": {
+              "calendar": "@variables('CalendarSourceReady')",
+              "mail": "@variables('MailSourceReady')",
+              "teams": "@variables('TeamsSourceReady')"
+            },
             "calendar": "@variables('CalendarEvidence')",
             "mail": "@variables('MailEvidence')",
             "teams": "@variables('TeamsEvidence')"
           },
           "runAfter": {
             "Calendar_evidence": [
-              "Succeeded"
+              "Succeeded",
+              "Failed",
+              "Skipped",
+              "TimedOut"
             ],
             "Mail_evidence": [
-              "Succeeded"
+              "Succeeded",
+              "Failed",
+              "Skipped",
+              "TimedOut"
             ],
             "Teams_evidence": [
-              "Succeeded"
+              "Succeeded",
+              "Failed",
+              "Skipped",
+              "TimedOut"
             ]
           }
         },
@@ -463,11 +479,53 @@
           "inputs": "unconfigured",
           "runAfter": {}
         },
-        "AtlasCalendarName": {
-          "type": "Compose",
-          "inputs": "Calendar",
+        "Initialize_CalendarSourceReady": {
+          "type": "InitializeVariable",
+          "inputs": {
+            "variables": [
+              {
+                "name": "CalendarSourceReady",
+                "type": "boolean",
+                "value": false
+              }
+            ]
+          },
           "runAfter": {
-            "AtlasInstallationId": [
+            "Initialize_TeamsEvidence": [
+              "Succeeded"
+            ]
+          }
+        },
+        "Initialize_MailSourceReady": {
+          "type": "InitializeVariable",
+          "inputs": {
+            "variables": [
+              {
+                "name": "MailSourceReady",
+                "type": "boolean",
+                "value": false
+              }
+            ]
+          },
+          "runAfter": {
+            "Initialize_CalendarSourceReady": [
+              "Succeeded"
+            ]
+          }
+        },
+        "Initialize_TeamsSourceReady": {
+          "type": "InitializeVariable",
+          "inputs": {
+            "variables": [
+              {
+                "name": "TeamsSourceReady",
+                "type": "boolean",
+                "value": false
+              }
+            ]
+          },
+          "runAfter": {
+            "Initialize_MailSourceReady": [
               "Succeeded"
             ]
           }

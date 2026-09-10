@@ -46,6 +46,7 @@ pub struct Session {
     pub calendar_name: String,
     pub environment_id: Option<String>,
     pub diagnostic: String,
+    pub solution_version: Option<String>,
 }
 
 impl Default for Session {
@@ -59,6 +60,7 @@ impl Default for Session {
             calendar_name: "Calendar".into(),
             environment_id: None,
             diagnostic: "portal_required".into(),
+            solution_version: Some("1.1.0.0".into()),
         }
     }
 }
@@ -90,6 +92,7 @@ impl Installer {
             .filter(|s| {
                 uuid::Uuid::parse_str(&s.installation_id).is_ok()
                     && DateTime::parse_from_rfc3339(&s.started_at).is_ok()
+                    && s.solution_version.as_deref() == Some("1.1.0.0")
             })
             .unwrap_or_default();
         Self {
@@ -160,17 +163,23 @@ impl Installer {
                 next.diagnostic = "portal_required".into();
             }
             Action::ConfirmSignIn {} => {
-                advance(&mut next, Phase::WaitingSignIn, Phase::FindingEnvironment)?
+                advance(&mut next, Phase::WaitingSignIn, Phase::FindingConnections)?
             }
             Action::ConfirmEnvironment { environment_id } => {
-                let id = parse_environment(&environment_id)
-                    .ok_or_else(|| fail("invalid_environment_id"))?;
+                let id = if environment_id.trim().is_empty() {
+                    None
+                } else {
+                    Some(
+                        parse_environment(&environment_id)
+                            .ok_or_else(|| fail("invalid_environment_id"))?,
+                    )
+                };
                 advance(
                     &mut next,
                     Phase::FindingEnvironment,
                     Phase::FindingConnections,
                 )?;
-                next.environment_id = Some(id);
+                next.environment_id = id;
             }
             Action::ConfirmConnections {} => advance(
                 &mut next,
@@ -178,7 +187,7 @@ impl Installer {
                 Phase::ImportingSolution,
             )?,
             Action::ConfirmImport {} => {
-                advance(&mut next, Phase::ImportingSolution, Phase::ActivatingFlow)?
+                advance(&mut next, Phase::ImportingSolution, Phase::VerifyingFile)?
             }
             Action::ConfirmActive {} => {
                 advance(&mut next, Phase::ActivatingFlow, Phase::VerifyingFile)?
@@ -391,13 +400,6 @@ fn personalized_solution(session: &Session) -> Result<Vec<u8>> {
             let actions = &mut flow["properties"]["definition"]["actions"];
             actions["AtlasInstallationId"]["inputs"] =
                 Value::String(session.installation_id.clone());
-            // A Compose string beginning @ is an expression. Escape it as a literal.
-            let calendar = if session.calendar_name.starts_with('@') {
-                format!("@{}", session.calendar_name)
-            } else {
-                session.calendar_name.clone()
-            };
-            actions["AtlasCalendarName"]["inputs"] = Value::String(calendar);
             bytes = serde_json::to_vec_pretty(&flow)?;
             changed = true;
         }
@@ -700,14 +702,11 @@ mod tests {
     }
 
     #[test]
-    fn package_preserves_connection_references_and_treats_calendar_as_literal() {
-        let session = Session {
-            calendar_name: "@{outputs('bad')}".into(),
-            ..Session::default()
-        };
+    fn package_preserves_connection_references_and_personalizes_installation() {
+        let session = Session::default();
         let flow = flow_from(personalized_solution(&session).unwrap());
         let actions = &flow["properties"]["definition"]["actions"];
-        assert_eq!(actions["AtlasCalendarName"]["inputs"], "@@{outputs('bad')}");
+        assert!(actions.get("AtlasCalendarName").is_none());
         assert_eq!(
             actions["AtlasInstallationId"]["inputs"],
             session.installation_id
@@ -727,7 +726,7 @@ mod tests {
         assert!(flow["properties"]["definition"].get("metadata").is_none());
         assert_eq!(
             actions["Compose_Atlas_bundle"]["runAfter"]["Teams_evidence"],
-            json!(["Succeeded"])
+            json!(["Succeeded", "Failed", "Skipped", "TimedOut"])
         );
     }
 
@@ -747,11 +746,6 @@ mod tests {
         assert_eq!(prepared.session.phase, Phase::WaitingSignIn);
         assert!(installer.action(Action::Verify {}).is_err());
         installer.action(Action::ConfirmSignIn {}).unwrap();
-        installer
-            .action(Action::ConfirmEnvironment {
-                environment_id: "Default-11111111-1111-4111-8111-111111111111".into(),
-            })
-            .unwrap();
         let blocked = installer
             .action(Action::Report {
                 message: "DLP Authorization: Bearer do-not-store alice@example.com".into(),
@@ -767,7 +761,6 @@ mod tests {
         assert_eq!(retry.session.installation_id, id);
         resumed.action(Action::ConfirmConnections {}).unwrap();
         resumed.action(Action::ConfirmImport {}).unwrap();
-        resumed.action(Action::ConfirmActive {}).unwrap();
         let waiting = resumed.action(Action::Verify {}).unwrap();
         assert_eq!(waiting.session.phase, Phase::VerifyingFile);
         assert_eq!(waiting.session.diagnostic, "waiting_for_sync");

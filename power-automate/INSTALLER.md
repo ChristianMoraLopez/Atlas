@@ -7,14 +7,12 @@ Atlas instala el puente mediante la experiencia oficial de importación de soluc
 1. Extrae el ZIP portátil completo y ejecuta `Atlas.exe`. No se necesita instalación ni elevación UAC.
 2. Pulsa **Instalar conector de Microsoft 365**.
 3. Selecciona la raíz del OneDrive corporativo que ya está sincronizado. Atlas crea únicamente `AtlasBridge\inbox` dentro de esa carpeta.
-4. Escribe el nombre exacto del calendario principal mostrado por Outlook, normalmente `Calendar` o `Calendario`.
-5. Atlas abre `https://make.powerautomate.com/` en el navegador predeterminado. Completa el inicio de sesión o MFA si Microsoft lo solicita.
-6. En el selector de Power Automate elige un entorno donde puedas abrir **Soluciones → Importar solución**. Copia el identificador del entorno o la URL que contiene `/environments/...` al asistente.
-7. Confirma que tienes conexiones propias y utilizables de **Office 365 Outlook**, **Microsoft Teams** y **OneDrive for Business**. La cuenta de OneDrive debe ser la que sincroniza la carpeta elegida.
-8. En **Soluciones → Importar solución**, selecciona el archivo `AtlasBridge_1_0_0_0.zip` que Atlas preparó en su carpeta de datos. Asocia cada referencia con tu conexión correspondiente y confirma la importación.
-9. Abre los detalles de `Atlas - Export evidence to OneDrive`. Si Microsoft no lo activó al importar, pulsa **Activar**. No hace falta abrir el diseñador.
-10. Espera la ejecución programada y la sincronización de OneDrive. Marca `AtlasBridge\inbox` como **Siempre mantener en este dispositivo**. Atlas comprueba cada 15 segundos si aparece un JSON nuevo de esta instalación compatible con `atlas-evidence.schema.json`.
-11. Cuando el asistente muestre **Instalación completada**, pulsa **Usar este conector en Atlas** y selecciona un tracker `.xlsx` o `.xlsm` que también esté sincronizado localmente.
+4. Atlas abre `https://make.powerautomate.com/` en el navegador predeterminado. Completa el inicio de sesión o MFA con la cuenta Circana si Microsoft lo solicita.
+5. Confirma que tienes conexiones propias de **Office 365 Outlook**, **Microsoft Teams** y **OneDrive for Business**. La cuenta de OneDrive debe ser la que sincroniza la carpeta elegida.
+6. En **Soluciones → Importar solución**, selecciona el archivo `AtlasBridge_1_0_0_0.zip` preparado por Atlas. Asocia cada referencia con tu conexión y confirma la importación. No copies identificadores de tenant, entorno o aplicación.
+7. La solución 1.1 se entrega activa. Si ya existe `AtlasBridge`, importa como actualización de esa misma solución.
+8. Espera la ejecución programada y la sincronización de OneDrive. Marca `AtlasBridge\inbox` como **Siempre mantener en este dispositivo**. Atlas comprueba cada 15 segundos si aparece un JSON nuevo compatible con `atlas-evidence.schema.json`.
+9. Cuando el asistente muestre **Instalación completada**, pulsa **Usar este conector en Atlas**. Si no existe, Atlas crea `Tracker_Circana.xlsx` en la raíz de OneDrive elegida.
 
 La recurrencia es horaria, por lo que la primera comprobación puede tardar hasta una hora más el tiempo de sincronización. La comprobación acepta únicamente un archivo creado después de iniciar el asistente cuyo nombre incluya el identificador aleatorio de esa instalación. Un JSON de ejemplo o un archivo del paquete heredado no puede completar el asistente.
 
@@ -36,7 +34,7 @@ Si aparece uno de esos bloqueos, Atlas conserva el modo local y muestra el requi
 
 ## Seguridad y almacenamiento
 
-- El instalador guarda en `%APPDATA%\com.capgemini.atlas-tracker\connector-installer` únicamente etapa, identificador aleatorio, nombre de calendario, identificador del entorno y rutas locales.
+- El instalador guarda en `%APPDATA%\com.capgemini.atlas-tracker\connector-installer` únicamente etapa, identificador aleatorio y rutas locales. Los campos antiguos de calendario o entorno se ignoran al reanudar una instalación previa.
 - El texto que el usuario pega para clasificar un error se procesa en memoria, se reduce a un código conocido y se descarta. No se guarda ni se escribe en logs.
 - El ZIP contiene referencias lógicas a tres conectores estándar y no incluye IDs de conexiones, creador, tenant, secretos ni tokens.
 - Atlas solo abre la página principal HTTPS documentada de Power Automate. No construye llamadas a endpoints internos ni automatiza clics, contraseñas, consentimiento o MFA.
@@ -44,7 +42,7 @@ Si aparece uno de esos bloqueos, Atlas conserva el modo local y muestra el requi
 
 ## Desarrollo y validación del artefacto
 
-`convert-solution.mjs` convierte la definición heredada a fuentes de solución, elimina metadatos de usuario, añade tres referencias lógicas y exige que los tres orígenes terminen correctamente antes de crear evidencia. `build-solution.ps1` usa una copia de PAC suministrada por el desarrollador únicamente para empaquetar; no autentica ni importa.
+`convert-solution.mjs` convierte la definición heredada a fuentes de solución, elimina metadatos de usuario, añade tres referencias lógicas, marca el flujo como activo y registra el estado de cada origen. El archivo se crea incluso si un conector falla, para que Atlas pueda mostrar el dato faltante y permitir una entrada manual real. `build-solution.ps1` usa PAC únicamente para empaquetar; no autentica ni importa.
 
 ```powershell
 .\power-automate\build-solution.ps1 -PacPath C:\ruta-del-desarrollador\pac.exe

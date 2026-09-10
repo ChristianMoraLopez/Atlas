@@ -13,11 +13,6 @@ export interface AccountInfo {
   email: string;
 }
 
-export interface MicrosoftConfig {
-  clientId: string;
-  tenantId: string;
-}
-
 export type SourceMode = "microsoft_graph" | "power_automate_folder";
 
 export type TrackerDestinationKind = "local_existing" | "local_new" | "share_point";
@@ -32,7 +27,6 @@ export interface AppStatus {
   signedIn: boolean;
   sourceMode: SourceMode;
   bridgeFolder?: string;
-  microsoftConfig: MicrosoftConfig;
   account?: AccountInfo;
   profile?: UserProfile;
   ollamaRunning: boolean;

@@ -88,6 +88,7 @@ mod tests {
             "targetDate",
             "schemaVersion",
             "exportedAt",
+            "sources",
         ] {
             let mut v = example.clone();
             v.as_object_mut().unwrap().remove(key);
@@ -95,7 +96,7 @@ mod tests {
         }
         for (key, value) in [
             ("secret", serde_json::json!("never logged")),
-            ("schemaVersion", serde_json::json!(2)),
+            ("schemaVersion", serde_json::json!(1)),
             ("targetDate", serde_json::json!("2026-02-30")),
             ("exportedAt", serde_json::json!("2026-09-09T12:00:00")),
             ("teams", serde_json::json!({})),

@@ -9,7 +9,7 @@ import {
   ShieldCheck, Sparkles, Trash2, UserRound, X
 } from "lucide-react";
 import { api, fromLocalInput, localDate, toLocalInput } from "./lib";
-import type { AppStatus, ExportResult, Interaction, MicrosoftConfig, TrackerDestination, TrackerDestinationKind, UserProfile } from "./types";
+import type { AppStatus, ExportResult, Interaction, TrackerDestination, TrackerDestinationKind, UserProfile } from "./types";
 
 const emptyProfile: UserProfile = {
   loginId: "", fullName: "", area: "Manufacturing", teamLead: "", circanaManager: ""
@@ -37,37 +37,6 @@ function Brand() {
   </div>;
 }
 
-function MicrosoftSetupScreen({ initial, onSave, onUsePowerAutomate, onCancel, busy, error }: { initial: MicrosoftConfig; onSave: (config: MicrosoftConfig) => Promise<void>; onUsePowerAutomate: () => Promise<void>; onCancel?: () => void; busy: boolean; error: string }) {
-  const [config, setConfig] = useState(initial);
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    await onSave({ clientId: config.clientId.trim(), tenantId: config.tenantId.trim() });
-  };
-  return <main className="mx-auto flex min-h-screen max-w-6xl items-center px-10 py-12">
-    <section className="grid w-full grid-cols-[1.1fr_.9fr] overflow-hidden rounded-[2rem] bg-[#081c1a] text-white shadow-panel">
-      <div className="p-14">
-        <div className="mb-16"><Brand /></div>
-        <p className="mb-4 text-xs font-bold uppercase tracking-[.2em] text-[#8dd7c4]">One-time Microsoft setup</p>
-        <h1 className="max-w-xl font-display text-5xl leading-[1.05]">Connect Atlas to your Microsoft 365 tenant.</h1>
-        <p className="mt-6 max-w-xl text-base leading-7 text-white/65">Enter the two public identifiers from your Microsoft Entra app registration. Atlas stores them only in its local settings, then opens Microsoft’s secure sign-in page.</p>
-        <div className="mt-10 flex items-center gap-3 text-xs font-semibold text-white/55"><ShieldCheck className="h-5 w-5 text-[#8dd7c4]" /> Public IDs only · No client secret · OAuth PKCE login</div>
-      </div>
-      <form onSubmit={submit} className="m-4 rounded-[1.4rem] bg-white p-10 text-ink">
-        <h2 className="font-display text-2xl">Microsoft connection</h2>
-        <p className="mt-2 text-xs leading-5 text-ink/50">In Entra, open <b>App registrations → your app → Overview</b> and copy these values.</p>
-        <div className="mt-7 space-y-5">
-          <label><span className="label">Application (client) ID</span><input className="field font-mono text-xs" value={config.clientId} onChange={e => setConfig(old => ({ ...old, clientId: e.target.value }))} placeholder="00000000-0000-0000-0000-000000000000" autoComplete="off" required /></label>
-          <label><span className="label">Directory (tenant) ID</span><input className="field font-mono text-xs" value={config.tenantId} onChange={e => setConfig(old => ({ ...old, tenantId: e.target.value }))} placeholder="00000000-0000-0000-0000-000000000000" autoComplete="off" required /></label>
-        </div>
-        {error && <div className="mt-5"><ErrorBanner message={error} /></div>}
-        <div className="mt-7 flex flex-wrap gap-3"><button type="submit" className="btn-primary" disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}Save and sign in</button>{onCancel && <button type="button" className="btn-secondary" onClick={onCancel} disabled={busy}>Cancel</button>}</div>
-        <button type="button" className="mt-6 flex items-center gap-2 text-xs font-bold text-pine hover:underline" onClick={() => openUrl("https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade")}>Open Microsoft Entra <ExternalLink className="h-4 w-4" /></button>
-        <div className="mt-7 border-t border-ink/10 pt-6"><p className="text-xs font-bold text-ink/70">No Entra app registration?</p><p className="mt-1 text-[11px] leading-5 text-ink/45">Use a Power Automate flow to place verified evidence in a locally synced OneDrive folder. Atlas never receives a Microsoft token.</p><button type="button" className="btn-secondary mt-4 w-full" onClick={() => void onUsePowerAutomate()} disabled={busy}><Inbox className="h-4 w-4" />Choose Power Automate inbox</button></div>
-      </form>
-    </section>
-  </main>;
-}
-
 function LoginScreen({ onSignIn, onEditMicrosoft, busy, error }: { onSignIn: () => void; onEditMicrosoft: () => void; busy: boolean; error: string }) {
   return <main className="mx-auto flex min-h-screen max-w-6xl items-center px-10 py-12">
     <section className="grid w-full grid-cols-[1.05fr_.95fr] overflow-hidden rounded-[2rem] bg-[#081c1a] shadow-panel">
@@ -91,7 +60,7 @@ function LoginScreen({ onSignIn, onEditMicrosoft, busy, error }: { onSignIn: () 
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden><path fill="#f35325" d="M1 1h10v10H1z"/><path fill="#81bc06" d="M13 1h10v10H13z"/><path fill="#05a6f0" d="M1 13h10v10H1z"/><path fill="#ffba08" d="M13 13h10v10H13z"/></svg>}
           Sign in with Microsoft <ArrowRight className="h-4 w-4" />
         </button>
-        <button className="mt-4 text-xs font-bold text-pine hover:underline" onClick={onEditMicrosoft} disabled={busy}>Change Microsoft connection</button>
+        <button className="mt-4 text-xs font-bold text-pine hover:underline" onClick={onEditMicrosoft} disabled={busy}>Usar el conector de Power Automate</button>
         <p className="mt-5 text-center text-[11px] leading-5 text-ink/40">Your refresh token is stored by Windows Credential Manager and is never written to a project file.</p>
       </div>
     </section>
@@ -255,14 +224,33 @@ function SuccessModal({ result, onClose }: { result: ExportResult; onClose: () =
 }
 
 function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestination }: { status: AppStatus; refreshStatus: () => Promise<void>; signOut: () => Promise<void>; editMicrosoft: () => void; editDestination: () => void }) {
-  const profile = status.profile!; const destination = status.destination!; const bridgeMode = status.sourceMode === "power_automate_folder"; const [date, setDate] = useState(localDate()); const [includeEmail, setIncludeEmail] = useState(false); const [includeTeams, setIncludeTeams] = useState(true); const [items, setItems] = useState<Interaction[]>([]); const [warnings, setWarnings] = useState<string[]>([]); const [busy, setBusy] = useState(false); const busyRef = useRef(false); const [error, setError] = useState(""); const [syncNotice, setSyncNotice] = useState(""); const [manual, setManual] = useState(false); const [editingProfile, setEditingProfile] = useState(false); const [success, setSuccess] = useState<ExportResult>();
+  const profile = status.profile!; const destination = status.destination!; const bridgeMode = status.sourceMode === "power_automate_folder"; const [date, setDate] = useState(localDate()); const [includeEmail, setIncludeEmail] = useState(true); const [includeTeams, setIncludeTeams] = useState(true); const [items, setItems] = useState<Interaction[]>([]); const [warnings, setWarnings] = useState<string[]>([]); const [busy, setBusy] = useState(false); const busyRef = useRef(false); const [error, setError] = useState(""); const [syncNotice, setSyncNotice] = useState(""); const [manual, setManual] = useState(false); const [editingProfile, setEditingProfile] = useState(false); const [success, setSuccess] = useState<ExportResult>();
   const counts = useMemo(() => ({ all: items.length, selected: items.filter(i => i.selected).length, review: items.filter(i => !i.reviewed).length }), [items]);
   const startWork = () => { if (busyRef.current) return false; busyRef.current = true; setBusy(true); setError(""); setSyncNotice(""); return true; };
   const endWork = () => { busyRef.current = false; setBusy(false); };
-  const extract = async () => { if (!startWork()) return; setWarnings([]); try { const result = await api.extract(date, includeEmail, includeTeams, Intl.DateTimeFormat().resolvedOptions().timeZone); setItems(result.interactions); setWarnings(result.warnings); } catch (e) { setError(String(e)); } finally { endWork(); } };
+  const missingCategories = (values: Interaction[]) => {
+    const selected = values.filter(item => item.selected);
+    const missing: string[] = [];
+    if (!selected.some(item => item.interactionType === "Meeting")) missing.push("calendario/reunión");
+    if (!selected.some(item => item.interactionType === "E-Mail")) missing.push("correo");
+    if (!selected.some(item => item.interactionType === "Task")) missing.push("Teams/tarea");
+    return missing;
+  };
+  const completionWarning = (values: Interaction[]) => {
+    const missing = missingCategories(values);
+    return missing.length ? `Faltan interacciones de ${missing.join(", ")}. Selecciona evidencia real o añádela manualmente antes de guardar.` : "";
+  };
+  const extract = async () => { if (!startWork()) return; setWarnings([]); try { const result = await api.extract(date, includeEmail, includeTeams, Intl.DateTimeFormat().resolvedOptions().timeZone); setItems(result.interactions); const warning = completionWarning(result.interactions); setWarnings(warning ? [...result.warnings, warning] : result.warnings); } catch (e) { setError(String(e)); } finally { endWork(); } };
   const changeTeams = (enabled: boolean) => setIncludeTeams(enabled);
-  const saveSelected = async () => { if (!items.some(item => item.selected)) return setError("Select at least one real interaction to save."); if (!startWork()) return; try { setSuccess(await api.export(date, profile, items)); await refreshStatus(); } catch (e) { setError(String(e)); } finally { endWork(); } };
-  const syncCalendar = async (automatic = false) => { if (!startWork()) return; const today = localDate(); setDate(today); setWarnings([]); try { const result = await api.extract(today, false, true, Intl.DateTimeFormat().resolvedOptions().timeZone); setItems(result.interactions); setWarnings(result.warnings); if (result.interactions.some(item => item.selected)) { const saved = await api.export(today, profile, result.interactions); if (automatic) setSyncNotice(`Automatic ${bridgeMode ? "inbox import" : "sync"} complete: ${saved.inserted} added, ${saved.updated} refreshed.`); else setSuccess(saved); await refreshStatus(); } else { setSyncNotice(`${bridgeMode ? "Power Automate inbox" : "Calendar and Teams"} checked: no tracker interactions were found for today.`); } } catch (e) { setError(`${automatic ? `Automatic ${bridgeMode ? "inbox import" : "sync"} failed: ` : ""}${String(e)}`); } finally { endWork(); } };
+  const saveSelected = async () => {
+    const selectedItems = items.filter(i => i.selected);
+    if (selectedItems.length === 0) return setError("Select at least one real interaction to save.");
+    const warning = completionWarning(selectedItems);
+    if (warning) return setError(warning);
+    if (!startWork()) return;
+    try { setSuccess(await api.export(date, profile, items)); await refreshStatus(); } catch (e) { setError(String(e)); } finally { endWork(); }
+  };
+  const syncCalendar = async (automatic = false) => { if (!startWork()) return; const today = localDate(); setDate(today); setWarnings([]); try { const result = await api.extract(today, true, true, Intl.DateTimeFormat().resolvedOptions().timeZone); setItems(result.interactions); const warning = completionWarning(result.interactions); setWarnings(warning ? [...result.warnings, warning] : result.warnings); if (!warning) { const saved = await api.export(today, profile, result.interactions); if (automatic) setSyncNotice(`Automatic ${bridgeMode ? "inbox import" : "sync"} complete: ${saved.inserted} added, ${saved.updated} refreshed.`); else setSuccess(saved); await refreshStatus(); } else { setSyncNotice("Atlas encontró datos parciales. Completa las categorías señaladas y guarda la vista previa."); } } catch (e) { setError(`${automatic ? `Automatic ${bridgeMode ? "inbox import" : "sync"} failed: ` : ""}${String(e)}`); } finally { endWork(); } };
   const saveProfile = async (p: UserProfile) => { await api.saveProfile(p); setEditingProfile(false); await refreshStatus(); };
   useEffect(() => { if (!status.autoSync) return; const first = window.setTimeout(() => { void syncCalendar(true); }, 900); const interval = window.setInterval(() => { void syncCalendar(true); }, 60 * 60 * 1000); return () => { window.clearTimeout(first); window.clearInterval(interval); }; }, [status.autoSync, destination.value]);
   return <div className="min-h-screen">
@@ -271,15 +259,15 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
       <div className="grid grid-cols-[minmax(0,1fr)_290px] gap-6">
         <section className="min-w-0">
           <div className="mb-7 flex items-end justify-between"><div><p className="text-xs font-bold uppercase tracking-[.18em] text-pine">Daily workspace</p><h1 className="mt-2 font-display text-4xl">Build your interaction record.</h1><p className="mt-2 text-sm text-ink/50">Evidence first. Review it once. Export without duplicates.</p></div><div className="flex items-center gap-2"><span className="chip bg-white text-ink/55"><Inbox className="h-3 w-3" />{counts.all} found</span><span className="chip bg-mint text-pine"><Check className="h-3 w-3" />{counts.selected} selected</span>{counts.review > 0 && <span className="chip bg-[#fff0df] text-[#9a5a1e]">{counts.review} to review</span>}</div></div>
-          <div className="card p-5"><div className="grid grid-cols-[220px_1fr_1fr_auto] items-end gap-4"><label><span className="label">Workday</span><input type="date" max={localDate()} className="field" value={date} onChange={e => { setDate(e.target.value); setItems([]); }} /></label><Toggle checked={includeEmail} onChange={setIncludeEmail} label="Include mail" detail={bridgeMode ? "From the latest evidence package" : "You choose each message"} icon={<Mail className="h-4 w-4" />} /><Toggle checked={includeTeams} onChange={changeTeams} label="Include Teams" detail={bridgeMode ? "Imported evidence · local AI" : "Bundled Atlas Local AI"} icon={<Bot className="h-4 w-4" />} /><button className="btn-primary h-[46px] px-5" disabled={busy || (includeTeams && (!status.ollamaRunning || !status.ollamaModelAvailable))} onClick={extract}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}{bridgeMode ? "Import" : "Extract"}</button></div>
+          <div className="card p-5"><div className="grid grid-cols-[220px_1fr_1fr_auto] items-end gap-4"><label><span className="label">Workday</span><input type="date" max={localDate()} className="field" value={date} onChange={e => { setDate(e.target.value); setItems([]); }} /></label><Toggle checked={includeEmail} onChange={setIncludeEmail} label="Include mail" detail={bridgeMode ? "From the latest evidence package" : "You choose each message"} icon={<Mail className="h-4 w-4" />} /><Toggle checked={includeTeams} onChange={changeTeams} label="Include Teams" detail={bridgeMode ? "Imported evidence · local AI" : "Bundled Atlas Local AI"} icon={<Bot className="h-4 w-4" />} /><button className="btn-primary h-[46px] px-5" disabled={busy || (!bridgeMode && includeTeams && (!status.ollamaRunning || !status.ollamaModelAvailable))} onClick={extract}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}{bridgeMode ? "Import" : "Extract"}</button></div>
             {status.ollamaRunning && status.ollamaModelAvailable && <div className="mt-4 flex items-center gap-3 rounded-xl border border-pine/15 bg-mint/55 px-4 py-3 text-xs text-pine"><Bot className="h-5 w-5" /><span><b>Atlas Local AI is ready.</b> Teams messages stay on this computer and are interpreted by <code>{status.ollamaModel}</code>.</span></div>}
             {(!status.ollamaRunning || !status.ollamaModelAvailable) && <div className="mt-4 flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-800"><Bot className="h-5 w-5" /><span className="flex-1"><b>Bundled Local AI could not start.</b> {status.localAiError ?? "Extract the complete Atlas portable ZIP again."}</span><button className="font-bold underline" onClick={refreshStatus}>Recheck</button></div>}
           </div>
           {error && <div className="mt-5"><ErrorBanner message={error} onClose={() => setError("")} /></div>}{syncNotice && <div className="mt-5 flex items-center gap-3 rounded-xl border border-pine/15 bg-mint/55 px-4 py-3 text-sm text-pine"><Check className="h-4 w-4" />{syncNotice}</div>}{warnings.map((w, i) => <div className="mt-3" key={i}><ErrorBanner message={w} /></div>)}
-          <div className="mt-6 flex items-center justify-between"><div><h2 className="font-display text-2xl">Preview</h2><p className="mt-1 text-xs text-ink/45">Mail remains unchecked until confirmed. AI chat suggestions are reference-only and must be logged through a blank manual form.</p></div><button className="btn-secondary" onClick={() => setManual(true)}><Plus className="h-4 w-4" />Add a manual task</button></div>
+          <div className="mt-6 flex items-center justify-between"><div><h2 className="font-display text-2xl">Preview</h2><p className="mt-1 text-xs text-ink/45">Mail remains unchecked until confirmed. AI chat suggestions are reference-only and must be logged through a blank manual form.</p></div><button className="btn-secondary" onClick={() => setManual(true)}><Plus className="h-4 w-4" />Añadir interacción manual</button></div>
           <div className="mt-4">{items.length ? <InteractionTable items={items} setItems={setItems} onLogAiManually={() => setManual(true)} /> : <div className="card grid min-h-64 place-items-center p-10 text-center"><div><div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-mint text-pine"><CalendarDays /></div><h3 className="mt-4 font-display text-xl">Choose a day and {bridgeMode ? "import" : "extract"}</h3><p className="mt-2 max-w-sm text-xs leading-5 text-ink/45">Atlas shows only interactions backed by your calendar, selected mail, chat evidence, or details you type manually.</p></div></div>}</div>
         </section>
-        <div className="space-y-5"><ExportPanel destination={destination} autoSync={status.autoSync} bridgeMode={bridgeMode} items={items} busy={busy} onSave={saveSelected} onSync={() => void syncCalendar(false)} onEdit={editDestination} /><aside className="rounded-2xl bg-[#081c1a] p-5 text-white"><ShieldCheck className="h-5 w-5 text-[#8dd7c4]" /><h3 className="mt-4 font-display text-xl">Provenance protected</h3><p className="mt-2 text-xs leading-5 text-white/55">The exporter independently validates every source. There is no filler generator and no minimum row target.</p></aside></div>
+        <div className="space-y-5"><ExportPanel destination={destination} autoSync={status.autoSync} bridgeMode={bridgeMode} items={items} busy={busy} onSave={saveSelected} onSync={() => void syncCalendar(false)} onEdit={editDestination} /><aside className="rounded-2xl bg-[#081c1a] p-5 text-white"><ShieldCheck className="h-5 w-5 text-[#8dd7c4]" /><h3 className="mt-4 font-display text-xl">Tres categorías requeridas</h3><p className="mt-2 text-xs leading-5 text-white/55">Atlas guarda el día cuando hay una reunión, un correo y una tarea/Teams reales. Si falta alguna, muestra una alerta y permite registrarla manualmente.</p></aside></div>
       </div>
     </main>
     {manual && <ManualModal date={date} onClose={() => setManual(false)} onAdd={item => { setItems(old => [...old, item]); setManual(false); }} />}
@@ -289,30 +277,23 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
 }
 
 function AtlasApp() {
-  const [status, setStatus] = useState<AppStatus>(); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [editingMicrosoft, setEditingMicrosoft] = useState(false); const [editingDestination, setEditingDestination] = useState(false);
+  const [status, setStatus] = useState<AppStatus>(); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [installing, setInstalling] = useState(false); const [editingDestination, setEditingDestination] = useState(false);
   const refresh = async () => { setStatus(await api.status()); };
   useEffect(() => { refresh().catch(e => setError(String(e))); }, []);
   useEffect(() => { const onError = (event: ErrorEvent) => { void api.logError("window", event.message); }; const onRejection = (event: PromiseRejectionEvent) => { void api.logError("promise", String(event.reason)); }; window.addEventListener("error", onError); window.addEventListener("unhandledrejection", onRejection); return () => { window.removeEventListener("error", onError); window.removeEventListener("unhandledrejection", onRejection); }; }, []);
   const signIn = async () => { setBusy(true); setError(""); try { setStatus(await api.signIn()); } catch (e) { setError(String(e)); } finally { setBusy(false); } };
   const signOut = async () => { await api.signOut(); await refresh(); };
   const saveProfile = async (p: UserProfile) => { await api.saveProfile(p); await refresh(); };
-  const saveDestination = async (destination: TrackerDestination, autoSync: boolean) => { const next = await api.saveDestination(destination, autoSync); setStatus(next); setEditingDestination(false); };
-  const choosePowerAutomateInbox = async () => { setBusy(true); setError(""); try { const folder = await open({ directory: true, multiple: false, title: "Choose the synced AtlasBridge inbox folder" }); if (typeof folder === "string") { setStatus(await api.savePowerAutomateFolder(folder)); setEditingMicrosoft(false); } } catch (e) { setError(String(e)); } finally { setBusy(false); } };
-  const saveMicrosoftAndSignIn = async (config: MicrosoftConfig) => { setBusy(true); setError(""); setEditingMicrosoft(true); try { const configured = await api.saveMicrosoftConfig(config); setStatus(configured); const signedIn = await api.signIn(); setStatus(signedIn); setEditingMicrosoft(false); } catch (e) { setError(String(e)); } finally { setBusy(false); } };
+  const usePowerAutomate = async (folder: string) => { setStatus(await api.savePowerAutomateFolder(folder)); setInstalling(false); };
+  const saveDestination = async (destination: TrackerDestination, autoSync: boolean) => { setStatus(await api.saveDestination(destination, autoSync)); setEditingDestination(false); };
   if (!status) return error ? <main className="grid min-h-screen place-items-center p-10"><ErrorBanner message={error} /></main> : <LoadingScreen />;
-  if (!status.configured || editingMicrosoft) return <MicrosoftSetupScreen initial={status.microsoftConfig} onSave={saveMicrosoftAndSignIn} onUsePowerAutomate={choosePowerAutomateInbox} onCancel={status.configured ? () => { setEditingMicrosoft(false); setError(""); } : undefined} busy={busy} error={error} />;
-  if (!status.signedIn) return <LoginScreen onSignIn={signIn} onEditMicrosoft={() => { setError(""); setEditingMicrosoft(true); }} busy={busy} error={error} />;
+  if (!status.configured || installing) return <ConnectorInstaller onClose={status.configured ? () => setInstalling(false) : undefined} onUseFolder={usePowerAutomate} />;
+  if (!status.signedIn) return <LoginScreen onSignIn={signIn} onEditMicrosoft={() => setInstalling(true)} busy={busy} error={error} />;
   if (!status.profile) return <SetupScreen status={status} onSaved={saveProfile} />;
   if (!status.destination || editingDestination) return <DestinationSetupScreen initial={status.destination} initialAutoSync={status.autoSync} bridgeMode={status.sourceMode === "power_automate_folder"} onSave={saveDestination} onCancel={status.destination ? () => setEditingDestination(false) : undefined} />;
-  return <Workspace status={status} refreshStatus={refresh} signOut={signOut} editMicrosoft={() => { setError(""); setEditingMicrosoft(true); }} editDestination={() => setEditingDestination(true)} />;
+  return <Workspace status={status} refreshStatus={refresh} signOut={signOut} editMicrosoft={() => setInstalling(true)} editDestination={() => setEditingDestination(true)} />;
 }
 
 export default function App() {
-  const [installing, setInstalling] = useState(false);
-  const [revision, setRevision] = useState(0);
-  return <><div hidden={installing}><AtlasApp key={revision} /></div>{installing ? <ConnectorInstaller onClose={() => setInstalling(false)} onUseFolder={async folder => {
-    await api.savePowerAutomateFolder(folder);
-    setRevision(value => value + 1);
-    setInstalling(false);
-  }} /> : <button className="btn-primary fixed bottom-5 left-5 z-40 shadow-panel" onClick={() => setInstalling(true)}><Inbox className="h-4 w-4" />Instalar conector de Microsoft 365</button>}</>;
+  return <AtlasApp />;
 }

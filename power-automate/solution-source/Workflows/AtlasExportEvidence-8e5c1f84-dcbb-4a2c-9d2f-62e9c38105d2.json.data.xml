@@ -11,11 +11,11 @@
     <TriggerOnDelete>0</TriggerOnDelete>
     <AsyncAutoDelete>0</AsyncAutoDelete>
     <SyncWorkflowLogOnFailure>0</SyncWorkflowLogOnFailure>
-    <StateCode>0</StateCode>
-    <StatusCode>1</StatusCode>
+    <StateCode>1</StateCode>
+    <StatusCode>2</StatusCode>
     <RunAs>1</RunAs>
     <IsTransacted>1</IsTransacted>
-    <IntroducedVersion>1.0.0.0</IntroducedVersion>
+    <IntroducedVersion>1.1.0.0</IntroducedVersion>
     <IsCustomizable>1</IsCustomizable>
     <BusinessProcessType>0</BusinessProcessType>
     <IsCustomProcessingStepAllowedForOtherPublishers>1</IsCustomProcessingStepAllowedForOtherPublishers>

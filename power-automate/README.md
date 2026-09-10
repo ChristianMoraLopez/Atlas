@@ -6,10 +6,10 @@ No hay un segundo flujo de subida: escribir directamente en la copia sincronizad
 
 ## Qué incluye esta carpeta
 
-- `AtlasBridge_1_0_0_0.zip`: solución no administrada para el asistente actual, con referencias de conexión de Outlook, Teams y OneDrive.
+- `AtlasBridge_1_0_0_0.zip`: solución no administrada AtlasBridge 1.1 para el asistente actual, con referencias de conexión de Outlook, Teams y OneDrive. El nombre estable permite que el cliente la encuentre; la versión interna controla la actualización.
 - `solution-source/`: fuente revisable de la solución actual.
 - `INSTALLER.md`: primera ejecución, límites y diagnóstico del asistente.
-- `Atlas-Export-Evidence.zip`: paquete de flujo no asociado a una solución, listo para **Import Package (Legacy)**.
+- `Atlas-Export-Evidence.zip`: paquete heredado conservado solo como referencia de desarrollo; no produce el contrato v2 actual.
 - `package-source/`: fuente legible del paquete anterior.
 - `atlas-evidence.schema.json`: contrato exacto que valida Atlas.
 - `atlas-evidence.example.json`: ejemplo válido para probar la aplicación sin Microsoft 365.
@@ -24,25 +24,9 @@ Las credenciales no vienen dentro del ZIP. Al importarlo, Power Automate obliga 
 
 ## Instalación recomendada
 
-Usa **Instalar conector de Microsoft 365** dentro de Atlas y sigue `INSTALLER.md`. El asistente genera un ZIP personalizado para correlacionar la primera evidencia, abre el portal oficial y verifica el resultado local. El usuario todavía debe completar las pantallas de Microsoft para entorno, conexiones e importación.
+Usa **Instalar conector de Microsoft 365** dentro de Atlas y sigue `INSTALLER.md`. El asistente genera un ZIP personalizado para correlacionar la primera evidencia, abre el portal oficial y verifica el resultado local. No solicita IDs de aplicación, tenant, entorno o calendario. El usuario todavía debe completar el inicio de sesión, la asociación de conexiones y la confirmación de importación que muestra Microsoft.
 
-## Instalación heredada de respaldo
-
-1. En OneDrive corporativo crea la carpeta `AtlasBridge/inbox`.
-2. En Power Automate abre **Mis flujos → Importar → Importar paquete (heredado)**.
-3. Carga `Atlas-Export-Evidence.zip`.
-4. En la fila del flujo selecciona **Crear como nuevo**.
-5. En **Recursos relacionados**, elige o crea una conexión con tu cuenta de Circana para:
-   - Office 365 Outlook
-   - Microsoft Teams
-   - OneDrive for Business
-6. Pulsa **Importar**, abre el flujo `Atlas - Export evidence to OneDrive` y guárdalo.
-7. Comprueba la acción **Get calendar view of events V3**. El paquete toma el primer calendario devuelto por Outlook; si no es tu calendario principal, selecciónalo una vez en esa acción.
-8. En **Create Atlas evidence file**, confirma que la ruta sea `/AtlasBridge/inbox`.
-9. Ejecuta **Probar → Manualmente**. Debe aparecer un archivo como `atlas-evidence-2026-09-07-20260907T220000Z.json`.
-10. Activa el flujo. Está configurado para ejecutarse cada hora en la zona `SA Pacific Standard Time` (Bogotá).
-
-El flujo tolera que el conector de Teams esté bloqueado: calendario y correo siguen generando el paquete y `teams` queda vacío. Si falla calendario, no se crea un paquete incompleto. Revisa el historial de ejecución para ver cuál bloque falló.
+El flujo se importa activo, usa el primer calendario devuelto por Outlook y se ejecuta cada hora en la zona `SA Pacific Standard Time` (Bogotá). Calendario, correo y Teams se ejecutan de forma independiente. Aunque falle uno, el flujo escribe el paquete con una marca de estado para que Atlas muestre la alerta correspondiente y acepte una interacción manual real.
 
 ## Configuración de Atlas
 

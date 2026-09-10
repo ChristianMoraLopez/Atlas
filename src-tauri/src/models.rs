@@ -61,7 +61,6 @@ pub struct AppStatus {
     pub source_mode: SourceMode,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bridge_folder: Option<String>,
-    pub microsoft_config: MicrosoftConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub account: Option<AccountInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]

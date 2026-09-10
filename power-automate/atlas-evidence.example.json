@@ -1,7 +1,12 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "exportedAt": "2026-09-07T22:00:00Z",
   "targetDate": "2026-09-07",
+  "sources": {
+    "calendar": true,
+    "mail": true,
+    "teams": true
+  },
   "calendar": [
     {
       "id": "event-example-1",

@@ -14,8 +14,8 @@ mod state;
 use crate::{
     error::{AppError, Result},
     models::{
-        AppStatus, ExportResult, ExtractionResult, Interaction, MicrosoftConfig, SourceKind,
-        SourceMode, TrackerDestination, TrackerDestinationKind, UserProfile,
+        AppStatus, ExportResult, ExtractionResult, Interaction, SourceKind, SourceMode,
+        TrackerDestination, TrackerDestinationKind, UserProfile,
     },
     state::AppState,
 };
@@ -34,14 +34,19 @@ async fn build_status(state: &AppState) -> Result<AppStatus> {
             false
         }
     };
+    let connector_ready = state.connector_installer.snapshot()?.session.phase
+        == connector_installer::Phase::Completed;
     let configured = match settings.source_mode {
         SourceMode::MicrosoftGraph => {
             !microsoft_config.client_id.is_empty() && !microsoft_config.tenant_id.is_empty()
         }
-        SourceMode::PowerAutomateFolder => settings
-            .bridge_folder
-            .as_deref()
-            .is_some_and(|folder| Path::new(folder).is_dir()),
+        SourceMode::PowerAutomateFolder => {
+            settings
+                .bridge_folder
+                .as_deref()
+                .is_some_and(|folder| Path::new(folder).is_dir())
+                && connector_ready
+        }
     };
     Ok(AppStatus {
         configured,
@@ -51,7 +56,6 @@ async fn build_status(state: &AppState) -> Result<AppStatus> {
         },
         source_mode: settings.source_mode,
         bridge_folder: settings.bridge_folder,
-        microsoft_config,
         account: settings.account,
         profile: settings.profile,
         ollama_running,
@@ -77,56 +81,6 @@ async fn sign_in(state: tauri::State<'_, AppState>) -> Result<AppStatus> {
         .is_some_and(|destination| destination.kind == TrackerDestinationKind::SharePoint);
     let account = auth::sign_in(&state, include_files).await?;
     state.update_settings(|settings| settings.account = Some(account))?;
-    build_status(&state).await
-}
-
-fn normalize_microsoft_config(client_id: String, tenant_id: String) -> Result<MicrosoftConfig> {
-    let client_id = client_id.trim();
-    let tenant_id = tenant_id.trim();
-    let client_id = uuid::Uuid::parse_str(client_id).map_err(|_| {
-        AppError::Message(
-            "Application (client) ID must be a valid GUID from Microsoft Entra.".into(),
-        )
-    })?;
-    let tenant_id = uuid::Uuid::parse_str(tenant_id).map_err(|_| {
-        AppError::Message("Directory (tenant) ID must be a valid GUID from Microsoft Entra.".into())
-    })?;
-    if client_id.is_nil() || tenant_id.is_nil() {
-        return Err(AppError::Message(
-            "Replace the all-zero placeholders with the real Application ID and Tenant ID from Microsoft Entra.".into(),
-        ));
-    }
-    Ok(MicrosoftConfig {
-        client_id: client_id.to_string(),
-        tenant_id: tenant_id.to_string(),
-    })
-}
-
-#[tauri::command]
-async fn save_microsoft_config(
-    state: tauri::State<'_, AppState>,
-    client_id: String,
-    tenant_id: String,
-) -> Result<AppStatus> {
-    let config = normalize_microsoft_config(client_id, tenant_id)?;
-    let changed = state.microsoft_config()? != config;
-    if changed {
-        auth::clear_token(&state)?;
-    }
-    state.update_settings(|settings| {
-        settings.source_mode = SourceMode::MicrosoftGraph;
-        settings.microsoft_config = Some(config);
-        if changed {
-            settings.account = None;
-        }
-    })?;
-    if changed {
-        state
-            .verified_sources
-            .lock()
-            .map_err(|_| AppError::Message("Provenance cache lock was poisoned".into()))?
-            .clear();
-    }
     build_status(&state).await
 }
 
@@ -181,6 +135,10 @@ async fn save_power_automate_folder(
     folder: String,
 ) -> Result<AppStatus> {
     let folder = normalize_bridge_folder(folder)?;
+    let default_tracker = Path::new(&folder)
+        .parent()
+        .and_then(Path::parent)
+        .map(|root| root.join("Tracker_Circana.xlsx"));
     auth::clear_token(&state)?;
     state.update_settings(|settings| {
         settings.source_mode = SourceMode::PowerAutomateFolder;
@@ -192,6 +150,18 @@ async fn save_power_automate_folder(
             .is_some_and(|destination| destination.kind == TrackerDestinationKind::SharePoint)
         {
             settings.destination = None;
+        }
+        if settings.destination.is_none() {
+            if let Some(path) = default_tracker {
+                settings.destination = Some(TrackerDestination {
+                    kind: if path.is_file() {
+                        TrackerDestinationKind::LocalExisting
+                    } else {
+                        TrackerDestinationKind::LocalNew
+                    },
+                    value: path.to_string_lossy().into_owned(),
+                });
+            }
         }
     })?;
     state
@@ -431,6 +401,20 @@ fn validate_provenance(state: &AppState, interactions: &[Interaction]) -> Result
             }
         }
     }
+    let selected: Vec<_> = interactions.iter().filter(|item| item.selected).collect();
+    let has_meeting = selected
+        .iter()
+        .any(|item| item.interaction_type == "Meeting");
+    let has_mail = selected
+        .iter()
+        .any(|item| item.interaction_type == "E-Mail");
+    let has_task = selected.iter().any(|item| item.interaction_type == "Task");
+    if selected.len() < 3 || !has_meeting || !has_mail || !has_task {
+        return Err(AppError::Message(
+            "Antes de guardar, registra al menos tres interacciones reales: una reunión/calendario, un correo y una tarea/Teams. Añade manualmente la categoría que falte."
+                .into(),
+        ));
+    }
     Ok(())
 }
 
@@ -516,7 +500,6 @@ pub fn run() {
             connector_installer_action,
             connector_installer_open_portal,
             connector_installer_show_package,
-            save_microsoft_config,
             save_power_automate_folder,
             sign_in,
             sign_out,
@@ -528,30 +511,4 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Atlas");
-}
-
-#[cfg(test)]
-mod configuration_tests {
-    use super::*;
-
-    #[test]
-    fn normalizes_valid_microsoft_identifiers() {
-        let config = normalize_microsoft_config(
-            " 11111111-1111-4111-8111-111111111111 ".into(),
-            "22222222-2222-4222-8222-222222222222".into(),
-        )
-        .unwrap();
-        assert_eq!(config.client_id, "11111111-1111-4111-8111-111111111111");
-        assert_eq!(config.tenant_id, "22222222-2222-4222-8222-222222222222");
-    }
-
-    #[test]
-    fn rejects_invalid_microsoft_identifiers() {
-        assert!(normalize_microsoft_config("not-an-id".into(), "also-not-an-id".into()).is_err());
-        assert!(normalize_microsoft_config(
-            "00000000-0000-0000-0000-000000000000".into(),
-            "00000000-0000-0000-0000-000000000000".into()
-        )
-        .is_err());
-    }
 }

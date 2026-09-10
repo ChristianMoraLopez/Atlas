@@ -28,12 +28,20 @@ struct EvidenceBundle {
     schema_version: u32,
     exported_at: String,
     target_date: String,
+    sources: BridgeSourceStatus,
     #[serde(default)]
     calendar: Vec<BridgeCalendarEvent>,
     #[serde(default)]
     mail: Vec<BridgeMailMessage>,
     #[serde(default)]
     teams: Vec<BridgeTeamsMessage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BridgeSourceStatus {
+    calendar: bool,
+    mail: bool,
+    teams: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -126,7 +134,7 @@ fn newest_bundle(folder: &Path, date: &str) -> Result<(PathBuf, EvidenceBundle)>
             Ok(value) => value,
             Err(_) => continue,
         };
-        if bundle.schema_version != 1 || bundle.target_date != date {
+        if bundle.schema_version != 2 || bundle.target_date != date {
             continue;
         }
         let exported = match parse_graph_time(&bundle.exported_at) {
@@ -415,18 +423,47 @@ pub async fn extract(
     let (path, mut bundle) = newest_bundle(folder, date)?;
     validate_limits(&bundle)?;
     let (start, end) = day_bounds(date, timezone)?;
-    let mut interactions = calendar_rows(bundle.calendar, start, end, timezone)?;
+    let source_status = &bundle.sources;
     let mut warnings = Vec::new();
+    for (ready, label) in [
+        (source_status.calendar, "calendario"),
+        (source_status.mail, "correo"),
+        (source_status.teams, "Teams"),
+    ] {
+        if !ready {
+            warnings.push(format!(
+                "Power Automate no pudo leer {label} en esta ejecución. Revisa la conexión y añade una interacción real manualmente si falta."
+            ));
+        }
+    }
+    if source_status.calendar && bundle.calendar.is_empty() {
+        warnings.push(
+            "No se encontraron reuniones de hoy; añade una real manualmente si corresponde.".into(),
+        );
+    }
+    if source_status.mail && bundle.mail.is_empty() {
+        warnings.push(
+            "No se encontraron correos de hoy; añade uno real manualmente si corresponde.".into(),
+        );
+    }
+    if source_status.teams && bundle.teams.is_empty() {
+        warnings.push("No se encontraron mensajes de Teams de hoy; añade una interacción real manualmente si corresponde.".into());
+    }
+    let mut interactions = calendar_rows(bundle.calendar, start, end, timezone)?;
     if include_email {
         interactions.extend(mail_rows(bundle.mail, start, end)?);
     }
     if include_teams && !bundle.teams.is_empty() {
-        state.local_ai.ensure_ready(&state.http).await?;
-        match teams_rows(state, std::mem::take(&mut bundle.teams), start, end).await {
-            Ok(values) => interactions.extend(values),
+        match state.local_ai.ensure_ready(&state.http).await {
+            Ok(()) => match teams_rows(state, std::mem::take(&mut bundle.teams), start, end).await {
+                Ok(values) => interactions.extend(values),
+                Err(error) => warnings.push(format!(
+                    "Las sugerencias de Teams de {} se omitieron: {error}",
+                    path.display()
+                )),
+            },
             Err(error) => warnings.push(format!(
-                "Teams suggestions from {} were skipped: {error}",
-                path.display()
+                "Teams se recibió, pero el análisis local no está disponible: {error}. Añade una tarea real manualmente."
             )),
         }
     }
@@ -497,7 +534,7 @@ mod tests {
             let mut file = NamedTempFile::new_in(directory.path()).unwrap();
             write!(
                 file,
-                r#"{{"schemaVersion":1,"exportedAt":"{exported_at}","targetDate":"2026-09-07","calendar":[],"mail":[],"teams":[]}}"#
+                r#"{{"schemaVersion":2,"exportedAt":"{exported_at}","targetDate":"2026-09-07","sources":{{"calendar":true,"mail":true,"teams":true}},"calendar":[],"mail":[],"teams":[]}}"#
             )
             .unwrap();
             file.persist(directory.path().join(name)).unwrap();

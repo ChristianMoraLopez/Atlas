@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AppStatus, ExportResult, ExtractionResult, Interaction, MicrosoftConfig, TrackerDestination, UserProfile } from "./types";
+import type { AppStatus, ExportResult, ExtractionResult, Interaction, TrackerDestination, UserProfile } from "./types";
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   try {
@@ -12,7 +12,6 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
 
 export const api = {
   status: () => call<AppStatus>("get_app_status"),
-  saveMicrosoftConfig: (config: MicrosoftConfig) => call<AppStatus>("save_microsoft_config", { clientId: config.clientId, tenantId: config.tenantId }),
   savePowerAutomateFolder: (folder: string) => call<AppStatus>("save_power_automate_folder", { folder }),
   signIn: () => call<AppStatus>("sign_in"),
   signOut: () => call<void>("sign_out"),

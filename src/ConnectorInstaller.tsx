@@ -8,8 +8,8 @@ interface Session { phase: Phase; installationId: string; folder?: string; calen
 interface Snapshot { session: Session; packagePath: string; oneDriveRoot?: string; pacDetected: boolean }
 const steps: [Phase, string][] = [
   ['checking_requirements', 'Comprobando requisitos'], ['waiting_sign_in', 'Esperando inicio de sesión'],
-  ['finding_environment', 'Buscando entorno'], ['finding_connections', 'Buscando conexiones'],
-  ['importing_solution', 'Importando solución'], ['activating_flow', 'Activando flujo'],
+  ['finding_environment', 'Actualizando instalación anterior'], ['finding_connections', 'Conectando Microsoft 365'],
+  ['importing_solution', 'Importando solución'], ['activating_flow', 'Actualizando flujo anterior'],
   ['verifying_file', 'Verificando archivo'], ['completed', 'Instalación completada'],
   ['blocked_by_policy', 'Bloqueado por política corporativa'],
 ];
@@ -36,17 +36,14 @@ const diagnostics: Record<string, string> = {
   conditional_access: 'Microsoft devolvió AADSTS53003: una política de acceso condicional bloquea el inicio de sesión. Atlas no puede alterar ese requisito.',
   unmanaged_blocked: 'El entorno bloquea personalizaciones no administradas. Este paquete es una solución no administrada; no se cambiará de tipo para sortear la política.',
   license_required: 'Microsoft indica que falta una licencia aplicable. Los conectores son estándar, pero los derechos asignados, el entorno y sus políticas también deben permitir el uso.',
-  calendar_not_unique: 'No se encontró un único calendario con ese nombre. Prepara otra configuración con el nombre exacto de Outlook y actualiza la misma solución; no crees otro flujo.',
   throttled: 'Microsoft limita temporalmente las solicitudes. Espera antes de reintentar. Comprueba si la importación ya terminó para evitar repetirla.',
   timeout: 'La operación agotó el tiempo de espera. Puede haber terminado en el servidor: revisa Soluciones y el historial antes de volver a importar.',
   unclassified_portal_error: 'No se pudo identificar la causa con certeza. Un 403 por sí solo no demuestra qué permiso falta. Revisa el detalle oficial; puedes introducir solo el código de error, sin credenciales.',
 };
 
-export default function ConnectorInstaller({ onClose, onUseFolder }: { onClose: () => void; onUseFolder: (folder: string) => Promise<void> }) {
+export default function ConnectorInstaller({ onClose, onUseFolder }: { onClose?: () => void; onUseFolder: (folder: string) => Promise<void> }) {
   const [snapshot, setSnapshot] = useState<Snapshot>();
   const [root, setRoot] = useState('');
-  const [calendar, setCalendar] = useState('Calendar');
-  const [environment, setEnvironment] = useState('');
   const [ownConnections, setOwnConnections] = useState(false);
   const [syncAccount, setSyncAccount] = useState(false);
   const [report, setReport] = useState('');
@@ -62,7 +59,7 @@ export default function ConnectorInstaller({ onClose, onUseFolder }: { onClose: 
     mounted.current = true;
     invoke<Snapshot>('connector_installer_status').then(s => {
       if (!mounted.current) return;
-      setSnapshot(s); setRoot(s.oneDriveRoot ?? ''); setCalendar(s.session.calendarName); setEnvironment(s.session.environmentId ?? '');
+      setSnapshot(s); setRoot(s.oneDriveRoot ?? '');
     }).catch(() => setError('No se pudo cargar el asistente. Cierra y vuelve a abrirlo.'));
     return () => { mounted.current = false; };
   }, []);
@@ -92,9 +89,9 @@ export default function ConnectorInstaller({ onClose, onUseFolder }: { onClose: 
     if (typeof folder === 'string') { setRoot(folder); setSyncAccount(false); }
   });
   return <main className="mx-auto min-h-screen max-w-6xl px-10 py-8">
-    <header className="flex items-center justify-between"><span className="chip bg-mint text-pine"><ShieldCheck className="h-4 w-4" />Sin instalaciones de sistema</span><button className="btn-secondary" onClick={onClose} disabled={busy}><X className="h-4 w-4" />Cerrar y conservar progreso</button></header>
+    <header className="flex items-center justify-between"><span className="chip bg-mint text-pine"><ShieldCheck className="h-4 w-4" />Sin instalaciones de sistema</span>{onClose && <button className="btn-secondary" onClick={onClose} disabled={busy}><X className="h-4 w-4" />Cerrar y conservar progreso</button>}</header>
     <h1 className="mt-7 font-display text-4xl">Instalar conector de Microsoft 365</h1>
-    <p className="mt-3 max-w-4xl text-sm leading-6 text-ink/65">Instalación asistida mediante Power Automate. Completarás el inicio de sesión/MFA, elegirás el entorno y tus conexiones y confirmarás la importación en Microsoft. Si el flujo queda apagado, lo activarás en su página de detalles. No necesitas abrir el diseñador ni crear acciones.</p>
+    <p className="mt-3 max-w-4xl text-sm leading-6 text-ink/65">Inicia sesión con tu cuenta Circana en el portal oficial, vincula tus conexiones e importa el paquete una sola vez. El flujo se entrega activo y se ejecuta cada hora; no necesitas abrir el diseñador ni copiar identificadores.</p>
     <div className="mt-7 grid grid-cols-[280px_1fr] gap-6">
       <ol className="card space-y-3 p-5" aria-label="Etapas de instalación">{steps.map(([key, label], i) => <li key={key} aria-current={key === phase ? 'step' : undefined} className={`flex gap-3 text-sm ${key === phase ? 'font-bold text-pine' : 'text-ink/50'}`}><span>{i + 1}.</span>{label}{key === 'completed' && phase === key && <Check className="h-4 w-4" />}</li>)}</ol>
       <section className="card min-w-0 p-7">
@@ -105,14 +102,13 @@ export default function ConnectorInstaller({ onClose, onUseFolder }: { onClose: 
           <button className="btn-secondary" disabled={busy} onClick={chooseRoot}><FolderOpen className="h-4 w-4" />Elegir raíz de OneDrive corporativo</button>
           {root && <p className="break-all rounded-xl bg-cream p-3 text-xs">{root}\AtlasBridge\inbox</p>}
           <label className="flex gap-2 text-sm"><input type="checkbox" checked={syncAccount} onChange={e => setSyncAccount(e.target.checked)} />Esta carpeta pertenece a mi OneDrive corporativo, está sincronizada y usaré esa misma cuenta en Microsoft.</label>
-          <label><span className="label mt-4">Nombre exacto del calendario en Outlook</span><input className="field" maxLength={128} value={calendar} onChange={e => setCalendar(e.target.value)} /><span className="mt-1 block text-xs text-ink/55">Por ejemplo Calendar o Calendario. Déjalo vacío solo si tienes un único calendario disponible. El nombre no se detecta automáticamente.</span></label>
-          <button className="btn-primary" disabled={busy || !root || !syncAccount || !snapshot} onClick={() => void act({ kind: 'prepare', one_drive_root: root, calendar_name: calendar })}>Preparar carpeta y solución</button>
+          <button className="btn-primary" disabled={busy || !root || !syncAccount || !snapshot} onClick={() => void act({ kind: 'prepare', one_drive_root: root, calendar_name: '' })}>Preparar carpeta y solución</button>
         </div>}
         {phase === 'waiting_sign_in' && <div className="mt-5 space-y-4"><p className="text-sm">Abre Microsoft e inicia sesión con tu cuenta corporativa. La sesión queda bajo el control del navegador; Atlas no recibe una señal de inicio de sesión.</p><button className="btn-primary" disabled={busy} onClick={portal}><ExternalLink className="h-4 w-4" />Abrir inicio de sesión oficial</button><button className="btn-secondary ml-3" disabled={busy} onClick={() => void act({ kind: 'confirm_sign_in' })}>Ya inicié sesión en Microsoft</button></div>}
-        {phase === 'finding_environment' && <div className="mt-5 space-y-4"><p className="text-sm">Usa el selector de entornos de Power Automate. Confirma que puedes abrir <b>Soluciones → Importar solución</b>. Copia el identificador del entorno o la URL del portal que contiene <code>/environments/…</code>. Si no aparece Soluciones o Microsoft indica un permiso faltante, registra el diagnóstico abajo.</p><label><span className="label">Entorno seleccionado en Microsoft</span><input className="field" value={environment} onChange={e => setEnvironment(e.target.value)} placeholder="Default-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" /></label><button className="btn-primary" disabled={busy || !environment.trim()} onClick={() => void act({ kind: 'confirm_environment', environment_id: environment })}>Confirmo el entorno y el acceso a Importar</button></div>}
+        {phase === 'finding_environment' && <div className="mt-5 space-y-4"><p className="text-sm">Esta instalación comenzó con una versión anterior de Atlas. Ya no hace falta copiar el identificador del entorno.</p><button className="btn-primary" disabled={busy} onClick={() => void act({ kind: 'confirm_environment', environment_id: '' })}>Continuar sin identificador</button></div>}
         {phase === 'finding_connections' && <div className="mt-5 space-y-4"><p className="text-sm">En Microsoft, revisa tus conexiones de <b>Office 365 Outlook, Microsoft Teams y OneDrive for Business</b>. Durante la importación selecciona las que pertenezcan a tu cuenta. Si Microsoft solicita crear o reparar una conexión, completa esa pantalla oficial y vuelve aquí.</p><label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={ownConnections} onChange={e => setOwnConnections(e.target.checked)} />Confirmo que las tres conexiones son mías, están autorizadas y OneDrive coincide con la carpeta elegida.</label><button className="btn-primary" disabled={busy || !ownConnections} onClick={() => void act({ kind: 'confirm_connections' })}>Continuar a importación</button></div>}
-        {phase === 'importing_solution' && <div className="mt-5 space-y-4"><p className="text-sm">En <b>Soluciones → Importar solución</b>, carga el ZIP preparado por Atlas, asocia las tres referencias a tus conexiones y pulsa <b>Importar</b>. Usa este archivo personalizado, no el paquete Legacy. Espera al resultado oficial.</p><p className="break-all rounded-xl bg-cream p-3 text-xs">{snapshot?.packagePath}</p><p className="text-sm">Busca primero <b>AtlasBridge</b>: si ya existe, revisa la importación o actualiza esa misma solución. Reintentar en Atlas no vuelve a importar ni crea otro flujo.</p><button className="btn-secondary" disabled={busy} onClick={() => void run(async () => { await invoke('connector_installer_show_package'); })}><FolderOpen className="h-4 w-4" />Mostrar ZIP</button><button className="btn-primary ml-3" disabled={busy} onClick={() => void act({ kind: 'confirm_import' })}>Microsoft confirmó la importación</button></div>}
-        {phase === 'activating_flow' && <div className="mt-5 space-y-4"><p className="text-sm">En AtlasBridge, abre los detalles de <b>Atlas - Export evidence to OneDrive</b>. Si está apagado, pulsa <b>Activar</b>. No uses Editar. Verifica que OneDrive ya sincronizó <code>AtlasBridge/inbox</code>. El primer JSON llegará después de una ejecución programada, normalmente dentro de una hora más la sincronización.</p><button className="btn-primary" disabled={busy} onClick={() => void act({ kind: 'confirm_active' })}>El flujo está activado; verificar archivo</button></div>}
+        {phase === 'importing_solution' && <div className="mt-5 space-y-4"><p className="text-sm">En <b>Soluciones → Importar solución</b>, carga el ZIP preparado por Atlas, asocia Outlook, Teams y OneDrive con tu cuenta Circana y pulsa <b>Importar</b>. El paquete actualiza <b>AtlasBridge</b> si ya existe y entrega el flujo activo.</p><p className="break-all rounded-xl bg-cream p-3 text-xs">{snapshot?.packagePath}</p><button className="btn-secondary" disabled={busy} onClick={() => void run(async () => { await invoke('connector_installer_show_package'); })}><FolderOpen className="h-4 w-4" />Mostrar ZIP</button><button className="btn-primary ml-3" disabled={busy} onClick={() => void act({ kind: 'confirm_import' })}>Microsoft confirmó la importación</button></div>}
+        {phase === 'activating_flow' && <div className="mt-5 space-y-4"><p className="text-sm">La configuración anterior esperaba una activación manual. El paquete nuevo ya se importa activo.</p><button className="btn-primary" disabled={busy} onClick={() => void act({ kind: 'confirm_active' })}>Continuar a verificación</button></div>}
         {phase === 'verifying_file' && <div className="mt-5 space-y-4"><p className="break-all text-xs">{session?.folder}</p><p className="text-sm">Solo se aceptan archivos nuevos identificados con esta instalación. Un ejemplo local o un archivo del flujo antiguo no completará esta comprobación. Puedes cerrar Atlas y reanudar después.</p><button className="btn-secondary" disabled={busy} onClick={() => void act({ kind: 'verify' })}><RotateCcw className="h-4 w-4" />Comprobar ahora</button></div>}
         {phase === 'completed' && <div className="mt-5 space-y-4"><p className="text-sm">Usar esta carpeta cambia Atlas al modo Power Automate Inbox. Si tenías un destino SharePoint directo, tendrás que elegir su copia sincronizada local.</p><button className="btn-primary" disabled={busy} onClick={() => void run(async () => { if (session?.folder) await onUseFolder(session.folder); })}><Check className="h-4 w-4" />Usar este conector en Atlas</button></div>}
         {phase === 'blocked_by_policy' && <div className="mt-5 space-y-4"><p className="text-sm">No hay cambios locales que concedan este requisito corporativo. Conserva el modo local. Reanuda únicamente si el portal ya permite continuar.</p><button className="btn-secondary" disabled={busy} onClick={() => void act({ kind: 'retry' })}>Volver al paso pendiente</button></div>}
@@ -129,8 +125,6 @@ function localError(failure: unknown): string {
   const code = String(failure).replace('Atlas connector: ', '');
   const messages: Record<string, string> = {
     choose_onedrive_root: 'Selecciona una carpeta existente: la raíz de tu OneDrive corporativo.',
-    invalid_environment_id: 'Introduce un GUID de entorno, Default-GUID o una URL HTTPS de make.powerautomate.com con /environments/ID.',
-    invalid_calendar_name: 'El nombre del calendario debe tener hasta 128 caracteres sin saltos de línea.',
     inbox_not_writable: 'No se puede crear AtlasBridge/inbox en esa carpeta. Revisa el acceso de tu usuario.',
     protected_location: 'Selecciona tu carpeta de OneDrive; no se escribirá en una ubicación protegida del sistema.',
     unsafe_inbox_link: 'AtlasBridge/inbox apunta fuera de la carpeta seleccionada. Elige una carpeta sincronizada sin ese enlace.',
