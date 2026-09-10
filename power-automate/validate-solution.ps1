@@ -1,8 +1,15 @@
 param([string] $SolutionPath = (Join-Path $PSScriptRoot 'AtlasBridge_1_0_0_0.zip'))
 $ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive = [IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $SolutionPath))
 try {
+    function Get-OptionalProperty($Object, [string] $Name) {
+        if ($null -eq $Object) { return $null }
+        $property = $Object.PSObject.Properties[$Name]
+        if ($null -eq $property) { return $null }
+        return $property.Value
+    }
     $names = @($archive.Entries | ForEach-Object FullName)
     if (($names | Sort-Object -Unique).Count -ne $names.Count) { throw 'Duplicate ZIP entries.' }
     function Read-Entry([string] $Name) {
@@ -38,9 +45,14 @@ try {
         if ($ref.Count -ne 1 -or $ref[0].connectorid -ne "/providers/Microsoft.PowerApps/apis/$api") { throw "Invalid connection reference: $logical" }
         $connection = $flow.properties.connectionReferences.$api
         if ($connection.connection.connectionReferenceLogicalName -ne $logical -or $connection.api.name -ne $api) { throw 'Flow reference does not resolve.' }
-        if ($connection.connectionName -or $connection.connection.id -or $connection.connection.connectionId) { throw 'Connection instance found in distributable template.' }
+        $connectionName = Get-OptionalProperty $connection 'connectionName'
+        $connectionId = Get-OptionalProperty $connection.connection 'id'
+        $nestedConnectionId = Get-OptionalProperty $connection.connection 'connectionId'
+        if ($connectionName -or $connectionId -or $nestedConnectionId) { throw 'Connection instance found in distributable template.' }
     }
-    if ($flow.properties.definition.metadata.creator -or $flowText -match 'shared-office365-atlas-template|tenantId|connectionId|clientSecret|access_token|refresh_token') { throw 'User-specific metadata or credentials found.' }
+    $metadata = Get-OptionalProperty $flow.properties.definition 'metadata'
+    $creator = Get-OptionalProperty $metadata 'creator'
+    if ($creator -or $flowText -match 'shared-office365-atlas-template|tenantId|connectionId|clientSecret|access_token|refresh_token') { throw 'User-specific metadata or credentials found.' }
     function Validate-Actions($Actions) {
         foreach ($property in $Actions.PSObject.Properties) {
             $action = $property.Value
@@ -51,8 +63,11 @@ try {
             } elseif ($action.type -notin @('Compose','InitializeVariable','SetVariable','Scope','Select','Query','Foreach','AppendToArrayVariable','If','Terminate')) {
                 throw "Unexpected action type: $($action.type)"
             }
-            if ($action.actions) { Validate-Actions $action.actions }
-            if ($action.else.actions) { Validate-Actions $action.else.actions }
+            $nestedActions = Get-OptionalProperty $action 'actions'
+            if ($null -ne $nestedActions) { Validate-Actions $nestedActions }
+            $elseBranch = Get-OptionalProperty $action 'else'
+            $elseActions = Get-OptionalProperty $elseBranch 'actions'
+            if ($null -ne $elseActions) { Validate-Actions $elseActions }
         }
     }
     Validate-Actions $flow.properties.definition.actions
