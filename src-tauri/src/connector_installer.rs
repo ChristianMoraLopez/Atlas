@@ -159,7 +159,7 @@ impl Installer {
                 next.phase = Phase::WaitingSignIn;
                 next.diagnostic = "portal_required".into();
             }
-            Action::ConfirmSignIn => {
+            Action::ConfirmSignIn {} => {
                 advance(&mut next, Phase::WaitingSignIn, Phase::FindingEnvironment)?
             }
             Action::ConfirmEnvironment { environment_id } => {
@@ -172,18 +172,18 @@ impl Installer {
                 )?;
                 next.environment_id = Some(id);
             }
-            Action::ConfirmConnections => advance(
+            Action::ConfirmConnections {} => advance(
                 &mut next,
                 Phase::FindingConnections,
                 Phase::ImportingSolution,
             )?,
-            Action::ConfirmImport => {
+            Action::ConfirmImport {} => {
                 advance(&mut next, Phase::ImportingSolution, Phase::ActivatingFlow)?
             }
-            Action::ConfirmActive => {
+            Action::ConfirmActive {} => {
                 advance(&mut next, Phase::ActivatingFlow, Phase::VerifyingFile)?
             }
-            Action::Verify => {
+            Action::Verify {} => {
                 if next.phase != Phase::VerifyingFile {
                     return Err(fail("invalid_transition"));
                 }
@@ -211,7 +211,7 @@ impl Installer {
                     next.phase = Phase::BlockedByPolicy;
                 }
             }
-            Action::Retry => {
+            Action::Retry {} => {
                 if next.phase == Phase::BlockedByPolicy {
                     next.phase = next
                         .resume_phase
@@ -220,7 +220,7 @@ impl Installer {
                 }
                 next.diagnostic = "portal_required".into();
             }
-            Action::Reset => {
+            Action::Reset {} => {
                 next = Session::default();
             }
         }
@@ -250,19 +250,19 @@ pub enum Action {
         one_drive_root: String,
         calendar_name: String,
     },
-    ConfirmSignIn,
+    ConfirmSignIn {},
     ConfirmEnvironment {
         environment_id: String,
     },
-    ConfirmConnections,
-    ConfirmImport,
-    ConfirmActive,
-    Verify,
+    ConfirmConnections {},
+    ConfirmImport {},
+    ConfirmActive {},
+    Verify {},
     Report {
         message: String,
     },
-    Retry,
-    Reset,
+    Retry {},
+    Reset {},
 }
 
 fn advance(session: &mut Session, from: Phase, to: Phase) -> Result<()> {
@@ -736,7 +736,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let sync = tempfile::tempdir().unwrap();
         let installer = Installer::new(dir.path().to_path_buf());
-        assert!(installer.action(Action::ConfirmImport).is_err());
+        assert!(installer.action(Action::ConfirmImport {}).is_err());
         let prepared = installer
             .action(Action::Prepare {
                 one_drive_root: sync.path().to_string_lossy().into(),
@@ -745,8 +745,8 @@ mod tests {
             .unwrap();
         let id = prepared.session.installation_id.clone();
         assert_eq!(prepared.session.phase, Phase::WaitingSignIn);
-        assert!(installer.action(Action::Verify).is_err());
-        installer.action(Action::ConfirmSignIn).unwrap();
+        assert!(installer.action(Action::Verify {}).is_err());
+        installer.action(Action::ConfirmSignIn {}).unwrap();
         installer
             .action(Action::ConfirmEnvironment {
                 environment_id: "Default-11111111-1111-4111-8111-111111111111".into(),
@@ -762,13 +762,13 @@ mod tests {
         assert!(!persisted.contains("do-not-store"));
         assert!(!persisted.contains("alice@example.com"));
         let resumed = Installer::new(dir.path().to_path_buf());
-        let retry = resumed.action(Action::Retry).unwrap();
+        let retry = resumed.action(Action::Retry {}).unwrap();
         assert_eq!(retry.session.phase, Phase::FindingConnections);
         assert_eq!(retry.session.installation_id, id);
-        resumed.action(Action::ConfirmConnections).unwrap();
-        resumed.action(Action::ConfirmImport).unwrap();
-        resumed.action(Action::ConfirmActive).unwrap();
-        let waiting = resumed.action(Action::Verify).unwrap();
+        resumed.action(Action::ConfirmConnections {}).unwrap();
+        resumed.action(Action::ConfirmImport {}).unwrap();
+        resumed.action(Action::ConfirmActive {}).unwrap();
+        let waiting = resumed.action(Action::Verify {}).unwrap();
         assert_eq!(waiting.session.phase, Phase::VerifyingFile);
         assert_eq!(waiting.session.diagnostic, "waiting_for_sync");
         let mut bundle: Value = serde_json::from_str(include_str!(
@@ -783,13 +783,13 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            resumed.action(Action::Verify).unwrap().session.phase,
+            resumed.action(Action::Verify {}).unwrap().session.phase,
             Phase::Completed
         );
-        assert!(resumed.action(Action::ConfirmImport).is_err());
+        assert!(resumed.action(Action::ConfirmImport {}).is_err());
         assert_ne!(
             resumed
-                .action(Action::Reset)
+                .action(Action::Reset {})
                 .unwrap()
                 .session
                 .installation_id,
