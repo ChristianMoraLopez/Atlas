@@ -1,5 +1,6 @@
 use crate::{
     error::{AppError, Context, Result},
+    evidence_validation,
     graph::{classify_client, day_bounds, excluded_subject, parse_graph_time},
     models::{ExtractionResult, Interaction, SourceKind},
     ollama::{self, ChatEvidence},
@@ -114,7 +115,14 @@ fn newest_bundle(folder: &Path, date: &str) -> Result<(PathBuf, EvidenceBundle)>
             Ok(value) => value,
             Err(_) => continue,
         };
-        let bundle: EvidenceBundle = match serde_json::from_slice(&bytes) {
+        let value: serde_json::Value = match serde_json::from_slice(&bytes) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        if !evidence_validation::valid(&value) {
+            continue;
+        }
+        let bundle: EvidenceBundle = match serde_json::from_value(value) {
             Ok(value) => value,
             Err(_) => continue,
         };

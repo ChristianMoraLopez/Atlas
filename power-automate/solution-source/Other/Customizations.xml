@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ImportExportXml xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <Entities/><Roles/><Workflows />
+  <FieldSecurityProfiles/><Templates/><EntityMaps/><EntityRelationships/><OrganizationSettings/><optionsets/><CustomControls/><SolutionPluginAssemblies/><EntityDataProviders/>
+  <connectionreferences>
+    <connectionreference connectionreferencelogicalname="atlas_office365"><connectionreferencedisplayname>Office 365 Outlook</connectionreferencedisplayname><connectorid>/providers/Microsoft.PowerApps/apis/shared_office365</connectorid><iscustomizable>1</iscustomizable><statecode>0</statecode><statuscode>1</statuscode></connectionreference>
+    <connectionreference connectionreferencelogicalname="atlas_teams"><connectionreferencedisplayname>Microsoft Teams</connectionreferencedisplayname><connectorid>/providers/Microsoft.PowerApps/apis/shared_teams</connectorid><iscustomizable>1</iscustomizable><statecode>0</statecode><statuscode>1</statuscode></connectionreference>
+    <connectionreference connectionreferencelogicalname="atlas_onedriveforbusiness"><connectionreferencedisplayname>OneDrive for Business</connectionreferencedisplayname><connectorid>/providers/Microsoft.PowerApps/apis/shared_onedriveforbusiness</connectorid><iscustomizable>1</iscustomizable><statecode>0</statecode><statuscode>1</statuscode></connectionreference>
+  </connectionreferences><Languages><Language>1033</Language></Languages>
+</ImportExportXml>

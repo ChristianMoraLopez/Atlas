@@ -1,7 +1,9 @@
 mod auth;
 mod bridge;
+mod connector_installer;
 mod diagnostics;
 mod error;
+mod evidence_validation;
 mod excel;
 mod graph;
 mod models;
@@ -126,6 +128,35 @@ async fn save_microsoft_config(
             .clear();
     }
     build_status(&state).await
+}
+
+#[tauri::command]
+fn connector_installer_status(
+    state: tauri::State<'_, AppState>,
+) -> Result<connector_installer::Snapshot> {
+    state.connector_installer.snapshot()
+}
+
+#[tauri::command]
+async fn connector_installer_action(
+    state: tauri::State<'_, AppState>,
+    action: connector_installer::Action,
+) -> Result<connector_installer::Snapshot> {
+    // Package generation and bounded inbox reads stay off the UI thread.
+    let installer = state.connector_installer.clone();
+    tauri::async_runtime::spawn_blocking(move || installer.action(action))
+        .await
+        .map_err(|_| AppError::Message("Atlas connector: worker_failed".into()))?
+}
+
+#[tauri::command]
+fn connector_installer_open_portal(state: tauri::State<'_, AppState>) -> Result<()> {
+    state.connector_installer.open_portal()
+}
+
+#[tauri::command]
+fn connector_installer_show_package(state: tauri::State<'_, AppState>) -> Result<()> {
+    state.connector_installer.show_package()
 }
 
 fn normalize_bridge_folder(value: String) -> Result<String> {
@@ -481,6 +512,10 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_app_status,
+            connector_installer_status,
+            connector_installer_action,
+            connector_installer_open_portal,
+            connector_installer_show_package,
             save_microsoft_config,
             save_power_automate_folder,
             sign_in,

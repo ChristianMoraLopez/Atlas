@@ -6,6 +6,9 @@ No hay un segundo flujo de subida: escribir directamente en la copia sincronizad
 
 ## Qué incluye esta carpeta
 
+- `AtlasBridge_1_0_0_0.zip`: solución no administrada para el asistente actual, con referencias de conexión de Outlook, Teams y OneDrive.
+- `solution-source/`: fuente revisable de la solución actual.
+- `INSTALLER.md`: primera ejecución, límites y diagnóstico del asistente.
 - `Atlas-Export-Evidence.zip`: paquete de flujo no asociado a una solución, listo para **Import Package (Legacy)**.
 - `package-source/`: fuente legible del paquete anterior.
 - `atlas-evidence.schema.json`: contrato exacto que valida Atlas.
@@ -13,13 +16,17 @@ No hay un segundo flujo de subida: escribir directamente en la copia sincronizad
 
 ## Requisitos reales
 
-- Poder crear o importar flujos en el entorno de Power Automate. Microsoft exige el rol **Environment Maker** para importar un paquete no asociado a una solución.
-- Conexiones estándar de **Office 365 Outlook**, **Microsoft Teams** y **OneDrive for Business**. No se usa HTTP premium, Dataverse, una aplicación Entra ni un secreto de cliente.
+- Para el asistente actual, un entorno con Dataverse y permisos para crear el flujo, crear referencias e importar soluciones. Environment Maker puede ser necesario, pero no garantiza por sí solo todos los privilegios Dataverse.
+- Conexiones estándar de **Office 365 Outlook**, **Microsoft Teams** y **OneDrive for Business**. Las acciones del flujo no usan HTTP premium, conectores personalizados, el conector Dataverse, una aplicación Entra ni secretos; Dataverse sí es el contenedor requerido para importar la solución.
 - OneDrive corporativo iniciado en Windows.
 
 Las credenciales no vienen dentro del ZIP. Al importarlo, Power Automate obliga a asociar cada referencia con tus propias conexiones; eso es normal y evita distribuir tokens.
 
-## Instalación del flujo
+## Instalación recomendada
+
+Usa **Instalar conector de Microsoft 365** dentro de Atlas y sigue `INSTALLER.md`. El asistente genera un ZIP personalizado para correlacionar la primera evidencia, abre el portal oficial y verifica el resultado local. El usuario todavía debe completar las pantallas de Microsoft para entorno, conexiones e importación.
+
+## Instalación heredada de respaldo
 
 1. En OneDrive corporativo crea la carpeta `AtlasBridge/inbox`.
 2. En Power Automate abre **Mis flujos → Importar → Importar paquete (heredado)**.

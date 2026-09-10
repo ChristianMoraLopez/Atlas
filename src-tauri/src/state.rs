@@ -4,7 +4,13 @@ use crate::{
     models::{CachedAccessToken, Interaction, MicrosoftConfig, Settings},
     ollama::ManagedRuntime,
 };
-use std::{collections::HashMap, fs, path::PathBuf, sync::Mutex, time::Duration};
+use std::{
+    collections::HashMap,
+    fs,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 pub struct AppState {
     build_microsoft_config: MicrosoftConfig,
@@ -14,6 +20,7 @@ pub struct AppState {
     pub verified_sources: Mutex<HashMap<String, Interaction>>,
     pub cached_access_token: Mutex<Option<CachedAccessToken>>,
     pub local_ai: ManagedRuntime,
+    pub connector_installer: Arc<crate::connector_installer::Installer>,
 }
 
 impl AppState {
@@ -65,6 +72,9 @@ impl AppState {
             verified_sources: Mutex::new(HashMap::new()),
             cached_access_token: Mutex::new(None),
             local_ai: ManagedRuntime::discover(config_dir.join("logs").join("local-ai.log")),
+            connector_installer: Arc::new(crate::connector_installer::Installer::new(
+                config_dir.join("connector-installer"),
+            )),
         })
     }
 

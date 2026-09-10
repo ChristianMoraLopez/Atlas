@@ -1,5 +1,7 @@
 # Atlas — Circana Interactions Tracker
 
+For tenants that block the Atlas Entra application, Atlas includes a portal-assisted Power Automate solution installer. It prepares `AtlasBridge/inbox`, opens Microsoft's official portal, records user-confirmed setup stages, and completes only after a correlated evidence file passes the bundled schema. It does not copy browser cookies, automate credentials/MFA, call private portal endpoints, or distribute PAC. See [`power-automate/INSTALLER.md`](power-automate/INSTALLER.md).
+
 Atlas is a Tauri v2 Windows desktop application that builds the Circana Interactions Tracker from a user's own Microsoft 365 calendar, mail, and Teams evidence. It remembers one local Excel or SharePoint destination, can sync today's activity automatically while it is running, and keeps manual tasks optional. The portable package includes and manages its own local Ollama runtime and model for Teams interpretation.
 
 > **Atlas never invents interactions on its own.** Every exported row comes from exactly one of three sources: a real Microsoft Graph calendar event, a real Microsoft Graph email, or a manual entry the user typed. Manual entries are optional. There is no filler generator, minimum-row target, or blocking “add more” prompt.

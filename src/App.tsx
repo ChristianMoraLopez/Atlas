@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import ConnectorInstaller from "./ConnectorInstaller";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { openPath, openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import {
@@ -287,7 +288,7 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
   </div>;
 }
 
-export default function App() {
+function AtlasApp() {
   const [status, setStatus] = useState<AppStatus>(); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [editingMicrosoft, setEditingMicrosoft] = useState(false); const [editingDestination, setEditingDestination] = useState(false);
   const refresh = async () => { setStatus(await api.status()); };
   useEffect(() => { refresh().catch(e => setError(String(e))); }, []);
@@ -304,4 +305,14 @@ export default function App() {
   if (!status.profile) return <SetupScreen status={status} onSaved={saveProfile} />;
   if (!status.destination || editingDestination) return <DestinationSetupScreen initial={status.destination} initialAutoSync={status.autoSync} bridgeMode={status.sourceMode === "power_automate_folder"} onSave={saveDestination} onCancel={status.destination ? () => setEditingDestination(false) : undefined} />;
   return <Workspace status={status} refreshStatus={refresh} signOut={signOut} editMicrosoft={() => { setError(""); setEditingMicrosoft(true); }} editDestination={() => setEditingDestination(true)} />;
+}
+
+export default function App() {
+  const [installing, setInstalling] = useState(false);
+  const [revision, setRevision] = useState(0);
+  return <><div hidden={installing}><AtlasApp key={revision} /></div>{installing ? <ConnectorInstaller onClose={() => setInstalling(false)} onUseFolder={async folder => {
+    await api.savePowerAutomateFolder(folder);
+    setRevision(value => value + 1);
+    setInstalling(false);
+  }} /> : <button className="btn-primary fixed bottom-5 left-5 z-40 shadow-panel" onClick={() => setInstalling(true)}><Inbox className="h-4 w-4" />Instalar conector de Microsoft 365</button>}</>;
 }

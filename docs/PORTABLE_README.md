@@ -5,11 +5,12 @@ Atlas creates Circana interaction trackers from real Microsoft 365 activity.
 ## First launch
 
 1. Extract the zip and run `Atlas.exe`. No installer is required.
-2. Enter the **Application (client) ID** and **Directory (tenant) ID** from the team's Microsoft Entra app registration, then choose **Save and sign in**. These are public identifiers, not secrets.
-3. Complete Microsoft 365 sign-in in the system browser. Atlas stores the OAuth token in Windows Credential Manager.
-4. Enter your Corp ID, name, Area, Team Lead, and Circana Manager.
-5. Configure the tracker once: select an existing `.xlsx` / `.xlsm`, create a new `.xlsx`, or paste a SharePoint/OneDrive workbook link.
-6. Keep automatic sync enabled to update today's calendar and Teams evidence at startup and hourly while Atlas is open, or use **Sync today's calendar** at any time. Adding a manual task is optional.
+2. If the Atlas Entra application is blocked, choose **Instalar conector de Microsoft 365**. Atlas creates the local OneDrive inbox and guides the official Power Automate solution import. See `power-automate/INSTALLER.md`. The final PC doesn't need PAC, .NET, Node.js, Rust, Visual Studio, or administrator rights.
+3. Otherwise, enter the **Application (client) ID** and **Directory (tenant) ID** from the team's Microsoft Entra app registration, then choose **Save and sign in**. These are public identifiers, not secrets.
+4. Complete Microsoft 365 sign-in in the system browser. Atlas stores the OAuth token in Windows Credential Manager.
+5. Enter your Corp ID, name, Area, Team Lead, and Circana Manager.
+6. Configure the tracker once: select an existing `.xlsx` / `.xlsm`, create a new `.xlsx`, or paste a SharePoint/OneDrive workbook link.
+7. Keep automatic sync enabled to update today's calendar and Teams evidence at startup and hourly while Atlas is open, or use **Sync today's calendar** at any time. Adding a manual task is optional.
 
 Atlas uses Microsoft WebView2 for its interface. WebView2 is normally already installed on supported Windows 10 and Windows 11 systems; if Windows reports that it is missing, install the Evergreen WebView2 Runtime from Microsoft.
 

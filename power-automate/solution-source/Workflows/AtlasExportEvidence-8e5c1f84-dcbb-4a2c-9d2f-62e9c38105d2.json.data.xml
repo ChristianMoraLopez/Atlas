@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Workflow WorkflowId="{8e5c1f84-dcbb-4a2c-9d2f-62e9c38105d2}" Name="Atlas - Export evidence to OneDrive">
+    <JsonFileName>/Workflows/AtlasExportEvidence-8e5c1f84-dcbb-4a2c-9d2f-62e9c38105d2.json</JsonFileName>
+    <Type>1</Type>
+    <Subprocess>0</Subprocess>
+    <Category>5</Category>
+    <Mode>0</Mode>
+    <Scope>4</Scope>
+    <OnDemand>0</OnDemand>
+    <TriggerOnCreate>0</TriggerOnCreate>
+    <TriggerOnDelete>0</TriggerOnDelete>
+    <AsyncAutoDelete>0</AsyncAutoDelete>
+    <SyncWorkflowLogOnFailure>0</SyncWorkflowLogOnFailure>
+    <StateCode>0</StateCode>
+    <StatusCode>1</StatusCode>
+    <RunAs>1</RunAs>
+    <IsTransacted>1</IsTransacted>
+    <IntroducedVersion>1.0.0.0</IntroducedVersion>
+    <IsCustomizable>1</IsCustomizable>
+    <BusinessProcessType>0</BusinessProcessType>
+    <IsCustomProcessingStepAllowedForOtherPublishers>1</IsCustomProcessingStepAllowedForOtherPublishers>
+    <PrimaryEntity>none</PrimaryEntity>
+    <LocalizedNames><LocalizedName languagecode="1033" description="Atlas - Export evidence to OneDrive"/></LocalizedNames>
+  </Workflow>

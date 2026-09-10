@@ -148,6 +148,12 @@ try {
 
     Copy-Item -LiteralPath $ExecutablePath -Destination (Join-Path $PortableRoot "Atlas.exe")
     Copy-Item -LiteralPath (Join-Path $RepositoryRoot "docs\PORTABLE_README.md") -Destination (Join-Path $PortableRoot "README.md")
+    & (Join-Path $RepositoryRoot "power-automate\validate-solution.ps1")
+    $bridgeRoot = Join-Path $PortableRoot "power-automate"
+    New-Item -ItemType Directory -Path $bridgeRoot -Force | Out-Null
+    foreach ($bridgeFile in @("AtlasBridge_1_0_0_0.zip", "atlas-evidence.schema.json", "atlas-evidence.example.json", "README.md", "INSTALLER.md")) {
+        Copy-Item -LiteralPath (Join-Path $RepositoryRoot "power-automate\$bridgeFile") -Destination $bridgeRoot
+    }
 
     New-Item -ItemType Directory -Path $OutputRoot -Force | Out-Null
     $archive = Join-Path $OutputRoot $ArchiveName
@@ -163,6 +169,8 @@ try {
         foreach ($required in @(
             "Atlas.exe",
             "README.md",
+            "power-automate/AtlasBridge_1_0_0_0.zip",
+            "power-automate/INSTALLER.md",
             "AtlasAI/ollama.exe",
             "AtlasAI/BUILD_INFO.txt",
             "AtlasAI/models/blobs/sha256-$ModelBlobSha256"
