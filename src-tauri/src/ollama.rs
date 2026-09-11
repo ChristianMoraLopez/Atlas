@@ -21,6 +21,10 @@ const LAST_OLLAMA_PORT: u16 = 11445;
 const MODEL_BLOB: &str =
     "models/blobs/sha256-183715c435899236895da3869489cc30ac241476b4971a20285b1a462818a5b4";
 const MODEL_BLOB_SIZE: u64 = 986_048_512;
+const MAX_AI_EVIDENCE_ITEMS: usize = 24;
+const MAX_AI_EVIDENCE_CHARS: usize = 9_000;
+const MAX_AI_TEXT_CHARS: usize = 600;
+const MAX_AI_OUTPUT_TOKENS: u32 = 256;
 
 pub struct ManagedRuntime {
     root: PathBuf,
@@ -252,18 +256,66 @@ impl ManagedRuntime {
             return;
         };
         if let Some(mut process) = child.take() {
-            if let Err(error) = process.kill() {
-                diagnostics::error(
-                    "local-ai/process",
-                    &format!("Unable to stop bundled Ollama: {error}"),
-                );
+            let pid = process.id();
+            #[cfg(windows)]
+            let tree_stopped = terminate_process_tree(pid);
+            #[cfg(not(windows))]
+            let tree_stopped = false;
+
+            let still_running = matches!(process.try_wait(), Ok(None));
+            let stopped = if still_running {
+                match process.kill() {
+                    Ok(()) => true,
+                    Err(_) if tree_stopped => true,
+                    Err(error) => {
+                        diagnostics::error(
+                            "local-ai/process",
+                            &format!("Unable to stop bundled Ollama process {pid}: {error}"),
+                        );
+                        false
+                    }
+                }
             } else {
+                true
+            };
+            if stopped {
                 let _ = process.wait();
-                diagnostics::info("local-ai/process", "Stopped bundled Ollama");
+                diagnostics::info(
+                    "local-ai/process",
+                    &format!("Stopped bundled Ollama process tree {pid}"),
+                );
             }
         }
         if let Ok(mut port) = self.port.lock() {
             *port = None;
+        }
+    }
+}
+
+#[cfg(windows)]
+fn terminate_process_tree(pid: u32) -> bool {
+    use std::os::windows::process::CommandExt;
+
+    let executable = std::env::var_os("SystemRoot")
+        .map(PathBuf::from)
+        .map(|root| root.join("System32").join("taskkill.exe"))
+        .filter(|path| path.is_file())
+        .unwrap_or_else(|| PathBuf::from("taskkill.exe"));
+    match Command::new(executable)
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .creation_flags(0x0800_0000)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+    {
+        Ok(status) => status.success(),
+        Err(error) => {
+            diagnostics::error(
+                "local-ai/process",
+                &format!("Unable to terminate bundled Ollama process tree {pid}: {error}"),
+            );
+            false
         }
     }
 }
@@ -351,6 +403,7 @@ struct GenerateRequest<'a> {
 struct GenerateOptions {
     temperature: f32,
     num_ctx: u32,
+    num_predict: u32,
 }
 
 #[derive(Deserialize)]
@@ -389,6 +442,19 @@ async fn summarize_at(
         ));
     }
     let url = runtime_url(port, "api/generate")?;
+    let original_count = evidence.len();
+    let evidence = bounded_evidence(evidence);
+    if evidence.is_empty() {
+        return Ok(Vec::new());
+    }
+    diagnostics::info(
+        "local-ai/analysis",
+        &format!(
+            "Analyzing {} of {} Teams evidence items",
+            evidence.len(),
+            original_count
+        ),
+    );
     let lines = evidence
         .iter()
         .map(|message| {
@@ -405,14 +471,14 @@ async fn summarize_at(
     let prompt = format!(
         r#"You are grouping REAL Microsoft Teams chat messages into possible work interactions for human review.
 Return strict JSON with this shape: {{"interactions":[{{"source_ids":["exact-message-id"],"participants":["names found in messages"],"summary":"one factual sentence"}}]}}.
-Rules: use only IDs and facts present below; never invent work, people, clients, incidents, outcomes, or times; omit social chatter and messages that do not evidence a work interaction; an interaction must reference at least one exact message ID. The app derives times from those real messages, not from your output.
+Rules: return at most 3 interactions; keep each summary under 120 characters; use only IDs and facts present below; never invent work, people, clients, incidents, outcomes, or times; omit social chatter and messages that do not evidence a work interaction; an interaction must reference at least one exact message ID. The app derives times from those real messages, not from your output. Return the JSON object immediately with no explanation.
 
 MESSAGES:
 {lines}"#
     );
     let response = client
         .post(url)
-        .timeout(Duration::from_secs(180))
+        .timeout(Duration::from_secs(90))
         .json(&GenerateRequest {
             model,
             prompt,
@@ -421,6 +487,7 @@ MESSAGES:
             options: GenerateOptions {
                 temperature: 0.0,
                 num_ctx: 4096,
+                num_predict: MAX_AI_OUTPUT_TOKENS,
             },
         })
         .send()
@@ -444,7 +511,7 @@ MESSAGES:
         .collect();
     let mut seen = HashSet::new();
     let mut result = Vec::new();
-    for candidate in parsed.interactions {
+    for candidate in parsed.interactions.into_iter().take(3) {
         let mut ids: Vec<String> = candidate
             .source_ids
             .into_iter()
@@ -470,7 +537,34 @@ MESSAGES:
             participants: candidate.participants,
         });
     }
+    diagnostics::info(
+        "local-ai/analysis",
+        &format!("Created {} bounded Teams suggestions", result.len()),
+    );
     Ok(result)
+}
+
+fn bounded_evidence(evidence: &[ChatEvidence]) -> Vec<ChatEvidence> {
+    let mut candidates = evidence.to_vec();
+    candidates.sort_by_key(|item| std::cmp::Reverse(item.created));
+    candidates.truncate(MAX_AI_EVIDENCE_ITEMS);
+
+    let mut remaining = MAX_AI_EVIDENCE_CHARS;
+    let mut bounded = Vec::new();
+    for mut item in candidates {
+        if remaining == 0 {
+            break;
+        }
+        let limit = remaining.min(MAX_AI_TEXT_CHARS);
+        item.text = item.text.chars().take(limit).collect();
+        if item.text.trim().is_empty() {
+            continue;
+        }
+        remaining = remaining.saturating_sub(item.text.chars().count());
+        bounded.push(item);
+    }
+    bounded.sort_by_key(|item| item.created);
+    bounded
 }
 
 #[cfg(test)]
@@ -498,5 +592,22 @@ mod tests {
             PathBuf::from(r"C:\Atlas\AtlasAI\ollama.exe")
         );
         assert_eq!(runtime.models(), PathBuf::from(r"C:\Atlas\AtlasAI\models"));
+    }
+
+    #[test]
+    fn ai_evidence_is_recent_and_bounded() {
+        let evidence = (0..40)
+            .map(|index| ChatEvidence {
+                id: index.to_string(),
+                author: "Person".into(),
+                created: DateTime::from_timestamp(index, 0).unwrap(),
+                text: "x".repeat(1_000),
+            })
+            .collect::<Vec<_>>();
+        let bounded = bounded_evidence(&evidence);
+        assert_eq!(bounded.len(), 15);
+        assert_eq!(bounded.first().unwrap().id, "25");
+        assert_eq!(bounded.last().unwrap().id, "39");
+        assert!(bounded.iter().map(|item| item.text.len()).sum::<usize>() <= 9_000);
     }
 }

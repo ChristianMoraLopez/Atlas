@@ -487,7 +487,7 @@ async fn export_configured_tracker(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -517,6 +517,22 @@ pub fn run() {
             extract_interactions,
             export_configured_tracker
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Atlas");
+        .build(tauri::generate_context!())
+        .expect("error while building Atlas");
+    app.run(|app_handle, event| {
+        let closing = matches!(
+            event,
+            tauri::RunEvent::ExitRequested { .. }
+                | tauri::RunEvent::Exit
+                | tauri::RunEvent::WindowEvent {
+                    event: tauri::WindowEvent::CloseRequested,
+                    ..
+                }
+        );
+        if closing {
+            if let Some(state) = app_handle.try_state::<AppState>() {
+                state.local_ai.stop();
+            }
+        }
+    });
 }
