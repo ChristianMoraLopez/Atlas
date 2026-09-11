@@ -493,8 +493,7 @@ fn verify_inbox(session: &Session) -> Verification {
     let Ok(entries) = fs::read_dir(folder) else {
         return verification(VerificationState::Unavailable, "inbox_unavailable", None);
     };
-    let prefix = format!("atlas-evidence-{}-", session.installation_id);
-    let mut saw_json = false;
+    let current_prefix = format!("atlas-evidence-{}-", session.installation_id);
     let mut saw_invalid = false;
     let mut saw_placeholder = false;
     let mut saw_stale = false;
@@ -507,10 +506,10 @@ fn verify_inbox(session: &Session) -> Verification {
         if !name.ends_with(".json") {
             continue;
         }
-        saw_json = true;
-        if !name.starts_with(&prefix) {
+        if !is_atlas_evidence_name(&name) {
             continue;
         }
+        let current_installation = name.starts_with(&current_prefix);
         checked_file = Some(name);
         let Ok(kind) = entry.file_type() else {
             saw_invalid = true;
@@ -581,7 +580,15 @@ fn verify_inbox(session: &Session) -> Verification {
             saw_stale = true;
             continue;
         }
-        return verification(VerificationState::Valid, "file_verified", checked_file);
+        return verification(
+            VerificationState::Valid,
+            if current_installation {
+                "file_verified"
+            } else {
+                "existing_flow_file_verified"
+            },
+            checked_file,
+        );
     }
     if saw_placeholder {
         verification(
@@ -599,15 +606,22 @@ fn verify_inbox(session: &Session) -> Verification {
         verification(VerificationState::Waiting, "evidence_too_old", checked_file)
     } else if saw_invalid {
         verification(VerificationState::Invalid, "invalid_evidence", checked_file)
-    } else if saw_json {
-        verification(
-            VerificationState::Waiting,
-            "different_installation_file",
-            None,
-        )
     } else {
         verification(VerificationState::Waiting, "waiting_for_sync", None)
     }
+}
+
+fn is_atlas_evidence_name(name: &str) -> bool {
+    let Some(rest) = name
+        .strip_prefix("atlas-evidence-")
+        .and_then(|value| value.strip_suffix(".json"))
+    else {
+        return false;
+    };
+    let Some(id) = rest.get(..36) else {
+        return false;
+    };
+    uuid::Uuid::parse_str(id).is_ok() && rest.as_bytes().get(36) == Some(&b'-')
 }
 
 fn is_policy_error(code: &str) -> bool {
@@ -907,9 +921,9 @@ mod tests {
             serde_json::to_vec(&bundle).unwrap(),
         )
         .unwrap();
-        let wrong_installation = verify_inbox(&session);
-        assert_eq!(wrong_installation.state, VerificationState::Waiting);
-        assert_eq!(wrong_installation.diagnostic, "different_installation_file");
+        let unrelated = verify_inbox(&session);
+        assert_eq!(unrelated.state, VerificationState::Waiting);
+        assert_eq!(unrelated.diagnostic, "waiting_for_sync");
         let target = dir.path().join(format!(
             "atlas-evidence-{}-test.json",
             session.installation_id
@@ -939,5 +953,14 @@ mod tests {
         bundle["exportedAt"] = json!(Utc::now().to_rfc3339());
         fs::write(&target, serde_json::to_vec(&bundle).unwrap()).unwrap();
         assert_eq!(verify_inbox(&session).state, VerificationState::Valid);
+
+        let other_id = uuid::Uuid::new_v4();
+        let other = dir
+            .path()
+            .join(format!("atlas-evidence-{other_id}-recent.json"));
+        fs::rename(&target, &other).unwrap();
+        let existing_flow = verify_inbox(&session);
+        assert_eq!(existing_flow.state, VerificationState::Valid);
+        assert_eq!(existing_flow.diagnostic, "existing_flow_file_verified");
     }
 }
