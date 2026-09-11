@@ -113,6 +113,11 @@ fn connector_installer_show_package(state: tauri::State<'_, AppState>) -> Result
     state.connector_installer.show_package()
 }
 
+#[tauri::command]
+fn connector_installer_open_inbox(state: tauri::State<'_, AppState>) -> Result<()> {
+    state.connector_installer.open_inbox()
+}
+
 fn normalize_bridge_folder(value: String) -> Result<String> {
     let value = value.trim();
     if value.is_empty() {
@@ -502,6 +507,7 @@ pub fn run() {
             connector_installer_action,
             connector_installer_open_portal,
             connector_installer_show_package,
+            connector_installer_open_inbox,
             save_power_automate_folder,
             sign_in,
             sign_out,

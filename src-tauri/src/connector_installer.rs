@@ -1,6 +1,7 @@
 //! Portal-assisted installation. This module never obtains Microsoft credentials,
 //! invokes PAC, controls a browser, or calls a tenant API.
 use crate::{
+    diagnostics,
     error::{AppError, Result},
     evidence_validation,
 };
@@ -48,6 +49,10 @@ pub struct Session {
     pub environment_id: Option<String>,
     pub diagnostic: String,
     pub solution_version: Option<String>,
+    #[serde(default)]
+    pub last_checked_at: Option<String>,
+    #[serde(default)]
+    pub last_checked_file: Option<String>,
 }
 
 impl Default for Session {
@@ -62,6 +67,8 @@ impl Default for Session {
             environment_id: None,
             diagnostic: "portal_required".into(),
             solution_version: Some(SOLUTION_VERSION.into()),
+            last_checked_at: None,
+            last_checked_file: None,
         }
     }
 }
@@ -197,14 +204,29 @@ impl Installer {
                 if next.phase != Phase::VerifyingFile {
                     return Err(fail("invalid_transition"));
                 }
-                match verify_inbox(&next) {
-                    Verification::Valid => {
+                let verification = verify_inbox(&next);
+                next.last_checked_at = Some(Utc::now().to_rfc3339());
+                next.last_checked_file = verification.file_name.clone();
+                next.diagnostic = verification.diagnostic.into();
+                diagnostics::info(
+                    "connector/verify",
+                    &format!(
+                        "{}{}",
+                        verification.diagnostic,
+                        verification
+                            .file_name
+                            .as_deref()
+                            .map(|name| format!(" ({name})"))
+                            .unwrap_or_default()
+                    ),
+                );
+                match verification.state {
+                    VerificationState::Valid => {
                         next.phase = Phase::Completed;
-                        next.diagnostic = "file_verified".into();
                     }
-                    Verification::Waiting => next.diagnostic = "waiting_for_sync".into(),
-                    Verification::Invalid => next.diagnostic = "invalid_evidence".into(),
-                    Verification::Unavailable => next.diagnostic = "inbox_unavailable".into(),
+                    VerificationState::Waiting
+                    | VerificationState::Invalid
+                    | VerificationState::Unavailable => {}
                 }
             }
             Action::Report { message } => {
@@ -250,6 +272,20 @@ impl Installer {
             return Err(fail("package_missing"));
         }
         open::that(&self.directory).map_err(|_| fail("folder_unavailable"))
+    }
+
+    pub fn open_inbox(&self) -> Result<()> {
+        let folder = self
+            .session
+            .lock()
+            .map_err(|_| fail("installer_busy"))?
+            .folder
+            .clone()
+            .ok_or_else(|| fail("inbox_unavailable"))?;
+        if !Path::new(&folder).is_dir() {
+            return Err(fail("inbox_unavailable"));
+        }
+        open::that(folder).map_err(|_| fail("folder_unavailable"))
     }
 }
 
@@ -424,38 +460,68 @@ fn personalized_solution(session: &Session) -> Result<Vec<u8>> {
 }
 
 #[derive(Debug, PartialEq)]
-enum Verification {
+enum VerificationState {
     Valid,
     Waiting,
     Invalid,
     Unavailable,
 }
 
+#[derive(Debug, PartialEq)]
+struct Verification {
+    state: VerificationState,
+    diagnostic: &'static str,
+    file_name: Option<String>,
+}
+
+fn verification(
+    state: VerificationState,
+    diagnostic: &'static str,
+    file_name: Option<String>,
+) -> Verification {
+    Verification {
+        state,
+        diagnostic,
+        file_name,
+    }
+}
+
 fn verify_inbox(session: &Session) -> Verification {
     let Some(folder) = &session.folder else {
-        return Verification::Unavailable;
+        return verification(VerificationState::Unavailable, "inbox_unavailable", None);
     };
     let Ok(entries) = fs::read_dir(folder) else {
-        return Verification::Unavailable;
-    };
-    let Ok(started) = DateTime::parse_from_rfc3339(&session.started_at) else {
-        return Verification::Invalid;
+        return verification(VerificationState::Unavailable, "inbox_unavailable", None);
     };
     let prefix = format!("atlas-evidence-{}-", session.installation_id);
-    let mut invalid = false;
+    let mut saw_json = false;
+    let mut saw_invalid = false;
+    let mut saw_placeholder = false;
+    let mut saw_stale = false;
+    let mut saw_future = false;
+    let mut checked_file = None;
+    let now = Utc::now();
     // Bound directory traversal and each read. Verification never sends evidence to logs/UI.
     for entry in entries.take(10_000).flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
-        if !name.starts_with(&prefix) || !name.ends_with(".json") {
+        if !name.ends_with(".json") {
             continue;
         }
+        saw_json = true;
+        if !name.starts_with(&prefix) {
+            continue;
+        }
+        checked_file = Some(name);
         let Ok(kind) = entry.file_type() else {
+            saw_invalid = true;
             continue;
         };
         if !kind.is_file() || kind.is_symlink() {
+            saw_invalid = true;
             continue;
         }
         let Ok(metadata) = entry.metadata() else {
+            saw_invalid = true;
             continue;
         };
         #[cfg(windows)]
@@ -463,50 +529,84 @@ fn verify_inbox(session: &Session) -> Verification {
             use std::os::windows::fs::MetadataExt;
             // Do not block on hydration of OneDrive placeholders.
             if metadata.file_attributes() & (0x1000 | 0x40000 | 0x400000) != 0 {
+                saw_placeholder = true;
                 continue;
             }
         }
         if metadata.len() > MAX_FILE {
-            invalid = true;
+            saw_invalid = true;
             continue;
         }
         let Ok(file) = fs::File::open(entry.path()) else {
+            saw_invalid = true;
             continue;
         };
         let Ok(metadata) = file.metadata() else {
+            saw_invalid = true;
             continue;
         };
         if metadata.len() > MAX_FILE {
-            invalid = true;
+            saw_invalid = true;
             continue;
         }
         let mut bytes = Vec::new();
         if file.take(MAX_FILE + 1).read_to_end(&mut bytes).is_err() {
+            saw_invalid = true;
             continue;
         }
         if bytes.len() as u64 > MAX_FILE {
-            invalid = true;
+            saw_invalid = true;
             continue;
         }
         let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
-            invalid = true;
+            saw_invalid = true;
             continue;
         };
         if !evidence_validation::valid(&value) {
-            invalid = true;
+            saw_invalid = true;
             continue;
         }
-        let exported = DateTime::parse_from_rfc3339(value["exportedAt"].as_str().unwrap_or(""));
-        if exported
-            .is_ok_and(|time| time >= started && time <= Utc::now() + chrono::Duration::minutes(5))
-        {
-            return Verification::Valid;
+        let Ok(exported) = DateTime::parse_from_rfc3339(value["exportedAt"].as_str().unwrap_or(""))
+        else {
+            saw_invalid = true;
+            continue;
+        };
+        if exported > now + chrono::Duration::minutes(5) {
+            saw_future = true;
+            continue;
         }
+        // A restart must not invalidate a package produced by this same personalized flow.
+        // Keep the readiness proof recent while allowing OneDrive and setup delays.
+        if exported < now - chrono::Duration::hours(48) {
+            saw_stale = true;
+            continue;
+        }
+        return verification(VerificationState::Valid, "file_verified", checked_file);
     }
-    if invalid {
-        Verification::Invalid
+    if saw_placeholder {
+        verification(
+            VerificationState::Waiting,
+            "evidence_not_downloaded",
+            checked_file,
+        )
+    } else if saw_future {
+        verification(
+            VerificationState::Invalid,
+            "evidence_from_future",
+            checked_file,
+        )
+    } else if saw_stale {
+        verification(VerificationState::Waiting, "evidence_too_old", checked_file)
+    } else if saw_invalid {
+        verification(VerificationState::Invalid, "invalid_evidence", checked_file)
+    } else if saw_json {
+        verification(
+            VerificationState::Waiting,
+            "different_installation_file",
+            None,
+        )
     } else {
-        Verification::Waiting
+        verification(VerificationState::Waiting, "waiting_for_sync", None)
     }
 }
 
@@ -792,7 +892,7 @@ mod tests {
     }
 
     #[test]
-    fn verification_rejects_legacy_examples_stale_future_and_invalid_bundles() {
+    fn verification_explains_wrong_installation_stale_future_and_invalid_bundles() {
         let dir = tempfile::tempdir().unwrap();
         let session = Session {
             folder: Some(dir.path().to_string_lossy().into()),
@@ -807,23 +907,37 @@ mod tests {
             serde_json::to_vec(&bundle).unwrap(),
         )
         .unwrap();
-        assert_eq!(verify_inbox(&session), Verification::Waiting);
+        let wrong_installation = verify_inbox(&session);
+        assert_eq!(wrong_installation.state, VerificationState::Waiting);
+        assert_eq!(wrong_installation.diagnostic, "different_installation_file");
         let target = dir.path().join(format!(
             "atlas-evidence-{}-test.json",
             session.installation_id
         ));
         fs::write(&target, "{broken").unwrap();
-        assert_eq!(verify_inbox(&session), Verification::Invalid);
-        for exported in [
-            Utc::now() - chrono::Duration::days(1),
-            Utc::now() + chrono::Duration::days(1),
-        ] {
-            bundle["exportedAt"] = json!(exported.to_rfc3339());
-            fs::write(&target, serde_json::to_vec(&bundle).unwrap()).unwrap();
-            assert_eq!(verify_inbox(&session), Verification::Waiting);
-        }
+        let invalid = verify_inbox(&session);
+        assert_eq!(invalid.state, VerificationState::Invalid);
+        assert_eq!(invalid.diagnostic, "invalid_evidence");
+
+        bundle["exportedAt"] = json!((Utc::now() - chrono::Duration::days(3)).to_rfc3339());
+        fs::write(&target, serde_json::to_vec(&bundle).unwrap()).unwrap();
+        let stale = verify_inbox(&session);
+        assert_eq!(stale.state, VerificationState::Waiting);
+        assert_eq!(stale.diagnostic, "evidence_too_old");
+
+        bundle["exportedAt"] = json!((Utc::now() + chrono::Duration::days(1)).to_rfc3339());
+        fs::write(&target, serde_json::to_vec(&bundle).unwrap()).unwrap();
+        let future = verify_inbox(&session);
+        assert_eq!(future.state, VerificationState::Invalid);
+        assert_eq!(future.diagnostic, "evidence_from_future");
+
+        // Restarting the assistant does not invalidate a recent package from its flow.
+        bundle["exportedAt"] = json!((Utc::now() - chrono::Duration::days(1)).to_rfc3339());
+        fs::write(&target, serde_json::to_vec(&bundle).unwrap()).unwrap();
+        assert_eq!(verify_inbox(&session).state, VerificationState::Valid);
+
         bundle["exportedAt"] = json!(Utc::now().to_rfc3339());
         fs::write(&target, serde_json::to_vec(&bundle).unwrap()).unwrap();
-        assert_eq!(verify_inbox(&session), Verification::Valid);
+        assert_eq!(verify_inbox(&session).state, VerificationState::Valid);
     }
 }

@@ -143,16 +143,44 @@ fn newest_bundle(folder: &Path, date: &str) -> Result<(PathBuf, EvidenceBundle)>
         };
         candidates.push((exported, path, bundle));
     }
-    candidates
-        .into_iter()
-        .max_by_key(|(exported, _, _)| *exported)
-        .map(|(_, path, bundle)| (path, bundle))
-        .ok_or_else(|| {
+    if candidates.is_empty() {
+        return Err(
             AppError::Message(format!(
                 "No valid Atlas evidence package for {date} was found in {}. Run the Power Automate export flow and wait for OneDrive to finish syncing.",
                 folder.display()
-            ))
-        })
+            )),
+        );
+    }
+
+    // A connector may time out for one source while another run succeeds. Start with
+    // the newest package, then recover only unavailable sources from older packages
+    // for the same day. A successful empty source remains authoritative.
+    candidates.sort_by(|left, right| right.0.cmp(&left.0));
+    let (_, path, mut merged) = candidates.remove(0);
+    let mut calendar_selected = merged.sources.calendar || !merged.calendar.is_empty();
+    let mut mail_selected = merged.sources.mail || !merged.mail.is_empty();
+    let mut teams_selected = merged.sources.teams || !merged.teams.is_empty();
+    for (_, _, mut candidate) in candidates {
+        if !calendar_selected && (candidate.sources.calendar || !candidate.calendar.is_empty()) {
+            merged.sources.calendar = candidate.sources.calendar;
+            merged.calendar = std::mem::take(&mut candidate.calendar);
+            calendar_selected = true;
+        }
+        if !mail_selected && (candidate.sources.mail || !candidate.mail.is_empty()) {
+            merged.sources.mail = candidate.sources.mail;
+            merged.mail = std::mem::take(&mut candidate.mail);
+            mail_selected = true;
+        }
+        if !teams_selected && (candidate.sources.teams || !candidate.teams.is_empty()) {
+            merged.sources.teams = candidate.sources.teams;
+            merged.teams = std::mem::take(&mut candidate.teams);
+            teams_selected = true;
+        }
+        if calendar_selected && mail_selected && teams_selected {
+            break;
+        }
+    }
+    Ok((path, merged))
 }
 
 fn validate_limits(bundle: &EvidenceBundle) -> Result<()> {
@@ -641,5 +669,26 @@ mod tests {
         }
         let (path, _) = newest_bundle(directory.path(), "2026-09-07").unwrap();
         assert_eq!(path.file_name().unwrap(), "newer.json");
+    }
+
+    #[test]
+    fn unavailable_source_is_recovered_from_an_older_same_day_bundle() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(
+            directory.path().join("older.json"),
+            r#"{"schemaVersion":2,"exportedAt":"2026-09-07T10:00:00Z","targetDate":"2026-09-07","sources":{"calendar":false,"mail":false,"teams":false},"calendar":[],"mail":[],"teams":[{"id":"team-1","chatId":"chat-1","topic":"Review","createdDateTime":"2026-09-07T09:30:00Z","author":"Colleague","content":"Reviewed task","messageType":"message"}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.path().join("newer.json"),
+            r#"{"schemaVersion":2,"exportedAt":"2026-09-07T11:00:00Z","targetDate":"2026-09-07","sources":{"calendar":true,"mail":true,"teams":false},"calendar":[],"mail":[{"id":"mail-1","subject":"Follow-up","receivedDateTime":"2026-09-07T10:30:00Z","senderAddress":"client@example.com","isDraft":false}],"teams":[]}"#,
+        )
+        .unwrap();
+
+        let (path, bundle) = newest_bundle(directory.path(), "2026-09-07").unwrap();
+        assert_eq!(path.file_name().unwrap(), "newer.json");
+        assert_eq!(bundle.mail.len(), 1);
+        assert_eq!(bundle.teams.len(), 1);
+        assert!(!bundle.sources.teams);
     }
 }
