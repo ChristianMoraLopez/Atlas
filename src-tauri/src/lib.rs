@@ -525,7 +525,7 @@ pub fn run() {
             tauri::RunEvent::ExitRequested { .. }
                 | tauri::RunEvent::Exit
                 | tauri::RunEvent::WindowEvent {
-                    event: tauri::WindowEvent::CloseRequested,
+                    event: tauri::WindowEvent::CloseRequested { .. },
                     ..
                 }
         );
