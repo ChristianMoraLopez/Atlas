@@ -157,21 +157,21 @@ fn newest_bundle(folder: &Path, date: &str) -> Result<(PathBuf, EvidenceBundle)>
     // for the same day. A successful empty source remains authoritative.
     candidates.sort_by(|left, right| right.0.cmp(&left.0));
     let (_, path, mut merged) = candidates.remove(0);
-    let mut calendar_selected = merged.sources.calendar || !merged.calendar.is_empty();
-    let mut mail_selected = merged.sources.mail || !merged.mail.is_empty();
-    let mut teams_selected = merged.sources.teams || !merged.teams.is_empty();
+    let mut calendar_selected = !merged.calendar.is_empty();
+    let mut mail_selected = !merged.mail.is_empty();
+    let mut teams_selected = !merged.teams.is_empty();
     for (_, _, mut candidate) in candidates {
-        if !calendar_selected && (candidate.sources.calendar || !candidate.calendar.is_empty()) {
+        if !calendar_selected && !candidate.calendar.is_empty() {
             merged.sources.calendar = candidate.sources.calendar;
             merged.calendar = std::mem::take(&mut candidate.calendar);
             calendar_selected = true;
         }
-        if !mail_selected && (candidate.sources.mail || !candidate.mail.is_empty()) {
+        if !mail_selected && !candidate.mail.is_empty() {
             merged.sources.mail = candidate.sources.mail;
             merged.mail = std::mem::take(&mut candidate.mail);
             mail_selected = true;
         }
-        if !teams_selected && (candidate.sources.teams || !candidate.teams.is_empty()) {
+        if !teams_selected && !candidate.teams.is_empty() {
             merged.sources.teams = candidate.sources.teams;
             merged.teams = std::mem::take(&mut candidate.teams);
             teams_selected = true;
@@ -520,6 +520,15 @@ pub async fn extract(
 ) -> Result<ExtractionResult> {
     let (path, mut bundle) = newest_bundle(folder, date)?;
     validate_limits(&bundle)?;
+    crate::diagnostics::info(
+        "bridge/sources",
+        &format!(
+            "Selected calendar={}, mail={}, Teams={} evidence items for {date}",
+            bundle.calendar.len(),
+            bundle.mail.len(),
+            bundle.teams.len()
+        ),
+    );
     let (start, end) = day_bounds(date, timezone)?;
     let source_status = &bundle.sources;
     let mut warnings = Vec::new();
@@ -681,7 +690,7 @@ mod tests {
         .unwrap();
         fs::write(
             directory.path().join("newer.json"),
-            r#"{"schemaVersion":2,"exportedAt":"2026-09-07T11:00:00Z","targetDate":"2026-09-07","sources":{"calendar":true,"mail":true,"teams":false},"calendar":[],"mail":[{"id":"mail-1","subject":"Follow-up","receivedDateTime":"2026-09-07T10:30:00Z","senderAddress":"client@example.com","isDraft":false}],"teams":[]}"#,
+            r#"{"schemaVersion":2,"exportedAt":"2026-09-07T11:00:00Z","targetDate":"2026-09-07","sources":{"calendar":true,"mail":true,"teams":true},"calendar":[],"mail":[{"id":"mail-1","subject":"Follow-up","receivedDateTime":"2026-09-07T10:30:00Z","senderAddress":"client@example.com","isDraft":false}],"teams":[]}"#,
         )
         .unwrap();
 
