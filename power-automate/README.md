@@ -46,7 +46,7 @@ Para probar sin esperar el flujo, copia `atlas-evidence.example.json` dentro de 
 
 - Calendario: asunto, horas, organizador e identificador. Las reuniones válidas quedan seleccionadas para Excel.
 - Correo: asunto, remitente, hora e identificador; no se guardan cuerpos ni adjuntos. Cada correo queda sin seleccionar hasta que lo confirmes en Atlas.
-- Teams: texto, autor, hora, chat e identificador. En modo Power Automate, Atlas agrupa esa evidencia localmente y de forma determinista, sin depender del servicio de IA; cada interacción permanece sin seleccionar hasta que el usuario la confirme.
+- Teams: texto, autor, hora, chat e identificador. Atlas interpreta esa evidencia con la IA local incluida y mantiene cada sugerencia sin seleccionar hasta que el usuario la revise. Si la IA no está disponible, conserva una agrupación determinista de los mensajes para que la evidencia no se pierda.
 - Atlas no modifica, elimina ni mueve elementos en Outlook o Teams.
 
 El flujo consulta hasta 500 eventos, los 1000 correos más recientes y hasta 50 mensajes recientes por chat. El conector **List chats** solo enumera chats recientes; esto replica el alcance práctico del extractor actual y no es un archivo histórico completo de Teams.

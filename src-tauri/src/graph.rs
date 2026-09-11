@@ -1,7 +1,7 @@
 use crate::{
     error::{AppError, Context, Result},
     models::{ExtractionResult, Interaction, SourceKind},
-    ollama::{self, ChatEvidence},
+    ollama::ChatEvidence,
     state::AppState,
 };
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
@@ -476,7 +476,10 @@ async fn teams(
             }
         }
     }
-    let suggestions = ollama::summarize(&state.http, model, &evidence).await?;
+    let suggestions = state
+        .local_ai
+        .summarize(&state.http, model, &evidence)
+        .await?;
     let real_ids: HashSet<&str> = evidence.iter().map(|e| e.id.as_str()).collect();
     let mut result = Vec::new();
     for suggestion in suggestions {

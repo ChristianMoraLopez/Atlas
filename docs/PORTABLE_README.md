@@ -16,7 +16,7 @@ Atlas uses Microsoft WebView2 for its interface. WebView2 is normally already in
 
 For the supplied Circana workbook, choose **Use Circana template**. Your Atlas profile name must match the worksheet name (for example, `Sebastian Galindo`) so the app cannot write to another person's tab.
 
-The portable folder already contains Atlas Local AI: a CPU-only Ollama runtime and the `qwen2.5:1.5b-instruct-q4_K_M` model. Atlas starts and stops it automatically on `127.0.0.1:11435`; no separate Ollama installation or model download is required. Keep the `AtlasAI` folder beside `Atlas.exe`.
+The portable folder already contains Atlas Local AI: a CPU-only Ollama runtime and the `qwen2.5:1.5b-instruct-q4_K_M` model. Atlas starts and stops it automatically on an available port from `127.0.0.1:11435` through `127.0.0.1:11445`; no separate Ollama installation or model download is required. Keep the `AtlasAI` folder beside `Atlas.exe`.
 
 The Entra app must be a public desktop client with a `http://localhost` loopback redirect and delegated `User.Read`, `Calendars.Read`, `Mail.Read`, and `Chat.Read` permissions. Add `Files.ReadWrite` when using a SharePoint tracker. Do not create or enter a client secret.
 

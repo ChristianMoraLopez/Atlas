@@ -16,9 +16,8 @@ use std::{
 use url::Url;
 
 pub const BUNDLED_MODEL: &str = "qwen2.5:1.5b-instruct-q4_K_M";
-const OLLAMA_HOST: &str = "127.0.0.1:11435";
-const OLLAMA_GENERATE_URL: &str = "http://127.0.0.1:11435/api/generate";
-const OLLAMA_TAGS_URL: &str = "http://127.0.0.1:11435/api/tags";
+const FIRST_OLLAMA_PORT: u16 = 11435;
+const LAST_OLLAMA_PORT: u16 = 11445;
 const MODEL_BLOB: &str =
     "models/blobs/sha256-183715c435899236895da3869489cc30ac241476b4971a20285b1a462818a5b4";
 const MODEL_BLOB_SIZE: u64 = 986_048_512;
@@ -27,6 +26,8 @@ pub struct ManagedRuntime {
     root: PathBuf,
     log_path: PathBuf,
     child: Mutex<Option<Child>>,
+    port: Mutex<Option<u16>>,
+    startup: tokio::sync::Mutex<()>,
 }
 
 impl ManagedRuntime {
@@ -47,6 +48,8 @@ impl ManagedRuntime {
             root,
             log_path,
             child: Mutex::new(None),
+            port: Mutex::new(None),
+            startup: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -78,7 +81,7 @@ impl ManagedRuntime {
         Ok(())
     }
 
-    fn start_if_needed(&self) -> Result<()> {
+    fn start_if_needed(&self, port: u16) -> Result<()> {
         self.validate_bundle()?;
         let mut child = self
             .child
@@ -111,7 +114,7 @@ impl ManagedRuntime {
         command
             .arg("serve")
             .current_dir(&self.root)
-            .env("OLLAMA_HOST", OLLAMA_HOST)
+            .env("OLLAMA_HOST", format!("127.0.0.1:{port}"))
             .env("OLLAMA_MODELS", self.models())
             .env("OLLAMA_NOHISTORY", "1")
             .env("OLLAMA_KEEP_ALIVE", "5m")
@@ -129,7 +132,7 @@ impl ManagedRuntime {
         diagnostics::info(
             "local-ai/process",
             &format!(
-                "Started bundled Ollama process {} on {OLLAMA_HOST}",
+                "Started bundled Ollama process {} on 127.0.0.1:{port}",
                 process.id()
             ),
         );
@@ -162,21 +165,40 @@ impl ManagedRuntime {
     }
 
     pub async fn ensure_ready(&self, client: &Client) -> Result<()> {
-        let initial = probe(client).await;
-        let owned_process = self.child_is_running()?;
-        if initial == (true, true) && owned_process {
-            return Ok(());
-        }
-        if initial.0 {
-            return Err(AppError::Message(format!(
-                "Another Local AI service is already using {OLLAMA_HOST}. Close it and restart Atlas so Teams content is handled only by the bundled runtime."
-            )));
+        let _startup = self.startup.lock().await;
+        let current_port = *self
+            .port
+            .lock()
+            .map_err(|_| AppError::Message("Local AI port lock was poisoned".into()))?;
+        if self.child_is_running()? {
+            if let Some(port) = current_port {
+                if probe(client, port).await == (true, true) {
+                    return Ok(());
+                }
+            }
+            self.stop();
         }
 
-        self.start_if_needed()?;
+        let mut available = None;
+        for port in FIRST_OLLAMA_PORT..=LAST_OLLAMA_PORT {
+            if !probe(client, port).await.0 {
+                available = Some(port);
+                break;
+            }
+        }
+        let port = available.ok_or_else(|| {
+            AppError::Message(format!(
+                "No Local AI port is available between {FIRST_OLLAMA_PORT} and {LAST_OLLAMA_PORT}."
+            ))
+        })?;
+        *self
+            .port
+            .lock()
+            .map_err(|_| AppError::Message("Local AI port lock was poisoned".into()))? = Some(port);
+        self.start_if_needed(port)?;
         for _ in 0..80 {
             tokio::time::sleep(Duration::from_millis(250)).await;
-            let current = probe(client).await;
+            let current = probe(client, port).await;
             if current == (true, true) {
                 return Ok(());
             }
@@ -209,6 +231,21 @@ impl ManagedRuntime {
         }
     }
 
+    pub async fn summarize(
+        &self,
+        client: &Client,
+        model: &str,
+        evidence: &[ChatEvidence],
+    ) -> Result<Vec<SuggestedInteraction>> {
+        self.ensure_ready(client).await?;
+        let port = self
+            .port
+            .lock()
+            .map_err(|_| AppError::Message("Local AI port lock was poisoned".into()))?
+            .ok_or_else(|| AppError::Message("Local AI did not select a port".into()))?;
+        summarize_at(client, model, evidence, port).await
+    }
+
     pub fn stop(&self) {
         let Ok(mut child) = self.child.lock() else {
             return;
@@ -223,6 +260,9 @@ impl ManagedRuntime {
                 let _ = process.wait();
                 diagnostics::info("local-ai/process", "Stopped bundled Ollama");
             }
+        }
+        if let Ok(mut port) = self.port.lock() {
+            *port = None;
         }
     }
 }
@@ -274,8 +314,12 @@ fn localhost_url(value: &str) -> Result<Url> {
     Ok(url)
 }
 
-async fn probe(client: &Client) -> (bool, bool) {
-    let Ok(url) = localhost_url(OLLAMA_TAGS_URL) else {
+fn runtime_url(port: u16, path: &str) -> Result<Url> {
+    localhost_url(&format!("http://127.0.0.1:{port}/{path}"))
+}
+
+async fn probe(client: &Client, port: u16) -> (bool, bool) {
+    let Ok(url) = runtime_url(port, "api/tags") else {
         return (false, false);
     };
     let Ok(response) = client.get(url).timeout(Duration::from_secs(2)).send().await else {
@@ -329,10 +373,11 @@ struct ModelCandidate {
     participants: Vec<String>,
 }
 
-pub async fn summarize(
+async fn summarize_at(
     client: &Client,
     model: &str,
     evidence: &[ChatEvidence],
+    port: u16,
 ) -> Result<Vec<SuggestedInteraction>> {
     if evidence.is_empty() {
         return Ok(Vec::new());
@@ -342,7 +387,7 @@ pub async fn summarize(
             "Refused to use an unbundled Local AI model.".into(),
         ));
     }
-    let url = localhost_url(OLLAMA_GENERATE_URL)?;
+    let url = runtime_url(port, "api/generate")?;
     let lines = evidence
         .iter()
         .map(|message| {
@@ -433,7 +478,7 @@ mod tests {
 
     #[test]
     fn local_ai_destinations_are_compile_time_loopback_only() {
-        assert!(localhost_url(OLLAMA_GENERATE_URL).is_ok());
+        assert!(runtime_url(FIRST_OLLAMA_PORT, "api/generate").is_ok());
         assert!(localhost_url("https://example.com/api").is_err());
         assert!(localhost_url("http://localhost:11435/api/generate").is_err());
     }
@@ -444,6 +489,8 @@ mod tests {
             root: PathBuf::from(r"C:\Atlas\AtlasAI"),
             log_path: PathBuf::from(r"C:\logs\local-ai.log"),
             child: Mutex::new(None),
+            port: Mutex::new(None),
+            startup: tokio::sync::Mutex::new(()),
         };
         assert_eq!(
             runtime.executable(),

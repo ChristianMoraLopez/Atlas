@@ -13,7 +13,7 @@ Atlas is a Tauri v2 Windows desktop application that builds the Circana Interact
 - Extracts real meetings for a selected workday and excludes Lunch, Almuerzo, Tracker Time, Hora del Tracker, and cancelled meetings.
 - Normalizes only the first MMNI/SparkTriage meeting to 09:00–09:30 in the chosen local timezone.
 - Shows mail as unchecked candidates; the user must explicitly select each completed interaction.
-- In direct Graph mode, summarizes Teams evidence with bundled Local AI. In Power Automate mode, groups real Teams messages deterministically, without starting Local AI, and lets the user select the resulting evidence.
+- Interprets Teams evidence with bundled Local AI in both Graph and Power Automate modes. Atlas chooses an available loopback port automatically; if interpretation fails, Power Automate mode keeps deterministic evidence available for review.
 - Lets the user edit review fields and add a genuinely manual interaction through a blank form.
 - Configures a new tracker, an existing `.xlsx` / `.xlsm`, or a SharePoint/OneDrive workbook link once and reuses it.
 - Can sync today's calendar at startup and hourly while Atlas remains open; a one-click sync is always available.
@@ -73,7 +73,7 @@ Frontend-only checks can be run with `npm run build`; Rust tests use `cargo test
 
 The portable ZIP includes a CPU-only Ollama 0.30.8 runtime and the Apache-2.0-licensed `qwen2.5:1.5b-instruct-q4_K_M` model. Atlas discovers the `AtlasAI` folder beside `Atlas.exe`, verifies the expected model payload, starts Ollama in a hidden child process, waits for readiness, and stops the process when Atlas closes. Users do not install Ollama or download a model separately.
 
-The Teams feature has one fixed generation endpoint: `http://127.0.0.1:11435/api/generate`. Before every request, Rust verifies that the destination is plain HTTP and a loopback IP address. The model and endpoint are fixed by the build. There is no OpenAI, Anthropic, Azure OpenAI, or other cloud-LLM SDK in the dependency tree. Ollama output is appended to `%APPDATA%\com.capgemini.atlas-tracker\logs\local-ai.log`.
+The Teams feature chooses the first available port from `127.0.0.1:11435` through `127.0.0.1:11445`, so an orphaned local process cannot block Atlas. Before every request, Rust verifies that the destination is plain HTTP and a loopback IP address. The model and port range are fixed by the build. There is no OpenAI, Anthropic, Azure OpenAI, or other cloud-LLM SDK in the dependency tree. Ollama output is appended to `%APPDATA%\com.capgemini.atlas-tracker\logs\local-ai.log`.
 
 Release packaging downloads the official Ollama Windows x64 archive, verifies its pinned SHA-256, removes CUDA and Vulkan runners to create a broadly compatible CPU package, pulls the pinned model into a private model directory, verifies its manifest and model blob, and includes both third-party licenses. If any verification fails, the release build stops instead of publishing a partial portable package.
 

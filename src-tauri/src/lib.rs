@@ -25,10 +25,8 @@ use tauri::Manager;
 async fn build_status(state: &AppState) -> Result<AppStatus> {
     let settings = state.read_settings()?;
     let microsoft_config = state.microsoft_config()?;
-    let (ollama_running, ollama_model_available, local_ai_error) = match settings.source_mode {
-        SourceMode::MicrosoftGraph => state.local_ai.status(&state.http).await,
-        SourceMode::PowerAutomateFolder => (false, false, None),
-    };
+    let (ollama_running, ollama_model_available, local_ai_error) =
+        state.local_ai.status(&state.http).await;
     let token_available = match auth::has_token() {
         Ok(value) => value,
         Err(error) => {

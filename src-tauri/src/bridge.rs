@@ -3,6 +3,7 @@ use crate::{
     evidence_validation,
     graph::{classify_client, day_bounds, excluded_subject, parse_graph_time},
     models::{ExtractionResult, Interaction, SourceKind},
+    ollama::{self, ChatEvidence},
     state::AppState,
 };
 use chrono::{DateTime, TimeZone, Utc};
@@ -420,8 +421,69 @@ fn teams_rows(
     Ok(rows)
 }
 
+async fn interpret_teams(state: &AppState, rows: &[Interaction]) -> Result<Vec<Interaction>> {
+    let evidence = rows
+        .iter()
+        .map(|row| {
+            Ok(ChatEvidence {
+                id: row.source_id.clone(),
+                author: row.evidence_label.clone(),
+                created: parse_graph_time(&row.interaction_date_time)?,
+                text: row.comments.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let labels: HashMap<_, _> = rows
+        .iter()
+        .map(|row| (row.source_id.as_str(), row.evidence_label.as_str()))
+        .collect();
+    let suggestions = state
+        .local_ai
+        .summarize(&state.http, ollama::BUNDLED_MODEL, &evidence)
+        .await?;
+    Ok(suggestions
+        .into_iter()
+        .map(|suggestion| {
+            let digest = hex::encode(Sha256::digest(suggestion.source_ids.join("|").as_bytes()));
+            let sources = suggestion
+                .source_ids
+                .iter()
+                .filter_map(|id| labels.get(id.as_str()))
+                .copied()
+                .collect::<Vec<_>>()
+                .join(", ");
+            Interaction {
+                source_kind: SourceKind::TeamsChat,
+                source_id: format!("bridge:teams:ai:{digest}"),
+                interaction_type: "Task".into(),
+                reception_date_time: suggestion.start.to_rfc3339(),
+                interaction_date_time: suggestion.start.to_rfc3339(),
+                resolution_date_time: Some(suggestion.end.to_rfc3339()),
+                client_type: String::new(),
+                end_client: String::new(),
+                status: "Resolved".into(),
+                resolution_type: "Processed & Resolved".into(),
+                category: String::new(),
+                subcategory: String::new(),
+                priority: "Intermediate".into(),
+                incident_number: String::new(),
+                comments: suggestion.summary,
+                selected: false,
+                reviewed: false,
+                manual_authored: false,
+                ai_suggested: true,
+                evidence_label: if sources.is_empty() {
+                    format!("AI review · {}", suggestion.participants.join(", "))
+                } else {
+                    format!("AI review · {sources}")
+                },
+            }
+        })
+        .collect())
+}
+
 pub async fn extract(
-    _state: &AppState,
+    state: &AppState,
     folder: &Path,
     date: &str,
     timezone: &str,
@@ -463,7 +525,17 @@ pub async fn extract(
     }
     if include_teams && !bundle.teams.is_empty() {
         match teams_rows(std::mem::take(&mut bundle.teams), start, end) {
-            Ok(values) => interactions.extend(values),
+            Ok(values) => match interpret_teams(state, &values).await {
+                Ok(suggestions) if !suggestions.is_empty() => interactions.extend(suggestions),
+                Ok(_) => {
+                    warnings.push("La IA local no identificó una interacción laboral en Teams. Revisa la evidencia directa.".into());
+                    interactions.extend(values);
+                }
+                Err(error) => {
+                    warnings.push(format!("La interpretación local de Teams falló: {error}. Atlas conserva la evidencia directa para revisión."));
+                    interactions.extend(values);
+                }
+            },
             Err(error) => warnings.push(format!(
                 "Los mensajes de Teams de {} se omitieron: {error}",
                 path.display()
