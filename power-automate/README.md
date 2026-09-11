@@ -6,7 +6,7 @@ No hay un segundo flujo de subida: escribir directamente en la copia sincronizad
 
 ## Qué incluye esta carpeta
 
-- `AtlasBridge_1_0_0_0.zip`: solución no administrada AtlasBridge 1.1 para el asistente actual, con referencias de conexión de Outlook, Teams y OneDrive. El nombre estable permite que el cliente la encuentre; la versión interna controla la actualización.
+- `AtlasBridge_1_0_0_0.zip`: solución no administrada AtlasBridge 1.2 para el asistente actual, con referencias de conexión de Outlook, Teams y OneDrive. El nombre estable permite que el cliente la encuentre; la versión interna controla la actualización.
 - `solution-source/`: fuente revisable de la solución actual.
 - `INSTALLER.md`: primera ejecución, límites y diagnóstico del asistente.
 - `Atlas-Export-Evidence.zip`: paquete heredado conservado solo como referencia de desarrollo; no produce el contrato v2 actual.
@@ -26,7 +26,7 @@ Las credenciales no vienen dentro del ZIP. Al importarlo, Power Automate obliga 
 
 Usa **Instalar conector de Microsoft 365** dentro de Atlas y sigue `INSTALLER.md`. El asistente genera un ZIP personalizado para correlacionar la primera evidencia, abre el portal oficial y verifica el resultado local. No solicita IDs de aplicación, tenant, entorno o calendario. El usuario todavía debe completar el inicio de sesión, la asociación de conexiones y la confirmación de importación que muestra Microsoft.
 
-El flujo se importa activo, usa el primer calendario devuelto por Outlook y se ejecuta cada hora en la zona `SA Pacific Standard Time` (Bogotá). Calendario, correo y Teams se ejecutan de forma independiente. Aunque falle uno, el flujo escribe el paquete con una marca de estado para que Atlas muestre la alerta correspondiente y acepte una interacción manual real.
+El flujo se importa activo, usa el primer calendario devuelto por Outlook y se ejecuta cada hora en la zona `SA Pacific Standard Time` (Bogotá). Calendario, correo y Teams se ejecutan de forma independiente. Las consultas de correo y Teams están limitadas al día para evitar el timeout HTTP de Logic Apps. Aunque falle una consulta, el flujo escribe el paquete con una marca de estado para que Atlas muestre la alerta correspondiente y acepte los datos parciales.
 
 ## Configuración de Atlas
 
@@ -46,7 +46,7 @@ Para probar sin esperar el flujo, copia `atlas-evidence.example.json` dentro de 
 
 - Calendario: asunto, horas, organizador e identificador. Las reuniones válidas quedan seleccionadas para Excel.
 - Correo: asunto, remitente, hora e identificador; no se guardan cuerpos ni adjuntos. Cada correo queda sin seleccionar hasta que lo confirmes en Atlas.
-- Teams: texto, autor, hora, chat e identificador. Atlas lo interpreta exclusivamente con la IA local incluida. Sus sugerencias siguen siendo de referencia y no se exportan solas.
+- Teams: texto, autor, hora, chat e identificador. En modo Power Automate, Atlas agrupa esa evidencia localmente y de forma determinista, sin depender del servicio de IA; cada interacción permanece sin seleccionar hasta que el usuario la confirme.
 - Atlas no modifica, elimina ni mueve elementos en Outlook o Teams.
 
 El flujo consulta hasta 500 eventos, los 1000 correos más recientes y hasta 50 mensajes recientes por chat. El conector **List chats** solo enumera chats recientes; esto replica el alcance práctico del extractor actual y no es un archivo histórico completo de Teams.

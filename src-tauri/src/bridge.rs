@@ -3,7 +3,6 @@ use crate::{
     evidence_validation,
     graph::{classify_client, day_bounds, excluded_subject, parse_graph_time},
     models::{ExtractionResult, Interaction, SourceKind},
-    ollama::{self, ChatEvidence},
     state::AppState,
 };
 use chrono::{DateTime, TimeZone, Utc};
@@ -302,15 +301,14 @@ fn mail_rows(
     Ok(rows)
 }
 
-async fn teams_rows(
-    state: &AppState,
+fn teams_rows(
     messages: Vec<BridgeTeamsMessage>,
     start: DateTime<Utc>,
     end: DateTime<Utc>,
 ) -> Result<Vec<Interaction>> {
     let tags = Regex::new(r"(?s)<[^>]*>").unwrap();
     let mut seen = HashSet::new();
-    let mut evidence = Vec::new();
+    let mut groups: HashMap<String, Vec<(String, DateTime<Utc>, String, String)>> = HashMap::new();
     let mut labels = HashMap::new();
     for message in messages {
         if message.id.trim().is_empty() || !message.message_type.eq_ignore_ascii_case("message") {
@@ -349,44 +347,60 @@ async fn teams_rows(
         } else {
             message.topic.trim().to_string()
         };
-        labels.insert(evidence_id.clone(), label);
-        evidence.push(ChatEvidence {
-            id: evidence_id,
-            author,
-            created,
-            text,
-        });
+        let chat_key = if message.chat_id.trim().is_empty() {
+            evidence_id.clone()
+        } else {
+            message.chat_id.clone()
+        };
+        labels.entry(chat_key.clone()).or_insert(label);
+        groups
+            .entry(chat_key)
+            .or_default()
+            .push((evidence_id, created, author, text));
     }
-    let suggestions = ollama::summarize(&state.http, ollama::BUNDLED_MODEL, &evidence).await?;
-    let real_ids: HashSet<&str> = evidence.iter().map(|value| value.id.as_str()).collect();
     let mut rows = Vec::new();
-    for suggestion in suggestions {
-        if !suggestion
-            .source_ids
+    for (chat_key, mut messages) in groups {
+        messages.sort_by_key(|message| message.1);
+        let start = messages.first().unwrap().1;
+        let finish = messages.last().unwrap().1;
+        let ids = messages
             .iter()
-            .all(|id| real_ids.contains(id.as_str()))
-        {
-            continue;
-        }
-        let digest = hex::encode(Sha256::digest(suggestion.source_ids.join("|").as_bytes()));
-        let participants = suggestion.participants.join(", ");
-        let mut topics = suggestion
-            .source_ids
+            .map(|message| message.0.as_str())
+            .collect::<Vec<_>>()
+            .join("|");
+        let digest = hex::encode(Sha256::digest(ids.as_bytes()));
+        let mut participants = messages
             .iter()
-            .filter_map(|id| labels.get(id))
-            .cloned()
+            .map(|message| message.2.clone())
             .collect::<HashSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
-        topics.sort();
-        let topics = topics.join(", ");
+        participants.sort();
+        let comments = messages
+            .iter()
+            .take(8)
+            .map(|message| format!("{}: {}", message.2, message.3))
+            .collect::<Vec<_>>()
+            .join(" | ")
+            .chars()
+            .take(2_000)
+            .collect::<String>();
+        let topic = labels
+            .get(&chat_key)
+            .cloned()
+            .unwrap_or_else(|| "Teams chat".into());
+        let evidence_label = if participants.is_empty() {
+            topic
+        } else {
+            format!("{topic} · {}", participants.join(", "))
+        };
         rows.push(Interaction {
             source_kind: SourceKind::TeamsChat,
             source_id: format!("bridge:teams:{digest}"),
             interaction_type: "Task".into(),
-            reception_date_time: suggestion.start.to_rfc3339(),
-            interaction_date_time: suggestion.start.to_rfc3339(),
-            resolution_date_time: Some(suggestion.end.to_rfc3339()),
+            reception_date_time: start.to_rfc3339(),
+            interaction_date_time: start.to_rfc3339(),
+            resolution_date_time: Some(finish.to_rfc3339()),
             client_type: String::new(),
             end_client: String::new(),
             status: "Resolved".into(),
@@ -395,25 +409,19 @@ async fn teams_rows(
             subcategory: String::new(),
             priority: "Intermediate".into(),
             incident_number: String::new(),
-            comments: suggestion.summary,
+            comments,
             selected: false,
             reviewed: false,
             manual_authored: false,
-            ai_suggested: true,
-            evidence_label: if participants.is_empty() {
-                topics
-            } else if topics.is_empty() {
-                format!("Teams messages with {participants}")
-            } else {
-                format!("{topics} · {participants}")
-            },
+            ai_suggested: false,
+            evidence_label,
         });
     }
     Ok(rows)
 }
 
 pub async fn extract(
-    state: &AppState,
+    _state: &AppState,
     folder: &Path,
     date: &str,
     timezone: &str,
@@ -425,15 +433,15 @@ pub async fn extract(
     let (start, end) = day_bounds(date, timezone)?;
     let source_status = &bundle.sources;
     let mut warnings = Vec::new();
-    for (ready, label) in [
-        (source_status.calendar, "calendario"),
-        (source_status.mail, "correo"),
-        (source_status.teams, "Teams"),
+    for (ready, count, label) in [
+        (source_status.calendar, bundle.calendar.len(), "calendario"),
+        (source_status.mail, bundle.mail.len(), "correo"),
+        (source_status.teams, bundle.teams.len(), "Teams"),
     ] {
-        if !ready {
-            warnings.push(format!(
-                "Power Automate no pudo leer {label} en esta ejecución. Revisa la conexión y añade una interacción real manualmente si falta."
-            ));
+        if !ready && count == 0 {
+            warnings.push(format!("Power Automate no pudo leer {label} en esta ejecución. Revisa la conexión y añade una interacción real manualmente si falta."));
+        } else if !ready {
+            warnings.push(format!("Power Automate solo pudo leer parte de {label} antes de agotar el tiempo. Revisa los elementos recibidos y añade manualmente lo que falte."));
         }
     }
     if source_status.calendar && bundle.calendar.is_empty() {
@@ -454,16 +462,11 @@ pub async fn extract(
         interactions.extend(mail_rows(bundle.mail, start, end)?);
     }
     if include_teams && !bundle.teams.is_empty() {
-        match state.local_ai.ensure_ready(&state.http).await {
-            Ok(()) => match teams_rows(state, std::mem::take(&mut bundle.teams), start, end).await {
-                Ok(values) => interactions.extend(values),
-                Err(error) => warnings.push(format!(
-                    "Las sugerencias de Teams de {} se omitieron: {error}",
-                    path.display()
-                )),
-            },
+        match teams_rows(std::mem::take(&mut bundle.teams), start, end) {
+            Ok(values) => interactions.extend(values),
             Err(error) => warnings.push(format!(
-                "Teams se recibió, pero el análisis local no está disponible: {error}. Añade una tarea real manualmente."
+                "Los mensajes de Teams de {} se omitieron: {error}",
+                path.display()
             )),
         }
     }
@@ -522,6 +525,31 @@ mod tests {
         assert!(!mail[0].selected);
         assert_eq!(calendar[0].source_id, "bridge:calendar:event-1");
         assert_eq!(mail[0].client_type, "End_Client");
+    }
+
+    #[test]
+    fn teams_messages_become_deterministic_reviewable_evidence_without_ai() {
+        let start = parse_graph_time("2026-09-07T00:00:00Z").unwrap();
+        let end = parse_graph_time("2026-09-08T00:00:00Z").unwrap();
+        let rows = teams_rows(
+            vec![BridgeTeamsMessage {
+                id: "message-1".into(),
+                chat_id: "chat-1".into(),
+                topic: "Incident review".into(),
+                created_date_time: "2026-09-07T16:00:00Z".into(),
+                author: "Colleague".into(),
+                content: "<p>Reviewed incident 42</p>".into(),
+                message_type: "message".into(),
+            }],
+            start,
+            end,
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].interaction_type, "Task");
+        assert!(!rows[0].selected);
+        assert!(!rows[0].ai_suggested);
+        assert_eq!(rows[0].comments, "Colleague: Reviewed incident 42");
     }
 
     #[test]

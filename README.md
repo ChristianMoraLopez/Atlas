@@ -13,7 +13,7 @@ Atlas is a Tauri v2 Windows desktop application that builds the Circana Interact
 - Extracts real meetings for a selected workday and excludes Lunch, Almuerzo, Tracker Time, Hora del Tracker, and cancelled meetings.
 - Normalizes only the first MMNI/SparkTriage meeting to 09:00–09:30 in the chosen local timezone.
 - Shows mail as unchecked candidates; the user must explicitly select each completed interaction.
-- Summarizes real Teams chat evidence using the bundled Atlas Local AI runtime at `127.0.0.1:11435`. To preserve the three-source invariant, AI suggestions are reference-only and cannot be exported directly; “Log manually” opens a blank form and copies no AI content.
+- In direct Graph mode, summarizes Teams evidence with bundled Local AI. In Power Automate mode, groups real Teams messages deterministically, without starting Local AI, and lets the user select the resulting evidence.
 - Lets the user edit review fields and add a genuinely manual interaction through a blank form.
 - Configures a new tracker, an existing `.xlsx` / `.xlsm`, or a SharePoint/OneDrive workbook link once and reuses it.
 - Can sync today's calendar at startup and hourly while Atlas remains open; a one-click sync is always available.

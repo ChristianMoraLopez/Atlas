@@ -14,6 +14,10 @@ a.AtlasInstallationId = { type: 'Compose', inputs: 'unconfigured', runAfter: {} 
 a.TargetDate.runAfter = { AtlasInstallationId: ['Succeeded'] };
 const calendar = a.Calendar_evidence.actions;
 calendar.Get_calendar_view_of_events_V3.inputs.parameters.calendarId = "@first(body('Get_calendars_V2')?['value'])?['id']";
+// Keep connector calls bounded; broad mailbox/chat scans regularly hit the two-minute Logic Apps HTTP limit.
+a.Mail_evidence.actions.Get_emails_V3.inputs.parameters.top = 100;
+a.Teams_evidence.actions.For_each_chat.actions.Get_messages_in_chat.inputs.parameters['$filter'] = "@concat('createdDateTime ge ',outputs('StartUtc'),' and createdDateTime lt ',outputs('EndUtc'))";
+a.Teams_evidence.actions.For_each_chat.actions.Get_messages_in_chat.inputs.parameters['$top'] = 20;
 calendar.Set_CalendarSourceReady = { type: 'SetVariable', inputs: { name: 'CalendarSourceReady', value: true }, runAfter: { Set_CalendarEvidence: ['Succeeded'] } };
 a.Mail_evidence.actions.Set_MailSourceReady = { type: 'SetVariable', inputs: { name: 'MailSourceReady', value: true }, runAfter: { Set_MailEvidence: ['Succeeded'] } };
 a.Teams_evidence.actions.Set_TeamsSourceReady = { type: 'SetVariable', inputs: { name: 'TeamsSourceReady', value: true }, runAfter: { For_each_chat: ['Succeeded'] } };
@@ -53,10 +57,10 @@ const flow = { properties: { connectionReferences: refs, definition, templateNam
 mkdirSync(join(root, 'solution-source/Workflows'), { recursive: true });
 writeFileSync(join(root, 'solution-source/Workflows', file), JSON.stringify(flow, null, 2) + '\n');
 const solutionPath = join(root, 'solution-source/Other/Solution.xml');
-let solution = readFileSync(solutionPath, 'utf8').replace(/<Version>.*?<\/Version>/, '<Version>1.1.0.0</Version>').replace(/<Managed>.*?<\/Managed>/, '<Managed>0</Managed>');
+let solution = readFileSync(solutionPath, 'utf8').replace(/<Version>.*?<\/Version>/, '<Version>1.2.0.0</Version>').replace(/<Managed>.*?<\/Managed>/, '<Managed>0</Managed>');
 solution = solution.replace(/<RootComponents\s*\/>|<RootComponents>[\s\S]*?<\/RootComponents>/, `<RootComponents><RootComponent type="29" id="{${id}}" behavior="0" /></RootComponents>`);
 writeFileSync(solutionPath, solution);
-const fields = { JsonFileName: `/Workflows/${file}`, Type: 1, Subprocess: 0, Category: 5, Mode: 0, Scope: 4, OnDemand: 0, TriggerOnCreate: 0, TriggerOnDelete: 0, AsyncAutoDelete: 0, SyncWorkflowLogOnFailure: 0, StateCode: 1, StatusCode: 2, RunAs: 1, IsTransacted: 1, IntroducedVersion: '1.1.0.0', IsCustomizable: 1, BusinessProcessType: 0, IsCustomProcessingStepAllowedForOtherPublishers: 1, PrimaryEntity: 'none' };
+const fields = { JsonFileName: `/Workflows/${file}`, Type: 1, Subprocess: 0, Category: 5, Mode: 0, Scope: 4, OnDemand: 0, TriggerOnCreate: 0, TriggerOnDelete: 0, AsyncAutoDelete: 0, SyncWorkflowLogOnFailure: 0, StateCode: 1, StatusCode: 2, RunAs: 1, IsTransacted: 1, IntroducedVersion: '1.2.0.0', IsCustomizable: 1, BusinessProcessType: 0, IsCustomProcessingStepAllowedForOtherPublishers: 1, PrimaryEntity: 'none' };
 writeFileSync(join(root, 'solution-source/Other/Customizations.xml'), `<?xml version="1.0" encoding="utf-8"?>
 <ImportExportXml xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <Entities/><Roles/><Workflows><Workflow WorkflowId="{${id}}" Name="${name}">

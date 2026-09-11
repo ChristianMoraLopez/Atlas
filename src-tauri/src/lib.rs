@@ -25,8 +25,10 @@ use tauri::Manager;
 async fn build_status(state: &AppState) -> Result<AppStatus> {
     let settings = state.read_settings()?;
     let microsoft_config = state.microsoft_config()?;
-    let (ollama_running, ollama_model_available, local_ai_error) =
-        state.local_ai.status(&state.http).await;
+    let (ollama_running, ollama_model_available, local_ai_error) = match settings.source_mode {
+        SourceMode::MicrosoftGraph => state.local_ai.status(&state.http).await,
+        SourceMode::PowerAutomateFolder => (false, false, None),
+    };
     let token_available = match auth::has_token() {
         Ok(value) => value,
         Err(error) => {
@@ -387,7 +389,9 @@ fn validate_provenance(state: &AppState, interactions: &[Interaction]) -> Result
                     .into(),
             ));
         }
-        if matches!(item.source_kind, SourceKind::Calendar | SourceKind::Email) {
+        if matches!(item.source_kind, SourceKind::Calendar | SourceKind::Email)
+            || (item.source_kind == SourceKind::TeamsChat && !trusted.ai_suggested)
+        {
             let immutable_changed = trusted.interaction_type != item.interaction_type
                 || trusted.reception_date_time != item.reception_date_time
                 || trusted.interaction_date_time != item.interaction_date_time

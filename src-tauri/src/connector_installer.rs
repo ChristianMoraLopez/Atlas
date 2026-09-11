@@ -19,6 +19,7 @@ const SOLUTION: &[u8] = include_bytes!("../../power-automate/AtlasBridge_1_0_0_0
 const WORKFLOW: &str = "Workflows/AtlasExportEvidence-8e5c1f84-dcbb-4a2c-9d2f-62e9c38105d2.json";
 const MAX_FILE: u64 = 25 * 1024 * 1024;
 const PORTAL: &str = "https://make.powerautomate.com/";
+const SOLUTION_VERSION: &str = "1.2.0.0";
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -60,7 +61,7 @@ impl Default for Session {
             calendar_name: "Calendar".into(),
             environment_id: None,
             diagnostic: "portal_required".into(),
-            solution_version: Some("1.1.0.0".into()),
+            solution_version: Some(SOLUTION_VERSION.into()),
         }
     }
 }
@@ -92,7 +93,7 @@ impl Installer {
             .filter(|s| {
                 uuid::Uuid::parse_str(&s.installation_id).is_ok()
                     && DateTime::parse_from_rfc3339(&s.started_at).is_ok()
-                    && s.solution_version.as_deref() == Some("1.1.0.0")
+                    && s.solution_version.as_deref() == Some(SOLUTION_VERSION)
             })
             .unwrap_or_default();
         Self {

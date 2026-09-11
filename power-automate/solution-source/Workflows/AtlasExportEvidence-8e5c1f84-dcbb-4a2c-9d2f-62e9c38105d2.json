@@ -234,7 +234,7 @@
                   "folderPath": "Inbox",
                   "fetchOnlyUnread": false,
                   "includeAttachments": false,
-                  "top": 1000
+                  "top": 100
                 },
                 "authentication": "@parameters('$authentication')"
               },
@@ -334,9 +334,9 @@
                     },
                     "parameters": {
                       "chatId": "@items('For_each_chat')?['id']",
-                      "$filter": "@concat('createdDateTime lt ',outputs('EndUtc'))",
+                      "$filter": "@concat('createdDateTime ge ',outputs('StartUtc'),' and createdDateTime lt ',outputs('EndUtc'))",
                       "$orderby": "createdDateTime desc",
-                      "$top": "50"
+                      "$top": 20
                     },
                     "authentication": "@parameters('$authentication')"
                   },
