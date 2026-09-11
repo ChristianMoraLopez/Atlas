@@ -334,8 +334,8 @@
                     },
                     "parameters": {
                       "chatId": "@items('For_each_chat')?['id']",
-                      "$filter": "@concat('createdDateTime ge ',outputs('StartUtc'),' and createdDateTime lt ',outputs('EndUtc'))",
-                      "$orderby": "createdDateTime desc",
+                      "$filter": "@concat('lastModifiedDateTime gt ',outputs('StartUtc'),' and lastModifiedDateTime lt ',outputs('EndUtc'))",
+                      "$orderby": "lastModifiedDateTime desc",
                       "$top": 20
                     },
                     "authentication": "@parameters('$authentication')"

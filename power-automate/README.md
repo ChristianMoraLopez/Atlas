@@ -6,7 +6,7 @@ No hay un segundo flujo de subida: escribir directamente en la copia sincronizad
 
 ## Qué incluye esta carpeta
 
-- `AtlasBridge_1_0_0_0.zip`: solución no administrada AtlasBridge 1.2 para el asistente actual, con referencias de conexión de Outlook, Teams y OneDrive. El nombre estable permite que el cliente la encuentre; la versión interna controla la actualización.
+- `AtlasBridge_1_0_0_0.zip`: solución no administrada AtlasBridge 1.3 para el asistente actual, con referencias de conexión de Outlook, Teams y OneDrive. El nombre estable permite que el cliente la encuentre; la versión interna controla la actualización.
 - `solution-source/`: fuente revisable de la solución actual.
 - `INSTALLER.md`: primera ejecución, límites y diagnóstico del asistente.
 - `Atlas-Export-Evidence.zip`: paquete heredado conservado solo como referencia de desarrollo; no produce el contrato v2 actual.
