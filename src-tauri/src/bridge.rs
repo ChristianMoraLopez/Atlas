@@ -100,6 +100,8 @@ fn newest_bundle(folder: &Path, date: &str) -> Result<(PathBuf, EvidenceBundle)>
         )));
     }
     let mut candidates = Vec::new();
+    let mut latest_other_date: Option<(DateTime<Utc>, String)> = None;
+    let mut unavailable_files = 0usize;
     for entry in fs::read_dir(folder).context("Unable to read the Power Automate inbox")? {
         let entry = entry.context("Unable to inspect a Power Automate inbox item")?;
         let file_type = entry
@@ -116,12 +118,19 @@ fn newest_bundle(folder: &Path, date: &str) -> Result<(PathBuf, EvidenceBundle)>
         let metadata = entry
             .metadata()
             .context("Unable to inspect a Power Automate evidence file")?;
-        if metadata.len() == 0 || metadata.len() > MAX_BUNDLE_BYTES {
+        if metadata.len() == 0 {
+            unavailable_files += 1;
+            continue;
+        }
+        if metadata.len() > MAX_BUNDLE_BYTES {
             continue;
         }
         let bytes = match fs::read(&path) {
             Ok(value) => value,
-            Err(_) => continue,
+            Err(_) => {
+                unavailable_files += 1;
+                continue;
+            }
         };
         let value: serde_json::Value = match serde_json::from_slice(&bytes) {
             Ok(value) => value,
@@ -134,22 +143,41 @@ fn newest_bundle(folder: &Path, date: &str) -> Result<(PathBuf, EvidenceBundle)>
             Ok(value) => value,
             Err(_) => continue,
         };
-        if bundle.schema_version != 2 || bundle.target_date != date {
+        if bundle.schema_version != 2 {
             continue;
         }
         let exported = match parse_graph_time(&bundle.exported_at) {
             Ok(value) => value,
             Err(_) => continue,
         };
+        if bundle.target_date != date {
+            let replace = latest_other_date
+                .as_ref()
+                .is_none_or(|(current, _)| exported > *current);
+            if replace {
+                latest_other_date = Some((exported, bundle.target_date));
+            }
+            continue;
+        }
         candidates.push((exported, path, bundle));
     }
     if candidates.is_empty() {
-        return Err(
-            AppError::Message(format!(
-                "No valid Atlas evidence package for {date} was found in {}. Run the Power Automate export flow and wait for OneDrive to finish syncing.",
-                folder.display()
-            )),
-        );
+        let detail = if unavailable_files > 0 {
+            format!(
+                "Hay {unavailable_files} archivo(s) de OneDrive sin descargar; reanuda OneDrive y marca la carpeta como 'Siempre mantener en este dispositivo'."
+            )
+        } else if let Some((exported, target)) = latest_other_date {
+            format!(
+                "El paquete válido más reciente corresponde a {target} y fue exportado a las {}. El flujo no ha entregado el día solicitado; comprueba que 'Atlas - Export evidence to OneDrive' esté activo y que OneDrive esté sincronizando.",
+                exported.to_rfc3339()
+            )
+        } else {
+            "No hay ningún paquete Atlas válido. Comprueba que el flujo esté activo y que OneDrive esté sincronizando.".into()
+        };
+        return Err(AppError::Message(format!(
+            "No se encontró un paquete de evidencia para {date} en {}. {detail}",
+            folder.display()
+        )));
     }
 
     // A connector may time out for one source while another run succeeds. Start with
@@ -569,6 +597,10 @@ pub async fn extract(
                     interactions.extend(values);
                 }
                 Err(error) => {
+                    crate::diagnostics::error(
+                        "bridge/local-ai",
+                        &format!("Teams interpretation failed: {error}"),
+                    );
                     warnings.push(format!("La interpretación local de Teams falló: {error}. Atlas conserva la evidencia directa para revisión."));
                     interactions.extend(values);
                 }
@@ -699,5 +731,20 @@ mod tests {
         assert_eq!(bundle.mail.len(), 1);
         assert_eq!(bundle.teams.len(), 1);
         assert!(!bundle.sources.teams);
+    }
+
+    #[test]
+    fn missing_day_reports_the_latest_exported_day() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(
+            directory.path().join("previous.json"),
+            r#"{"schemaVersion":2,"exportedAt":"2026-09-11T23:33:00Z","targetDate":"2026-09-11","sources":{"calendar":true,"mail":true,"teams":true},"calendar":[],"mail":[],"teams":[]}"#,
+        )
+        .unwrap();
+
+        let error = newest_bundle(directory.path(), "2026-09-12").unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("2026-09-11"));
+        assert!(message.contains("flujo no ha entregado"));
     }
 }

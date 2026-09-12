@@ -23,7 +23,7 @@ try {
     [xml] $types = Read-Entry '[Content_Types].xml'
     if ($solution.ImportExportXml.SolutionManifest.UniqueName -ne 'AtlasBridge') { throw 'Unexpected solution identity.' }
     if ($solution.ImportExportXml.SolutionManifest.Managed -ne '0') { throw 'Expected unmanaged solution.' }
-    if ($solution.ImportExportXml.SolutionManifest.Version -ne '1.3.0.0') { throw 'Unexpected version.' }
+    if ($solution.ImportExportXml.SolutionManifest.Version -ne '1.4.0.0') { throw 'Unexpected version.' }
     $workflows = @($custom.ImportExportXml.Workflows.Workflow)
     if ($workflows.Count -ne 1 -or $workflows[0].Category -ne '5') { throw 'Expected one cloud flow.' }
     if ($workflows[0].StateCode -ne '1' -or $workflows[0].StatusCode -ne '2') { throw 'Cloud flow must be exported as active.' }
@@ -73,6 +73,8 @@ try {
     }
     Validate-Actions $flow.properties.definition.actions
     $actions = $flow.properties.definition.actions
+    $triggers = @($flow.properties.definition.triggers.PSObject.Properties)
+    if ($triggers.Count -ne 1 -or $triggers[0].Name -ne 'Every_15_minutes' -or $triggers[0].Value.type -ne 'Recurrence' -or $triggers[0].Value.recurrence.frequency -ne 'Minute' -or $triggers[0].Value.recurrence.interval -ne 15) { throw 'Expected a portable 15-minute recurrence trigger.' }
     if ($actions.Compose_Atlas_bundle.inputs.schemaVersion -ne 2) { throw 'Expected evidence contract v2.' }
     foreach ($source in @('calendar', 'mail', 'teams')) {
         if (-not $actions.Compose_Atlas_bundle.inputs.sources.$source) { throw "Missing source health flag: $source" }

@@ -21,10 +21,10 @@ const LAST_OLLAMA_PORT: u16 = 11445;
 const MODEL_BLOB: &str =
     "models/blobs/sha256-183715c435899236895da3869489cc30ac241476b4971a20285b1a462818a5b4";
 const MODEL_BLOB_SIZE: u64 = 986_048_512;
-const MAX_AI_EVIDENCE_ITEMS: usize = 24;
-const MAX_AI_EVIDENCE_CHARS: usize = 9_000;
-const MAX_AI_TEXT_CHARS: usize = 600;
-const MAX_AI_OUTPUT_TOKENS: u32 = 256;
+const MAX_AI_EVIDENCE_ITEMS: usize = 16;
+const MAX_AI_EVIDENCE_CHARS: usize = 3_600;
+const MAX_AI_TEXT_CHARS: usize = 300;
+const MAX_AI_OUTPUT_TOKENS: u32 = 384;
 
 pub struct ManagedRuntime {
     root: PathBuf,
@@ -395,7 +395,7 @@ struct GenerateRequest<'a> {
     model: &'a str,
     prompt: String,
     stream: bool,
-    format: &'static str,
+    format: serde_json::Value,
     options: GenerateOptions,
 }
 
@@ -455,12 +455,19 @@ async fn summarize_at(
             original_count
         ),
     );
-    let lines = evidence
+    // Short aliases keep the prompt and JSON response small. The aliases are
+    // resolved back to the original evidence IDs before leaving this module.
+    let aliased = evidence
         .iter()
-        .map(|message| {
+        .enumerate()
+        .map(|(index, message)| (format!("m{index}"), message))
+        .collect::<Vec<_>>();
+    let lines = aliased
+        .iter()
+        .map(|(alias, message)| {
             format!(
                 "[id={}] [{}] {}: {}",
-                message.id,
+                alias,
                 message.created.to_rfc3339(),
                 message.author,
                 message.text
@@ -483,10 +490,39 @@ MESSAGES:
             model,
             prompt,
             stream: false,
-            format: "json",
+            format: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "interactions": {
+                        "type": "array",
+                        "maxItems": 3,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "source_ids": {
+                                    "type": "array",
+                                    "minItems": 1,
+                                    "maxItems": 3,
+                                    "items": { "type": "string" }
+                                },
+                                "participants": {
+                                    "type": "array",
+                                    "maxItems": 5,
+                                    "items": { "type": "string" }
+                                },
+                                "summary": { "type": "string", "maxLength": 120 }
+                            },
+                            "required": ["source_ids", "participants", "summary"],
+                            "additionalProperties": false
+                        }
+                    }
+                },
+                "required": ["interactions"],
+                "additionalProperties": false
+            }),
             options: GenerateOptions {
                 temperature: 0.0,
-                num_ctx: 4096,
+                num_ctx: 3072,
                 num_predict: MAX_AI_OUTPUT_TOKENS,
             },
         })
@@ -503,34 +539,48 @@ MESSAGES:
         .json()
         .await
         .context("Bundled Local AI returned an invalid response envelope")?;
-    let parsed: ModelOutput = serde_json::from_str(raw.response.trim())
-        .context("Bundled Local AI did not return valid JSON")?;
-    let by_id: HashMap<&str, &ChatEvidence> = evidence
+    let parsed: ModelOutput = serde_json::from_str(raw.response.trim()).map_err(|error| {
+        diagnostics::error(
+            "local-ai/analysis",
+            &format!(
+                "Bundled Local AI returned invalid structured JSON ({} bytes): {error}",
+                raw.response.len()
+            ),
+        );
+        AppError::Message("Bundled Local AI did not return valid structured JSON".into())
+    })?;
+    let by_id: HashMap<&str, &ChatEvidence> = aliased
         .iter()
-        .map(|value| (value.id.as_str(), value))
+        .map(|(alias, value)| (alias.as_str(), *value))
         .collect();
     let mut seen = HashSet::new();
     let mut result = Vec::new();
     for candidate in parsed.interactions.into_iter().take(3) {
-        let mut ids: Vec<String> = candidate
+        let mut aliases: Vec<String> = candidate
             .source_ids
             .into_iter()
             .filter(|id| by_id.contains_key(id.as_str()) && seen.insert(id.clone()))
             .collect();
-        ids.sort();
-        ids.dedup();
-        if ids.is_empty() || candidate.summary.trim().is_empty() {
+        aliases.sort();
+        aliases.dedup();
+        if aliases.is_empty() || candidate.summary.trim().is_empty() {
             continue;
         }
-        let mut matched: Vec<_> = ids
+        let mut matched: Vec<_> = aliases
             .iter()
             .filter_map(|id| by_id.get(id.as_str()).copied())
             .collect();
         matched.sort_by_key(|value| value.created);
         let start = matched.first().unwrap().created;
         let end = matched.last().unwrap().created;
+        let mut source_ids = matched
+            .iter()
+            .map(|value| value.id.clone())
+            .collect::<Vec<_>>();
+        source_ids.sort();
+        source_ids.dedup();
         result.push(SuggestedInteraction {
-            source_ids: ids,
+            source_ids,
             start,
             end,
             summary: candidate.summary.trim().to_string(),
@@ -605,9 +655,9 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let bounded = bounded_evidence(&evidence);
-        assert_eq!(bounded.len(), 15);
-        assert_eq!(bounded.first().unwrap().id, "25");
+        assert_eq!(bounded.len(), 12);
+        assert_eq!(bounded.first().unwrap().id, "28");
         assert_eq!(bounded.last().unwrap().id, "39");
-        assert!(bounded.iter().map(|item| item.text.len()).sum::<usize>() <= 9_000);
+        assert!(bounded.iter().map(|item| item.text.len()).sum::<usize>() <= 3_600);
     }
 }

@@ -20,7 +20,7 @@ const SOLUTION: &[u8] = include_bytes!("../../power-automate/AtlasBridge_1_0_0_0
 const WORKFLOW: &str = "Workflows/AtlasExportEvidence-8e5c1f84-dcbb-4a2c-9d2f-62e9c38105d2.json";
 const MAX_FILE: u64 = 25 * 1024 * 1024;
 const PORTAL: &str = "https://make.powerautomate.com/";
-const SOLUTION_VERSION: &str = "1.3.0.0";
+const SOLUTION_VERSION: &str = "1.4.0.0";
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

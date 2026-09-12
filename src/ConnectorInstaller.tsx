@@ -95,7 +95,7 @@ export default function ConnectorInstaller({ onClose, onUseFolder }: { onClose?:
   return <main className="mx-auto min-h-screen max-w-6xl px-10 py-8">
     <header className="flex items-center justify-between"><span className="chip bg-mint text-pine"><ShieldCheck className="h-4 w-4" />Sin instalaciones de sistema</span>{onClose && <button className="btn-secondary" onClick={onClose} disabled={busy}><X className="h-4 w-4" />Cerrar y conservar progreso</button>}</header>
     <h1 className="mt-7 font-display text-4xl">Instalar conector de Microsoft 365</h1>
-    <p className="mt-3 max-w-4xl text-sm leading-6 text-ink/65">Inicia sesión con tu cuenta Circana en el portal oficial, vincula tus conexiones e importa el paquete una sola vez. El flujo se entrega activo y se ejecuta cada hora; no necesitas abrir el diseñador ni copiar identificadores.</p>
+    <p className="mt-3 max-w-4xl text-sm leading-6 text-ink/65">Inicia sesión con tu cuenta Circana en el portal oficial, vincula tus conexiones e importa el paquete una sola vez. El flujo se entrega activo y se ejecuta cada 15 minutos; no necesitas abrir el diseñador ni copiar identificadores.</p>
     <div className="mt-7 grid grid-cols-[280px_1fr] gap-6">
       <ol className="card space-y-3 p-5" aria-label="Etapas de instalación">{steps.map(([key, label], i) => <li key={key} aria-current={key === phase ? 'step' : undefined} className={`flex gap-3 text-sm ${key === phase ? 'font-bold text-pine' : 'text-ink/50'}`}><span>{i + 1}.</span>{label}{key === 'completed' && phase === key && <Check className="h-4 w-4" />}</li>)}</ol>
       <section className="card min-w-0 p-7">

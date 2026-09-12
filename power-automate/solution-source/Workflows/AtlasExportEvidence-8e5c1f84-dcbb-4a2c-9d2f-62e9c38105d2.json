@@ -43,12 +43,11 @@
         }
       },
       "triggers": {
-        "Every_hour": {
+        "Every_15_minutes": {
           "type": "Recurrence",
           "recurrence": {
-            "frequency": "Hour",
-            "interval": 1,
-            "timeZone": "SA Pacific Standard Time"
+            "frequency": "Minute",
+            "interval": 15
           }
         }
       },
