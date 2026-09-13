@@ -23,7 +23,7 @@ try {
     [xml] $types = Read-Entry '[Content_Types].xml'
     if ($solution.ImportExportXml.SolutionManifest.UniqueName -ne 'AtlasBridge') { throw 'Unexpected solution identity.' }
     if ($solution.ImportExportXml.SolutionManifest.Managed -ne '0') { throw 'Expected unmanaged solution.' }
-    if ($solution.ImportExportXml.SolutionManifest.Version -ne '1.4.0.0') { throw 'Unexpected version.' }
+    if ($solution.ImportExportXml.SolutionManifest.Version -ne '1.5.0.0') { throw 'Unexpected version.' }
     $workflows = @($custom.ImportExportXml.Workflows.Workflow)
     if ($workflows.Count -ne 1 -or $workflows[0].Category -ne '5') { throw 'Expected one cloud flow.' }
     if ($workflows[0].StateCode -ne '1' -or $workflows[0].StatusCode -ne '2') { throw 'Cloud flow must be exported as active.' }
@@ -84,7 +84,9 @@ try {
         if (($states -join ',') -ne 'Failed,Skipped,Succeeded,TimedOut') { throw 'Bundle must survive a partial connector failure.' }
     }
     if ($actions.Mail_evidence.actions.Get_emails_V3.inputs.parameters.top -gt 100) { throw 'Mail query is too broad for the connector timeout.' }
-    $teamsRequest = $actions.Teams_evidence.actions.For_each_chat.actions.Get_messages_in_chat.inputs.parameters
+    $teamsLoop = $actions.Teams_evidence.actions.For_each_chat
+    if ($teamsLoop.foreach -ne "@take(body('List_chats')?['value'],30)") { throw 'Teams must scan only the 30 chats returned as most recent by the standard connector.' }
+    $teamsRequest = $teamsLoop.actions.Get_messages_in_chat.inputs.parameters
     if ($teamsRequest.'$top' -gt 20 -or $teamsRequest.'$filter' -notmatch 'lastModifiedDateTime.+StartUtc.+lastModifiedDateTime.+EndUtc' -or $teamsRequest.'$orderby' -ne 'lastModifiedDateTime desc') { throw 'Teams query must use the supported bounded date filter.' }
     if ($actions.Create_Atlas_evidence_file.inputs.parameters.folderPath -ne '/AtlasBridge/inbox') { throw 'Unexpected cloud inbox.' }
     if ($actions.Create_Atlas_evidence_file.inputs.parameters.name -notmatch 'AtlasInstallationId') { throw 'Missing installation correlation.' }

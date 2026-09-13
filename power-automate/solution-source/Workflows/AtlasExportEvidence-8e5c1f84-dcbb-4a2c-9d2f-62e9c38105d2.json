@@ -321,7 +321,7 @@
             },
             "For_each_chat": {
               "type": "Foreach",
-              "foreach": "@body('List_chats')?['value']",
+              "foreach": "@take(body('List_chats')?['value'],30)",
               "actions": {
                 "Get_messages_in_chat": {
                   "type": "OpenApiConnection",
