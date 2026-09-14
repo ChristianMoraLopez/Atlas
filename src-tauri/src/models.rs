@@ -104,7 +104,7 @@ fn default_auto_sync() -> bool {
 }
 
 fn default_auto_sync_time() -> String {
-    "17:30".into()
+    crate::automation::DEFAULT_DAILY_TIME.into()
 }
 
 impl Default for Settings {

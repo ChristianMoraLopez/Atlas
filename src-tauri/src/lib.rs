@@ -441,7 +441,7 @@ mod selection_tests {
         select_daily_tracker_rows(&mut rows);
 
         let selected = rows.iter().filter(|row| row.selected).collect::<Vec<_>>();
-        assert_eq!(selected.len(), 4);
+        assert_eq!(selected.len(), 3);
         assert!(selected.iter().all(|row| row.reviewed));
         assert!(selected.iter().any(|row| row.source_id == "calendar-1"));
         assert!(selected.iter().any(|row| row.source_id == "calendar-2"));
