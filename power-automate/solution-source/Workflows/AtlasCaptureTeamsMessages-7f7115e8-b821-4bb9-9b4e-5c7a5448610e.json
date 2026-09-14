@@ -158,7 +158,7 @@
             "Compose_Teams_event_bundle": {
               "type": "Compose",
               "inputs": {
-                "schemaVersion": 2,
+                "schemaVersion": 3,
                 "exportedAt": "@utcNow()",
                 "targetDate": "@outputs('TargetDate')",
                 "sources": {

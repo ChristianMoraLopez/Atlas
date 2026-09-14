@@ -45,6 +45,8 @@ pub enum TrackerDestinationKind {
 pub struct TrackerDestination {
     pub kind: TrackerDestinationKind,
     pub value: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_path: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -73,6 +75,8 @@ pub struct AppStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub destination: Option<TrackerDestination>,
     pub auto_sync: bool,
+    pub auto_sync_time: String,
+    pub scheduled_launch: bool,
     pub log_path: String,
 }
 
@@ -91,10 +95,16 @@ pub struct Settings {
     pub destination: Option<TrackerDestination>,
     #[serde(default = "default_auto_sync")]
     pub auto_sync: bool,
+    #[serde(default = "default_auto_sync_time")]
+    pub auto_sync_time: String,
 }
 
 fn default_auto_sync() -> bool {
     true
+}
+
+fn default_auto_sync_time() -> String {
+    "17:30".into()
 }
 
 impl Default for Settings {
@@ -107,6 +117,7 @@ impl Default for Settings {
             microsoft_config: None,
             destination: None,
             auto_sync: default_auto_sync(),
+            auto_sync_time: default_auto_sync_time(),
         }
     }
 }

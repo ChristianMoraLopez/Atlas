@@ -8,7 +8,11 @@ use crate::{
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use reqwest::header::{CONTENT_TYPE, IF_MATCH};
 use serde::Deserialize;
-use std::{fs, path::PathBuf};
+use std::{
+    collections::HashSet,
+    fs,
+    path::{Path, PathBuf},
+};
 use url::Url;
 
 const GRAPH_ROOT: &str = "https://graph.microsoft.com/v1.0";
@@ -51,6 +55,136 @@ pub fn normalize_url(value: &str) -> Result<String> {
         ));
     }
     Ok(url.to_string())
+}
+
+pub fn workbook_name(value: &str) -> Result<String> {
+    let normalized = normalize_url(value)?;
+    let url = Url::parse(&normalized).context("Enter a valid SharePoint sharing link")?;
+    let query_name = url
+        .query_pairs()
+        .find(|(key, _)| key.eq_ignore_ascii_case("file"))
+        .map(|(_, value)| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let path_name = url
+        .path_segments()
+        .and_then(|segments| segments.last())
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case("doc2.aspx"))
+        .map(str::to_string);
+    let name = query_name.or(path_name).ok_or_else(|| {
+        AppError::Message("The SharePoint link does not identify an Excel workbook.".into())
+    })?;
+    let extension = Path::new(&name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if !matches!(extension.as_str(), "xlsx" | "xlsm") {
+        return Err(AppError::Message(
+            "The SharePoint link must identify an .xlsx or .xlsm workbook.".into(),
+        ));
+    }
+    Ok(name)
+}
+
+fn one_drive_roots(bridge_folder: Option<&str>) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    for variable in ["OneDriveCommercial", "OneDrive"] {
+        if let Some(path) = std::env::var_os(variable)
+            .map(PathBuf::from)
+            .filter(|p| p.is_dir())
+        {
+            roots.push(path);
+        }
+    }
+    if let Some(root) = bridge_folder
+        .map(Path::new)
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .filter(|path| path.is_dir())
+    {
+        roots.push(root.to_path_buf());
+    }
+    let mut seen = HashSet::new();
+    roots.retain(|path| seen.insert(path.to_string_lossy().to_ascii_lowercase()));
+    roots
+}
+
+fn matching_files(root: &Path, wanted: &str) -> Vec<PathBuf> {
+    let mut matches = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+    let mut inspected = 0usize;
+    while let Some(directory) = pending.pop() {
+        let Ok(entries) = fs::read_dir(directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            inspected += 1;
+            if inspected > 100_000 {
+                return matches;
+            }
+            let path = entry.path();
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_dir() && !kind.is_symlink() {
+                pending.push(path);
+            } else if kind.is_file()
+                && entry
+                    .file_name()
+                    .to_string_lossy()
+                    .eq_ignore_ascii_case(wanted)
+            {
+                matches.push(path);
+            }
+        }
+    }
+    matches
+}
+
+pub fn resolve_synced_copy(
+    sharing_url: &str,
+    selected_path: Option<&str>,
+    bridge_folder: Option<&str>,
+) -> Result<String> {
+    let wanted = workbook_name(sharing_url)?;
+    if let Some(selected) = selected_path
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let path = Path::new(selected);
+        if !path.is_file() {
+            return Err(AppError::Message(
+                "Choose the locally synced copy of the SharePoint workbook.".into(),
+            ));
+        }
+        let name_matches = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| value.eq_ignore_ascii_case(&wanted));
+        if !name_matches {
+            return Err(AppError::Message(format!(
+                "The selected file must be the synced copy of {wanted}."
+            )));
+        }
+        return Ok(path.to_string_lossy().into_owned());
+    }
+
+    let mut matches = one_drive_roots(bridge_folder)
+        .iter()
+        .flat_map(|root| matching_files(root, &wanted))
+        .collect::<Vec<_>>();
+    matches.sort();
+    matches.dedup();
+    match matches.as_slice() {
+        [path] => Ok(path.to_string_lossy().into_owned()),
+        [] => Err(AppError::Message(format!(
+            "Atlas no encontró {wanted} en OneDrive. Abre el enlace, agrega un acceso directo a 'Mis archivos' y espera la sincronización, o selecciona la copia local durante el setup."
+        ))),
+        _ => Err(AppError::Message(format!(
+            "Atlas encontró varias copias de {wanted}. Selecciona la copia sincronizada correcta durante el setup."
+        ))),
+    }
 }
 
 fn sharing_token(value: &str) -> String {
@@ -235,5 +369,11 @@ mod tests {
         assert!(!token.contains('='));
         assert!(!token.contains('+'));
         assert!(!token.contains('/'));
+    }
+
+    #[test]
+    fn extracts_workbook_name_from_office_link() {
+        let url = "https://tenant-my.sharepoint.com/:x:/r/personal/user/_layouts/15/doc2.aspx?sourcedoc=%7B1%7D&file=Daily%20Tracker.xlsm&web=1";
+        assert_eq!(workbook_name(url).unwrap(), "Daily Tracker.xlsm");
     }
 }

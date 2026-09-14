@@ -52,7 +52,7 @@ try {
     [xml] $types = Read-Entry '[Content_Types].xml'
     if ($solution.ImportExportXml.SolutionManifest.UniqueName -ne 'AtlasBridge') { throw 'Unexpected solution identity.' }
     if ($solution.ImportExportXml.SolutionManifest.Managed -ne '0') { throw 'Expected unmanaged solution.' }
-    if ($solution.ImportExportXml.SolutionManifest.Version -ne '1.7.0.0') { throw 'Unexpected version.' }
+    if ($solution.ImportExportXml.SolutionManifest.Version -ne '1.8.0.0') { throw 'Unexpected version.' }
 
     $rootIds = @($solution.ImportExportXml.SolutionManifest.RootComponents.RootComponent | ForEach-Object id | Sort-Object)
     if (($rootIds -join ',') -ne ((@($scheduledId, $eventId) | Sort-Object) -join ',')) { throw 'Unexpected solution root components.' }
@@ -101,7 +101,7 @@ try {
     $triggers = @($scheduledFlow.properties.definition.triggers.PSObject.Properties)
     if ($triggers.Count -ne 1 -or $triggers[0].Name -ne 'Every_15_minutes' -or $triggers[0].Value.type -ne 'Recurrence' -or $triggers[0].Value.recurrence.frequency -ne 'Minute' -or $triggers[0].Value.recurrence.interval -ne 15) { throw 'Expected a portable 15-minute recurrence trigger.' }
     if ($triggers[0].Value.runtimeConfiguration.concurrency.runs -ne 1) { throw 'Recurring runs must not overlap.' }
-    if ($actions.Compose_Atlas_bundle.inputs.schemaVersion -ne 2) { throw 'Expected evidence contract v2.' }
+    if ($actions.Compose_Atlas_bundle.inputs.schemaVersion -ne 3) { throw 'Expected evidence contract v3.' }
     foreach ($sourceName in @('calendar', 'mail', 'teams')) {
         if (-not $actions.Compose_Atlas_bundle.inputs.sources.$sourceName) { throw "Missing source health flag: $sourceName" }
     }
@@ -110,8 +110,15 @@ try {
         if (($states -join ',') -ne 'Failed,Skipped,Succeeded,TimedOut') { throw 'Bundle must survive a partial connector failure.' }
     }
     if ($actions.Mail_evidence.actions.Get_emails_V3.inputs.parameters.top -gt 100) { throw 'Mail query is too broad for the connector timeout.' }
+    $mailActions = $actions.Mail_evidence.actions
+    if ($mailActions.Get_sent_emails_V3.inputs.parameters.folderPath -ne 'Sent Items' -or $mailActions.Get_sent_emails_V3.inputs.parameters.top -gt 100) { throw 'Sent mail evidence is missing or too broad.' }
+    if (-not $mailActions.Select_mail_fields.inputs.select.bodyPreview -or $mailActions.Select_mail_fields.inputs.select.direction -ne 'received') { throw 'Received mail must include content and direction.' }
+    if (-not $mailActions.Select_sent_mail_fields.inputs.select.bodyPreview -or $mailActions.Select_sent_mail_fields.inputs.select.direction -ne 'sent') { throw 'Sent mail must include content and direction.' }
+    if ($mailActions.Set_MailEvidence.inputs.value -notmatch 'union.+Select_mail_fields.+Select_sent_mail_fields') { throw 'Inbox and sent mail evidence must be combined.' }
+    $recentChats = $actions.Teams_evidence.actions.Filter_recent_chats
+    if ($recentChats.type -ne 'Query' -or $recentChats.inputs.from -ne "@body('List_chats')?['value']" -or $recentChats.inputs.where -notmatch 'lastUpdatedDateTime.+StartUtc') { throw 'Scheduled Teams fallback must filter chats updated today.' }
     $teamsLoop = $actions.Teams_evidence.actions.For_each_chat
-    if ($teamsLoop.foreach -ne "@body('List_chats')?['value']") { throw 'Scheduled fallback must scan every recent chat returned by the connector.' }
+    if ($teamsLoop.foreach -ne "@take(body('Filter_recent_chats'),12)" -or -not $teamsLoop.runAfter.Filter_recent_chats) { throw 'Scheduled Teams fallback must stay within the reviewed recent-chat bound.' }
     $teamsPace = $teamsLoop.actions.Pace_Teams_requests
     if ($teamsPace.type -ne 'Wait' -or $teamsPace.inputs.interval.count -lt 5 -or $teamsPace.inputs.interval.count -gt 30 -or $teamsPace.inputs.interval.unit -ne 'Second') { throw 'Scheduled Teams wait must respect the 5-30 second Power Automate interval.' }
     $teamsRequest = $teamsLoop.actions.Get_messages_in_chat.inputs.parameters
@@ -134,7 +141,7 @@ try {
     if ($eventRequest.inputs.parameters.'$top' -gt 20 -or $eventRequest.inputs.parameters.'$filter' -notmatch 'lastModifiedDateTime.+StartUtc.+lastModifiedDateTime.+EndUtc') { throw 'Event Teams query must be bounded to the target day.' }
     if ($eventRequest.inputs.retryPolicy.type -ne 'exponential' -or $eventRequest.inputs.retryPolicy.count -lt 4) { throw 'Event Teams requests must retry transient failures.' }
     $eventBundle = $eventLoop.actions.Compose_Teams_event_bundle.inputs
-    if ($eventBundle.schemaVersion -ne 2 -or -not $eventBundle.sources.teams -or $eventBundle.sources.calendar -or $eventBundle.sources.mail) { throw 'Event flow must report Teams-only evidence.' }
+    if ($eventBundle.schemaVersion -ne 3 -or -not $eventBundle.sources.teams -or $eventBundle.sources.calendar -or $eventBundle.sources.mail) { throw 'Event flow must report Teams-only evidence.' }
     $eventOutput = $eventLoop.actions.Create_Teams_event_evidence_file.inputs.parameters
     if ($eventOutput.folderPath -ne '/AtlasBridge/inbox' -or $eventOutput.name -notmatch 'AtlasInstallationId' -or $eventOutput.name -notmatch 'guid\(\)') { throw 'Invalid event cloud inbox output.' }
 

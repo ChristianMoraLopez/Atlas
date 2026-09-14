@@ -21,10 +21,12 @@ const LAST_OLLAMA_PORT: u16 = 11445;
 const MODEL_BLOB: &str =
     "models/blobs/sha256-183715c435899236895da3869489cc30ac241476b4971a20285b1a462818a5b4";
 const MODEL_BLOB_SIZE: u64 = 986_048_512;
-const MAX_AI_EVIDENCE_ITEMS: usize = 16;
-const MAX_AI_EVIDENCE_CHARS: usize = 3_600;
-const MAX_AI_TEXT_CHARS: usize = 300;
-const MAX_AI_OUTPUT_TOKENS: u32 = 384;
+const MAX_AI_EVIDENCE_ITEMS: usize = 12;
+const MAX_AI_TOTAL_EVIDENCE_ITEMS: usize = 48;
+const MAX_AI_EVIDENCE_CHARS: usize = 8_000;
+const MAX_AI_TEXT_CHARS: usize = 700;
+const MAX_AI_INTERACTIONS: usize = 12;
+const MAX_AI_OUTPUT_TOKENS: u32 = 768;
 
 pub struct ManagedRuntime {
     root: PathBuf,
@@ -236,11 +238,13 @@ impl ManagedRuntime {
         }
     }
 
-    pub async fn summarize(
+    pub async fn infer_tasks(
         &self,
         client: &Client,
         model: &str,
         evidence: &[ChatEvidence],
+        source_label: &str,
+        actor: &str,
     ) -> Result<Vec<SuggestedInteraction>> {
         self.ensure_ready(client).await?;
         let port = self
@@ -248,7 +252,23 @@ impl ManagedRuntime {
             .lock()
             .map_err(|_| AppError::Message("Local AI port lock was poisoned".into()))?
             .ok_or_else(|| AppError::Message("Local AI did not select a port".into()))?;
-        summarize_at(client, model, evidence, port).await
+        let batches = evidence_batches(evidence);
+        let mut seen = HashSet::new();
+        let mut result = Vec::new();
+        for batch in batches {
+            for suggestion in summarize_at(client, model, &batch, source_label, actor, port).await?
+            {
+                let key = format!(
+                    "{}|{}",
+                    suggestion.source_ids.join("|"),
+                    suggestion.summary.trim().to_ascii_lowercase()
+                );
+                if seen.insert(key) {
+                    result.push(suggestion);
+                }
+            }
+        }
+        Ok(result)
     }
 
     pub fn stop(&self) {
@@ -431,6 +451,8 @@ async fn summarize_at(
     client: &Client,
     model: &str,
     evidence: &[ChatEvidence],
+    source_label: &str,
+    actor: &str,
     port: u16,
 ) -> Result<Vec<SuggestedInteraction>> {
     if evidence.is_empty() {
@@ -450,9 +472,10 @@ async fn summarize_at(
     diagnostics::info(
         "local-ai/analysis",
         &format!(
-            "Analyzing {} of {} Teams evidence items",
+            "Analyzing {} of {} {} evidence items",
             evidence.len(),
-            original_count
+            original_count,
+            source_label
         ),
     );
     // Short aliases keep the prompt and JSON response small. The aliases are
@@ -476,9 +499,9 @@ async fn summarize_at(
         .collect::<Vec<_>>()
         .join("\n");
     let prompt = format!(
-        r#"You are grouping REAL Microsoft Teams chat messages into possible work interactions for human review.
+        r#"You extract completed daily work performed by {actor} from REAL {source_label} evidence.
 Return strict JSON with this shape: {{"interactions":[{{"source_ids":["exact-message-id"],"participants":["names found in messages"],"summary":"one factual sentence"}}]}}.
-Rules: return at most 3 interactions; keep each summary under 120 characters; use only IDs and facts present below; never invent work, people, clients, incidents, outcomes, or times; omit social chatter and messages that do not evidence a work interaction; an interaction must reference at least one exact message ID. The app derives times from those real messages, not from your output. Return the JSON object immediately with no explanation.
+Rules: return up to {MAX_AI_INTERACTIONS} distinct completed tasks; split separate tasks into separate interactions even when they use the same source ID; keep each summary under 160 characters; use only IDs and facts present below; never invent work, people, clients, incidents, outcomes, or times. A received request, notification, greeting, acknowledgement, meeting invitation, or merely receiving/sending a message is not completed work. Include an item only when the evidence shows that {actor} actually analyzed, prepared, changed, resolved, delivered, coordinated, reviewed, tested, documented, or otherwise completed concrete work. An interaction must reference at least one exact evidence ID. The app derives times from the real evidence. Write the summary in the evidence language and return the JSON object immediately with no explanation.
 
 MESSAGES:
 {lines}"#
@@ -495,7 +518,7 @@ MESSAGES:
                 "properties": {
                     "interactions": {
                         "type": "array",
-                        "maxItems": 3,
+                        "maxItems": MAX_AI_INTERACTIONS,
                         "items": {
                             "type": "object",
                             "properties": {
@@ -510,7 +533,7 @@ MESSAGES:
                                     "maxItems": 5,
                                     "items": { "type": "string" }
                                 },
-                                "summary": { "type": "string", "maxLength": 120 }
+                                "summary": { "type": "string", "maxLength": 160 }
                             },
                             "required": ["source_ids", "participants", "summary"],
                             "additionalProperties": false
@@ -522,7 +545,7 @@ MESSAGES:
             }),
             options: GenerateOptions {
                 temperature: 0.0,
-                num_ctx: 3072,
+                num_ctx: 6144,
                 num_predict: MAX_AI_OUTPUT_TOKENS,
             },
         })
@@ -553,17 +576,25 @@ MESSAGES:
         .iter()
         .map(|(alias, value)| (alias.as_str(), *value))
         .collect();
-    let mut seen = HashSet::new();
+    let mut seen_tasks = HashSet::new();
     let mut result = Vec::new();
-    for candidate in parsed.interactions.into_iter().take(3) {
+    for candidate in parsed.interactions.into_iter().take(MAX_AI_INTERACTIONS) {
         let mut aliases: Vec<String> = candidate
             .source_ids
             .into_iter()
-            .filter(|id| by_id.contains_key(id.as_str()) && seen.insert(id.clone()))
+            .filter(|id| by_id.contains_key(id.as_str()))
             .collect();
         aliases.sort();
         aliases.dedup();
         if aliases.is_empty() || candidate.summary.trim().is_empty() {
+            continue;
+        }
+        let task_key = format!(
+            "{}|{}",
+            aliases.join("|"),
+            candidate.summary.trim().to_ascii_lowercase()
+        );
+        if !seen_tasks.insert(task_key) {
             continue;
         }
         let mut matched: Vec<_> = aliases
@@ -589,7 +620,11 @@ MESSAGES:
     }
     diagnostics::info(
         "local-ai/analysis",
-        &format!("Created {} bounded Teams suggestions", result.len()),
+        &format!(
+            "Created {} bounded {} task suggestions",
+            result.len(),
+            source_label
+        ),
     );
     Ok(result)
 }
@@ -615,6 +650,24 @@ fn bounded_evidence(evidence: &[ChatEvidence]) -> Vec<ChatEvidence> {
     }
     bounded.sort_by_key(|item| item.created);
     bounded
+}
+
+fn evidence_batches(evidence: &[ChatEvidence]) -> Vec<Vec<ChatEvidence>> {
+    let mut candidates = evidence.to_vec();
+    candidates.sort_by_key(|item| item.created);
+    if candidates.len() > MAX_AI_TOTAL_EVIDENCE_ITEMS {
+        let last = candidates.len() - 1;
+        candidates = (0..MAX_AI_TOTAL_EVIDENCE_ITEMS)
+            .map(|index| {
+                let source_index = index * last / (MAX_AI_TOTAL_EVIDENCE_ITEMS - 1);
+                candidates[source_index].clone()
+            })
+            .collect();
+    }
+    candidates
+        .chunks(MAX_AI_EVIDENCE_ITEMS)
+        .map(|batch| batch.to_vec())
+        .collect()
 }
 
 #[cfg(test)]
@@ -645,8 +698,8 @@ mod tests {
     }
 
     #[test]
-    fn ai_evidence_is_recent_and_bounded() {
-        let evidence = (0..40)
+    fn ai_evidence_is_sampled_across_the_day_and_batched() {
+        let evidence = (0..100)
             .map(|index| ChatEvidence {
                 id: index.to_string(),
                 author: "Person".into(),
@@ -654,10 +707,14 @@ mod tests {
                 text: "x".repeat(1_000),
             })
             .collect::<Vec<_>>();
-        let bounded = bounded_evidence(&evidence);
-        assert_eq!(bounded.len(), 12);
-        assert_eq!(bounded.first().unwrap().id, "28");
-        assert_eq!(bounded.last().unwrap().id, "39");
-        assert!(bounded.iter().map(|item| item.text.len()).sum::<usize>() <= 3_600);
+        let batches = evidence_batches(&evidence);
+        assert_eq!(batches.len(), 4);
+        assert!(batches.iter().all(|batch| batch.len() <= 12));
+        assert_eq!(batches.first().unwrap().first().unwrap().id, "0");
+        assert_eq!(batches.last().unwrap().last().unwrap().id, "99");
+        for batch in batches {
+            let bounded = bounded_evidence(&batch);
+            assert!(bounded.iter().map(|item| item.text.len()).sum::<usize>() <= 8_000);
+        }
     }
 }

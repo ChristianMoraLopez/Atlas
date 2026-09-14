@@ -56,8 +56,12 @@ struct CalendarEvent {
 struct MailMessage {
     id: String,
     subject: Option<String>,
-    received_date_time: String,
+    received_date_time: Option<String>,
+    sent_date_time: Option<String>,
     sender: Option<Recipient>,
+    #[serde(rename = "from")]
+    from_recipient: Option<Recipient>,
+    body_preview: Option<String>,
     is_draft: Option<bool>,
 }
 
@@ -206,13 +210,25 @@ pub async fn extract(
     model: &str,
 ) -> Result<ExtractionResult> {
     let (start, end) = day_bounds(date, timezone)?;
+    let actor = state
+        .read_settings()?
+        .profile
+        .map(|profile| profile.full_name)
+        .unwrap_or_else(|| "the configured Atlas user".into());
     let mut interactions = calendar(state, token, start, end, timezone).await?;
     let mut warnings = Vec::new();
     if include_email {
-        interactions.extend(mail(state, token, start, end).await?);
+        match mail(state, token, start, end, model, &actor).await {
+            Ok(values) if !values.is_empty() => interactions.extend(values),
+            Ok(_) => warnings
+                .push("La IA local no identificó trabajo realizado en los correos del día.".into()),
+            Err(error) => {
+                warnings.push(format!("La interpretación local del correo falló: {error}"))
+            }
+        }
     }
     if include_teams {
-        match teams(state, token, start, end, model).await {
+        match teams(state, token, start, end, model, &actor).await {
             Ok(values) => interactions.extend(values),
             Err(e) => warnings.push(format!("Teams suggestions were skipped: {e}")),
         }
@@ -329,45 +345,99 @@ async fn mail(
     token: &str,
     start: DateTime<Utc>,
     end: DateTime<Utc>,
+    model: &str,
+    actor: &str,
 ) -> Result<Vec<Interaction>> {
-    let filter = format!(
-        "receivedDateTime ge {} and receivedDateTime lt {}",
-        start.to_rfc3339(),
-        end.to_rfc3339()
-    );
-    let mut url = graph_url(
-        "/me/messages",
-        &[
-            ("$filter", filter),
-            (
-                "$select",
-                "id,subject,receivedDateTime,sender,isDraft".into(),
-            ),
-            ("$orderby", "receivedDateTime asc".into()),
-            ("$top", "100".into()),
-        ],
-    )?;
-    let mut result = Vec::new();
-    loop {
-        let page: Page<MailMessage> = graph_get(state, token, url).await?;
-        for message in page.value {
-            if message.is_draft.unwrap_or(false) {
-                continue;
+    let mut evidence = Vec::new();
+    for (folder, field, direction) in [
+        ("inbox", "receivedDateTime", "received"),
+        ("sentitems", "sentDateTime", "sent"),
+    ] {
+        let filter = format!(
+            "{field} ge {} and {field} lt {}",
+            start.to_rfc3339(),
+            end.to_rfc3339()
+        );
+        let mut url = graph_url(
+            &format!("/me/mailFolders/{folder}/messages"),
+            &[
+                ("$filter", filter),
+                (
+                    "$select",
+                    "id,subject,receivedDateTime,sentDateTime,sender,from,bodyPreview,isDraft"
+                        .into(),
+                ),
+                ("$orderby", format!("{field} asc")),
+                ("$top", "100".into()),
+            ],
+        )?;
+        loop {
+            let page: Page<MailMessage> = graph_get(state, token, url).await?;
+            for message in page.value {
+                if message.is_draft.unwrap_or(false) {
+                    continue;
+                }
+                let time = if direction == "sent" {
+                    message.sent_date_time.as_deref()
+                } else {
+                    message.received_date_time.as_deref()
+                };
+                let Some(time) = time else { continue };
+                let created = parse_graph_time(time)?;
+                let subject = message.subject.unwrap_or_else(|| "No subject".into());
+                let address = message
+                    .sender
+                    .as_ref()
+                    .or(message.from_recipient.as_ref())
+                    .and_then(|value| value.email_address.address.as_deref())
+                    .unwrap_or("");
+                let preview = message.body_preview.unwrap_or_default();
+                evidence.push(ChatEvidence {
+                    id: format!("graph:mail:{}", message.id),
+                    author: format!("{direction} email · {address}"),
+                    created,
+                    text: format!("Subject: {subject}. {preview}"),
+                });
             }
-            let received = parse_graph_time(&message.received_date_time)?;
-            let subject = message.subject.unwrap_or_else(|| "No subject".into());
-            let sender = message
-                .sender
-                .as_ref()
-                .and_then(|v| v.email_address.address.as_deref());
-            let (client_type, end_client) = classify_client(sender);
-            result.push(Interaction {
+            match page.next_link {
+                Some(next) => url = validate_next_link(&next)?,
+                None => break,
+            }
+        }
+    }
+    let real_ids: HashSet<&str> = evidence.iter().map(|item| item.id.as_str()).collect();
+    let suggestions = state
+        .local_ai
+        .infer_tasks(&state.http, model, &evidence, "email", actor)
+        .await?;
+    Ok(suggestions
+        .into_iter()
+        .filter(|suggestion| {
+            suggestion
+                .source_ids
+                .iter()
+                .all(|id| real_ids.contains(id.as_str()))
+        })
+        .map(|suggestion| {
+            let identity = format!(
+                "{}|{}",
+                suggestion.source_ids.join("|"),
+                suggestion.summary.trim().to_ascii_lowercase()
+            );
+            let digest = hex::encode(Sha256::digest(identity.as_bytes()));
+            let address = suggestion
+                .participants
+                .iter()
+                .find(|value| value.contains('@'))
+                .map(String::as_str);
+            let (client_type, end_client) = classify_client(address);
+            Interaction {
                 source_kind: SourceKind::Email,
-                source_id: format!("graph:mail:{}", message.id),
-                interaction_type: "E-Mail".into(),
-                reception_date_time: received.to_rfc3339(),
-                interaction_date_time: received.to_rfc3339(),
-                resolution_date_time: Some(received.to_rfc3339()),
+                source_id: format!("graph:mail:ai:{digest}"),
+                interaction_type: "Task".into(),
+                reception_date_time: suggestion.start.to_rfc3339(),
+                interaction_date_time: suggestion.start.to_rfc3339(),
+                resolution_date_time: Some(suggestion.end.to_rfc3339()),
                 client_type,
                 end_client,
                 status: "Resolved".into(),
@@ -376,20 +446,15 @@ async fn mail(
                 subcategory: String::new(),
                 priority: "Intermediate".into(),
                 incident_number: String::new(),
-                comments: subject.clone(),
+                comments: suggestion.summary,
                 selected: false,
                 reviewed: false,
                 manual_authored: false,
-                ai_suggested: false,
-                evidence_label: subject,
-            });
-        }
-        match page.next_link {
-            Some(next) => url = validate_next_link(&next)?,
-            None => break,
-        }
-    }
-    Ok(result)
+                ai_suggested: true,
+                evidence_label: "AI review · email evidence".into(),
+            }
+        })
+        .collect())
 }
 
 async fn teams(
@@ -398,6 +463,7 @@ async fn teams(
     start: DateTime<Utc>,
     end: DateTime<Utc>,
     model: &str,
+    actor: &str,
 ) -> Result<Vec<Interaction>> {
     let mut chats_url = graph_url(
         "/me/chats",
@@ -478,7 +544,7 @@ async fn teams(
     }
     let suggestions = state
         .local_ai
-        .summarize(&state.http, model, &evidence)
+        .infer_tasks(&state.http, model, &evidence, "Teams", actor)
         .await?;
     let real_ids: HashSet<&str> = evidence.iter().map(|e| e.id.as_str()).collect();
     let mut result = Vec::new();
@@ -490,7 +556,12 @@ async fn teams(
         {
             continue;
         }
-        let digest = hex::encode(Sha256::digest(suggestion.source_ids.join("|").as_bytes()));
+        let identity = format!(
+            "{}|{}",
+            suggestion.source_ids.join("|"),
+            suggestion.summary.trim().to_ascii_lowercase()
+        );
+        let digest = hex::encode(Sha256::digest(identity.as_bytes()));
         let participants = suggestion.participants.join(", ");
         result.push(Interaction {
             source_kind: SourceKind::TeamsChat,

@@ -68,7 +68,15 @@ struct BridgeMailMessage {
     #[serde(default)]
     sender_address: String,
     #[serde(default)]
+    body_preview: String,
+    #[serde(default = "default_mail_direction")]
+    direction: String,
+    #[serde(default)]
     is_draft: bool,
+}
+
+fn default_mail_direction() -> String {
+    "received".into()
 }
 
 #[derive(Debug, Deserialize)]
@@ -143,7 +151,7 @@ fn newest_bundle(folder: &Path, date: &str) -> Result<(PathBuf, EvidenceBundle)>
             Ok(value) => value,
             Err(_) => continue,
         };
-        if bundle.schema_version != 2 {
+        if bundle.schema_version != 3 {
             continue;
         }
         let exported = match parse_graph_time(&bundle.exported_at) {
@@ -350,10 +358,16 @@ fn mail_rows(
             message.subject.trim().to_string()
         };
         let (client_type, end_client) = classify_client(Some(&message.sender_address));
+        let direction = if message.direction.eq_ignore_ascii_case("sent") {
+            "sent"
+        } else {
+            "received"
+        };
+        let comments = format!("Subject: {subject}. {}", message.body_preview.trim());
         rows.push(Interaction {
             source_kind: SourceKind::Email,
             source_id: format!("bridge:mail:{}", message.id),
-            interaction_type: "E-Mail".into(),
+            interaction_type: "Task".into(),
             reception_date_time: received.to_rfc3339(),
             interaction_date_time: received.to_rfc3339(),
             resolution_date_time: Some(received.to_rfc3339()),
@@ -365,12 +379,15 @@ fn mail_rows(
             subcategory: String::new(),
             priority: "Intermediate".into(),
             incident_number: String::new(),
-            comments: subject.clone(),
+            comments,
             selected: false,
             reviewed: false,
             manual_authored: false,
             ai_suggested: false,
-            evidence_label: subject,
+            evidence_label: format!(
+                "{direction} email · {subject} · {}",
+                message.sender_address.trim()
+            ),
         });
     }
     Ok(rows)
@@ -436,66 +453,71 @@ fn teams_rows(
     let mut rows = Vec::new();
     for (chat_key, mut messages) in groups {
         messages.sort_by_key(|message| message.1);
-        let start = messages.first().unwrap().1;
-        let finish = messages.last().unwrap().1;
-        let ids = messages
-            .iter()
-            .map(|message| message.0.as_str())
-            .collect::<Vec<_>>()
-            .join("|");
-        let digest = hex::encode(Sha256::digest(ids.as_bytes()));
-        let mut participants = messages
-            .iter()
-            .map(|message| message.2.clone())
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect::<Vec<_>>();
-        participants.sort();
-        let comments = messages
-            .iter()
-            .take(8)
-            .map(|message| format!("{}: {}", message.2, message.3))
-            .collect::<Vec<_>>()
-            .join(" | ")
-            .chars()
-            .take(2_000)
-            .collect::<String>();
         let topic = labels
             .get(&chat_key)
             .cloned()
             .unwrap_or_else(|| "Teams chat".into());
-        let evidence_label = if participants.is_empty() {
-            topic
-        } else {
-            format!("{topic} · {}", participants.join(", "))
-        };
-        rows.push(Interaction {
-            source_kind: SourceKind::TeamsChat,
-            source_id: format!("bridge:teams:{digest}"),
-            interaction_type: "Task".into(),
-            reception_date_time: start.to_rfc3339(),
-            interaction_date_time: start.to_rfc3339(),
-            resolution_date_time: Some(finish.to_rfc3339()),
-            client_type: String::new(),
-            end_client: String::new(),
-            status: "Resolved".into(),
-            resolution_type: "Processed & Resolved".into(),
-            category: String::new(),
-            subcategory: String::new(),
-            priority: "Intermediate".into(),
-            incident_number: String::new(),
-            comments,
-            selected: false,
-            reviewed: false,
-            manual_authored: false,
-            ai_suggested: false,
-            evidence_label,
-        });
+        for chunk in messages.chunks(8) {
+            let start = chunk.first().unwrap().1;
+            let finish = chunk.last().unwrap().1;
+            let ids = chunk
+                .iter()
+                .map(|message| message.0.as_str())
+                .collect::<Vec<_>>()
+                .join("|");
+            let digest = hex::encode(Sha256::digest(ids.as_bytes()));
+            let mut participants = chunk
+                .iter()
+                .map(|message| message.2.clone())
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+            participants.sort();
+            let comments = chunk
+                .iter()
+                .map(|message| format!("{}: {}", message.2, message.3))
+                .collect::<Vec<_>>()
+                .join(" | ")
+                .chars()
+                .take(2_000)
+                .collect::<String>();
+            let evidence_label = if participants.is_empty() {
+                topic.clone()
+            } else {
+                format!("{topic} · {}", participants.join(", "))
+            };
+            rows.push(Interaction {
+                source_kind: SourceKind::TeamsChat,
+                source_id: format!("bridge:teams:{digest}"),
+                interaction_type: "Task".into(),
+                reception_date_time: start.to_rfc3339(),
+                interaction_date_time: start.to_rfc3339(),
+                resolution_date_time: Some(finish.to_rfc3339()),
+                client_type: String::new(),
+                end_client: String::new(),
+                status: "Resolved".into(),
+                resolution_type: "Processed & Resolved".into(),
+                category: String::new(),
+                subcategory: String::new(),
+                priority: "Intermediate".into(),
+                incident_number: String::new(),
+                comments,
+                selected: false,
+                reviewed: false,
+                manual_authored: false,
+                ai_suggested: false,
+                evidence_label,
+            });
+        }
     }
     Ok(rows)
 }
 
-async fn interpret_teams(state: &AppState, rows: &[Interaction]) -> Result<Vec<Interaction>> {
+async fn interpret_mail(
+    state: &AppState,
+    rows: &[Interaction],
+    actor: &str,
+) -> Result<Vec<Interaction>> {
     let evidence = rows
         .iter()
         .map(|row| {
@@ -513,12 +535,105 @@ async fn interpret_teams(state: &AppState, rows: &[Interaction]) -> Result<Vec<I
         .collect();
     let suggestions = state
         .local_ai
-        .summarize(&state.http, ollama::BUNDLED_MODEL, &evidence)
+        .infer_tasks(
+            &state.http,
+            ollama::BUNDLED_MODEL,
+            &evidence,
+            "email",
+            actor,
+        )
         .await?;
     Ok(suggestions
         .into_iter()
         .map(|suggestion| {
-            let digest = hex::encode(Sha256::digest(suggestion.source_ids.join("|").as_bytes()));
+            let identity = format!(
+                "{}|{}",
+                suggestion.source_ids.join("|"),
+                suggestion.summary.trim().to_ascii_lowercase()
+            );
+            let digest = hex::encode(Sha256::digest(identity.as_bytes()));
+            let sources = suggestion
+                .source_ids
+                .iter()
+                .filter_map(|id| labels.get(id.as_str()))
+                .copied()
+                .collect::<Vec<_>>()
+                .join(", ");
+            let address = suggestion
+                .participants
+                .iter()
+                .find(|value| value.contains('@'))
+                .map(String::as_str);
+            let (client_type, end_client) = classify_client(address);
+            Interaction {
+                source_kind: SourceKind::Email,
+                source_id: format!("bridge:mail:ai:{digest}"),
+                interaction_type: "Task".into(),
+                reception_date_time: suggestion.start.to_rfc3339(),
+                interaction_date_time: suggestion.start.to_rfc3339(),
+                resolution_date_time: Some(suggestion.end.to_rfc3339()),
+                client_type,
+                end_client,
+                status: "Resolved".into(),
+                resolution_type: "Processed & Resolved".into(),
+                category: String::new(),
+                subcategory: String::new(),
+                priority: "Intermediate".into(),
+                incident_number: String::new(),
+                comments: suggestion.summary,
+                selected: false,
+                reviewed: false,
+                manual_authored: false,
+                ai_suggested: true,
+                evidence_label: if sources.is_empty() {
+                    "AI review · email evidence".into()
+                } else {
+                    format!("AI review · {sources}")
+                },
+            }
+        })
+        .collect())
+}
+
+async fn interpret_teams(
+    state: &AppState,
+    rows: &[Interaction],
+    actor: &str,
+) -> Result<Vec<Interaction>> {
+    let evidence = rows
+        .iter()
+        .map(|row| {
+            Ok(ChatEvidence {
+                id: row.source_id.clone(),
+                author: row.evidence_label.clone(),
+                created: parse_graph_time(&row.interaction_date_time)?,
+                text: row.comments.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let labels: HashMap<_, _> = rows
+        .iter()
+        .map(|row| (row.source_id.as_str(), row.evidence_label.as_str()))
+        .collect();
+    let suggestions = state
+        .local_ai
+        .infer_tasks(
+            &state.http,
+            ollama::BUNDLED_MODEL,
+            &evidence,
+            "Teams",
+            actor,
+        )
+        .await?;
+    Ok(suggestions
+        .into_iter()
+        .map(|suggestion| {
+            let identity = format!(
+                "{}|{}",
+                suggestion.source_ids.join("|"),
+                suggestion.summary.trim().to_ascii_lowercase()
+            );
+            let digest = hex::encode(Sha256::digest(identity.as_bytes()));
             let sources = suggestion
                 .source_ids
                 .iter()
@@ -602,25 +717,49 @@ pub async fn extract(
     if source_status.teams && bundle.teams.is_empty() {
         warnings.push("No se encontraron mensajes de Teams de hoy; añade una interacción real manualmente si corresponde.".into());
     }
+    let actor = state
+        .read_settings()?
+        .profile
+        .map(|profile| profile.full_name)
+        .unwrap_or_else(|| "the configured Atlas user".into());
     let mut interactions = calendar_rows(bundle.calendar, start, end, timezone)?;
-    if include_email {
-        interactions.extend(mail_rows(bundle.mail, start, end)?);
+    if include_email && !bundle.mail.is_empty() {
+        match mail_rows(std::mem::take(&mut bundle.mail), start, end) {
+            Ok(values) => match interpret_mail(state, &values, &actor).await {
+                Ok(tasks) if !tasks.is_empty() => interactions.extend(tasks),
+                Ok(_) => warnings.push(
+                    "La IA local no identificó trabajo realizado en los correos del día.".into(),
+                ),
+                Err(error) => {
+                    crate::diagnostics::error(
+                        "bridge/local-ai",
+                        &format!("Email interpretation failed: {error}"),
+                    );
+                    warnings.push(format!("La interpretación local del correo falló: {error}"));
+                }
+            },
+            Err(error) => warnings.push(format!(
+                "Los correos de {} se omitieron: {error}",
+                path.display()
+            )),
+        }
     }
     if include_teams && !bundle.teams.is_empty() {
         match teams_rows(std::mem::take(&mut bundle.teams), start, end) {
-            Ok(values) => match interpret_teams(state, &values).await {
+            Ok(values) => match interpret_teams(state, &values, &actor).await {
                 Ok(suggestions) if !suggestions.is_empty() => interactions.extend(suggestions),
                 Ok(_) => {
-                    warnings.push("La IA local no identificó una interacción laboral en Teams. Revisa la evidencia directa.".into());
-                    interactions.extend(values);
+                    warnings.push(
+                        "La IA local no identificó trabajo realizado en Teams durante el día."
+                            .into(),
+                    );
                 }
                 Err(error) => {
                     crate::diagnostics::error(
                         "bridge/local-ai",
                         &format!("Teams interpretation failed: {error}"),
                     );
-                    warnings.push(format!("La interpretación local de Teams falló: {error}. Atlas conserva la evidencia directa para revisión."));
-                    interactions.extend(values);
+                    warnings.push(format!("La interpretación local de Teams falló: {error}. Puedes añadir las tareas manualmente."));
                 }
             },
             Err(error) => warnings.push(format!(
@@ -651,7 +790,7 @@ mod tests {
     use tempfile::NamedTempFile;
 
     #[test]
-    fn bridge_calendar_and_mail_keep_existing_selection_rules() {
+    fn bridge_calendar_and_mail_create_evidence_for_completed_work_inference() {
         let start = parse_graph_time("2026-09-07T00:00:00Z").unwrap();
         let end = parse_graph_time("2026-09-08T00:00:00Z").unwrap();
         let calendar = calendar_rows(
@@ -674,6 +813,8 @@ mod tests {
                 subject: "Incident follow-up".into(),
                 received_date_time: "2026-09-07T16:00:00Z".into(),
                 sender_address: "client@example.com".into(),
+                body_preview: "Completed the incident analysis".into(),
+                direction: "sent".into(),
                 is_draft: false,
             }],
             start,
@@ -712,6 +853,28 @@ mod tests {
     }
 
     #[test]
+    fn long_teams_chats_are_split_without_dropping_later_messages() {
+        let start = parse_graph_time("2026-09-07T00:00:00Z").unwrap();
+        let end = parse_graph_time("2026-09-08T00:00:00Z").unwrap();
+        let messages = (0..17)
+            .map(|index| BridgeTeamsMessage {
+                id: format!("message-{index}"),
+                chat_id: "chat-1".into(),
+                topic: "Daily work".into(),
+                created_date_time: format!("2026-09-07T{index:02}:00:00Z"),
+                author: "Worker".into(),
+                content: format!("Completed work item {index}"),
+                message_type: "message".into(),
+            })
+            .collect();
+
+        let rows = teams_rows(messages, start, end).unwrap();
+
+        assert_eq!(rows.len(), 3);
+        assert!(rows.last().unwrap().comments.contains("work item 16"));
+    }
+
+    #[test]
     fn newest_valid_bundle_is_selected_for_the_day() {
         let directory = tempfile::tempdir().unwrap();
         for (name, exported_at) in [
@@ -721,7 +884,7 @@ mod tests {
             let mut file = NamedTempFile::new_in(directory.path()).unwrap();
             write!(
                 file,
-                r#"{{"schemaVersion":2,"exportedAt":"{exported_at}","targetDate":"2026-09-07","sources":{{"calendar":true,"mail":true,"teams":true}},"calendar":[],"mail":[],"teams":[]}}"#
+                r#"{{"schemaVersion":3,"exportedAt":"{exported_at}","targetDate":"2026-09-07","sources":{{"calendar":true,"mail":true,"teams":true}},"calendar":[],"mail":[],"teams":[]}}"#
             )
             .unwrap();
             file.persist(directory.path().join(name)).unwrap();
@@ -735,12 +898,12 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         fs::write(
             directory.path().join("older.json"),
-            r#"{"schemaVersion":2,"exportedAt":"2026-09-07T10:00:00Z","targetDate":"2026-09-07","sources":{"calendar":false,"mail":false,"teams":false},"calendar":[],"mail":[],"teams":[{"id":"team-1","chatId":"chat-1","topic":"Review","createdDateTime":"2026-09-07T09:30:00Z","author":"Colleague","content":"Reviewed task","messageType":"message"}]}"#,
+            r#"{"schemaVersion":3,"exportedAt":"2026-09-07T10:00:00Z","targetDate":"2026-09-07","sources":{"calendar":false,"mail":false,"teams":false},"calendar":[],"mail":[],"teams":[{"id":"team-1","chatId":"chat-1","topic":"Review","createdDateTime":"2026-09-07T09:30:00Z","author":"Colleague","content":"Reviewed task","messageType":"message"}]}"#,
         )
         .unwrap();
         fs::write(
             directory.path().join("newer.json"),
-            r#"{"schemaVersion":2,"exportedAt":"2026-09-07T11:00:00Z","targetDate":"2026-09-07","sources":{"calendar":true,"mail":true,"teams":true},"calendar":[],"mail":[{"id":"mail-1","subject":"Follow-up","receivedDateTime":"2026-09-07T10:30:00Z","senderAddress":"client@example.com","isDraft":false}],"teams":[]}"#,
+            r#"{"schemaVersion":3,"exportedAt":"2026-09-07T11:00:00Z","targetDate":"2026-09-07","sources":{"calendar":true,"mail":true,"teams":true},"calendar":[],"mail":[{"id":"mail-1","subject":"Follow-up","receivedDateTime":"2026-09-07T10:30:00Z","senderAddress":"client@example.com","bodyPreview":"Completed the follow-up","direction":"sent","isDraft":false}],"teams":[]}"#,
         )
         .unwrap();
 
@@ -778,7 +941,7 @@ mod tests {
             ),
         ] {
             let bundle = serde_json::json!({
-                "schemaVersion": 2,
+                "schemaVersion": 3,
                 "exportedAt": exported_at,
                 "targetDate": "2026-09-07",
                 "sources": { "calendar": false, "mail": false, "teams": true },
@@ -816,7 +979,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         fs::write(
             directory.path().join("previous.json"),
-            r#"{"schemaVersion":2,"exportedAt":"2026-09-11T23:33:00Z","targetDate":"2026-09-11","sources":{"calendar":true,"mail":true,"teams":true},"calendar":[],"mail":[],"teams":[]}"#,
+            r#"{"schemaVersion":3,"exportedAt":"2026-09-11T23:33:00Z","targetDate":"2026-09-11","sources":{"calendar":true,"mail":true,"teams":true},"calendar":[],"mail":[],"teams":[]}"#,
         )
         .unwrap();
 

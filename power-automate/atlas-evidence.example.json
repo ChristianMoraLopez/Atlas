@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "exportedAt": "2026-09-07T22:00:00Z",
   "targetDate": "2026-09-07",
   "sources": {
@@ -23,6 +23,8 @@
       "subject": "Incident follow-up",
       "receivedDateTime": "2026-09-07T16:00:00Z",
       "senderAddress": "customer@example.com",
+      "bodyPreview": "Thank you for completing the incident analysis and sending the resolution notes.",
+      "direction": "received",
       "isDraft": false
     }
   ],

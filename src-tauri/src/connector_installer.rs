@@ -24,7 +24,7 @@ const TEAMS_EVENT_WORKFLOW: &str =
 const WORKFLOWS: [&str; 2] = [SCHEDULED_WORKFLOW, TEAMS_EVENT_WORKFLOW];
 const MAX_FILE: u64 = 25 * 1024 * 1024;
 const PORTAL: &str = "https://make.powerautomate.com/";
-const SOLUTION_VERSION: &str = "1.7.0.0";
+const SOLUTION_VERSION: &str = "1.8.0.0";
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

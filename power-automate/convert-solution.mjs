@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 
 const root = dirname(fileURLToPath(import.meta.url));
-const version = '1.7.0.0';
+const version = '1.8.0.0';
 const scheduled = {
   id: '8e5c1f84-dcbb-4a2c-9d2f-62e9c38105d2',
   name: 'Atlas - Export evidence to OneDrive',
@@ -47,9 +47,68 @@ a.AtlasInstallationId = { type: 'Compose', inputs: 'unconfigured', runAfter: {} 
 a.TargetDate.runAfter = { AtlasInstallationId: ['Succeeded'] };
 const calendar = a.Calendar_evidence.actions;
 calendar.Get_calendar_view_of_events_V3.inputs.parameters.calendarId = "@first(body('Get_calendars_V2')?['value'])?['id']";
-a.Mail_evidence.actions.Get_emails_V3.inputs.parameters.top = 100;
+const mail = a.Mail_evidence.actions;
+mail.Get_emails_V3.inputs.parameters.top = 100;
+mail.Select_mail_fields.inputs.select.bodyPreview = "@coalesce(item()?['bodyPreview'],'')";
+mail.Select_mail_fields.inputs.select.direction = 'received';
+mail.Get_sent_emails_V3 = {
+  type: 'OpenApiConnection',
+  inputs: {
+    host: {
+      apiId: '/providers/Microsoft.PowerApps/apis/shared_office365',
+      connectionName: 'shared_office365',
+      operationId: 'GetEmailsV3',
+    },
+    parameters: {
+      folderPath: 'Sent Items',
+      fetchOnlyUnread: false,
+      includeAttachments: false,
+      top: 100,
+    },
+    authentication: "@parameters('$authentication')",
+  },
+  runAfter: {},
+};
+mail.Filter_sent_email_to_target_day = {
+  type: 'Query',
+  inputs: {
+    from: "@body('Get_sent_emails_V3')?['value']",
+    where: "@and(not(empty(coalesce(item()?['sentDateTime'],item()?['receivedDateTime']))),greaterOrEquals(ticks(coalesce(item()?['sentDateTime'],item()?['receivedDateTime'])),ticks(outputs('StartUtc'))),less(ticks(coalesce(item()?['sentDateTime'],item()?['receivedDateTime'])),ticks(outputs('EndUtc'))))",
+  },
+  runAfter: { Get_sent_emails_V3: ['Succeeded'] },
+};
+mail.Select_sent_mail_fields = {
+  type: 'Select',
+  inputs: {
+    from: "@body('Filter_sent_email_to_target_day')",
+    select: {
+      id: "@item()?['id']",
+      subject: "@coalesce(item()?['subject'],'')",
+      receivedDateTime: "@coalesce(item()?['sentDateTime'],item()?['receivedDateTime'])",
+      senderAddress: "@string(item()?['toRecipients'])",
+      bodyPreview: "@coalesce(item()?['bodyPreview'],'')",
+      direction: 'sent',
+      isDraft: false,
+    },
+  },
+  runAfter: { Filter_sent_email_to_target_day: ['Succeeded'] },
+};
+mail.Set_MailEvidence.inputs.value = "@union(body('Select_mail_fields'),body('Select_sent_mail_fields'))";
+mail.Set_MailEvidence.runAfter = {
+  Select_mail_fields: ['Succeeded'],
+  Select_sent_mail_fields: ['Succeeded'],
+};
 const teamsLoop = a.Teams_evidence.actions.For_each_chat;
-teamsLoop.foreach = "@body('List_chats')?['value']";
+a.Teams_evidence.actions.Filter_recent_chats = {
+  type: 'Query',
+  inputs: {
+    from: "@body('List_chats')?['value']",
+    where: "@and(not(empty(item()?['lastUpdatedDateTime'])),greaterOrEquals(ticks(item()?['lastUpdatedDateTime']),ticks(outputs('StartUtc'))))",
+  },
+  runAfter: { List_chats: ['Succeeded'] },
+};
+teamsLoop.foreach = "@take(body('Filter_recent_chats'),12)";
+teamsLoop.runAfter = { Filter_recent_chats: ['Succeeded'] };
 teamsLoop.actions.Pace_Teams_requests = { type: 'Wait', inputs: { interval: { count: 5, unit: 'Second' } }, runAfter: {} };
 const teamsRequest = teamsLoop.actions.Get_messages_in_chat;
 teamsRequest.inputs.parameters['$filter'] = "@concat('lastModifiedDateTime gt ',outputs('StartUtc'),' and lastModifiedDateTime lt ',outputs('EndUtc'))";
@@ -72,7 +131,7 @@ for (const scope of ['Calendar_evidence', 'Mail_evidence', 'Teams_evidence']) {
 }
 const terminalStates = ['Succeeded', 'Failed', 'Skipped', 'TimedOut'];
 a.Compose_Atlas_bundle.inputs = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   exportedAt: '@utcNow()',
   targetDate: "@outputs('TargetDate')",
   sources: {
@@ -173,7 +232,7 @@ const eventDefinition = {
         Compose_Teams_event_bundle: {
           type: 'Compose',
           inputs: {
-            schemaVersion: 2,
+          schemaVersion: 3,
             exportedAt: '@utcNow()',
             targetDate: "@outputs('TargetDate')",
             sources: { calendar: false, mail: false, teams: true },

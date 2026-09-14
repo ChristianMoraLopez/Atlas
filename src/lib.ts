@@ -16,12 +16,15 @@ export const api = {
   signIn: () => call<AppStatus>("sign_in"),
   signOut: () => call<void>("sign_out"),
   saveProfile: (profile: UserProfile) => call<void>("save_profile", { profile }),
-  saveDestination: (destination: TrackerDestination, autoSync: boolean) =>
-    call<AppStatus>("save_tracker_destination", { destination, autoSync }),
+  saveDestination: (destination: TrackerDestination, autoSync: boolean, autoSyncTime: string) =>
+    call<AppStatus>("save_tracker_destination", { destination, autoSync, autoSyncTime }),
   extract: (date: string, includeEmail: boolean, includeTeams: boolean, timezone: string) =>
     call<ExtractionResult>("extract_interactions", { date, includeEmail, includeTeams, timezone }),
   export: (date: string, profile: UserProfile, interactions: Interaction[]) =>
     call<ExportResult>("export_configured_tracker", { date, profile, interactions }),
+  openTracker: () => call<void>("open_tracker_destination"),
+  completeScheduled: (needsAttention: boolean) =>
+    call<void>("complete_scheduled_launch", { needsAttention }),
   logError: (context: string, message: string) => invoke<void>("log_frontend_error", { context, message })
 };
 

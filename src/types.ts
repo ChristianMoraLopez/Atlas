@@ -20,6 +20,7 @@ export type TrackerDestinationKind = "local_existing" | "local_new" | "share_poi
 export interface TrackerDestination {
   kind: TrackerDestinationKind;
   value: string;
+  localPath?: string;
 }
 
 export interface AppStatus {
@@ -35,6 +36,8 @@ export interface AppStatus {
   localAiError?: string;
   destination?: TrackerDestination;
   autoSync: boolean;
+  autoSyncTime: string;
+  scheduledLaunch: boolean;
   logPath: string;
 }
 

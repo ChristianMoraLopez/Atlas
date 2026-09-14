@@ -1,6 +1,6 @@
 [package]
 name = "atlas-tracker"
-version = "0.2.14"
+version = "0.2.15"
 description = "Circana Interactions Tracker"
 authors = ["Christian Mora Lopez"]
 edition = "2021"
@@ -16,6 +16,7 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
+tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls", "system-proxy"] }

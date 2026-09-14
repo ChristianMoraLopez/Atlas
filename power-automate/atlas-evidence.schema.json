@@ -1,13 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://atlas.local/schemas/atlas-evidence-v2.json",
+  "$id": "https://atlas.local/schemas/atlas-evidence-v3.json",
   "title": "Atlas Power Automate evidence bundle",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "exportedAt", "targetDate", "sources", "calendar", "mail", "teams"],
   "properties": {
     "schemaVersion": {
-      "const": 2
+      "const": 3
     },
     "exportedAt": {
       "type": "string",
@@ -50,12 +50,14 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "subject", "receivedDateTime", "senderAddress", "isDraft"],
+        "required": ["id", "subject", "receivedDateTime", "senderAddress", "bodyPreview", "direction", "isDraft"],
         "properties": {
           "id": { "type": "string", "minLength": 1 },
           "subject": { "type": "string" },
           "receivedDateTime": { "type": "string", "format": "date-time" },
           "senderAddress": { "type": "string" },
+          "bodyPreview": { "type": "string" },
+          "direction": { "type": "string" },
           "isDraft": { "type": "boolean" }
         }
       }

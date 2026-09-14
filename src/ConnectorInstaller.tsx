@@ -18,7 +18,7 @@ const diagnostics: Record<string, string> = {
   user_reported_not_remotely_verified: 'Paso anterior confirmado por ti; Atlas no ha consultado el tenant. Continúa en el mismo entorno y con tu cuenta corporativa.',
   file_verified: 'Llegó un archivo de esta instalación y cumple atlas-evidence.schema.json. Esto verifica la entrega del puente; no certifica la integridad de todos tus datos de Microsoft 365.',
   existing_flow_file_verified: 'Atlas encontró un paquete reciente y válido creado por un flujo Atlas existente. La carpeta quedó verificada y puedes continuar sin volver a importar el flujo.',
-  waiting_for_sync: 'Todavía no hay un paquete Atlas válido disponible localmente. El flujo se ejecuta cada hora. Comprueba su historial y marca inbox como Siempre mantener en este dispositivo en OneDrive; Atlas volverá a comprobar cada 15 segundos.',
+  waiting_for_sync: 'Todavía no hay un paquete Atlas válido disponible localmente. El flujo se ejecuta cada 15 minutos. Comprueba su historial y marca inbox como Siempre mantener en este dispositivo en OneDrive; Atlas volverá a comprobar cada 15 segundos.',
   evidence_not_downloaded: 'OneDrive muestra el archivo, pero todavía no está disponible localmente. Haz clic derecho sobre inbox y elige Siempre mantener en este dispositivo.',
   evidence_too_old: 'El archivo de esta instalación tiene más de 48 horas. Ejecuta el flujo para generar una comprobación reciente.',
   evidence_from_future: 'La fecha del archivo está adelantada respecto al reloj del equipo. Comprueba fecha, hora y zona horaria de Windows y vuelve a ejecutar el flujo.',

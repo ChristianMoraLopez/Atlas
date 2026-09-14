@@ -2,9 +2,9 @@
 
 For tenants that block the Atlas Entra application, Atlas includes a portal-assisted Power Automate solution installer. It prepares `AtlasBridge/inbox`, opens Microsoft's official portal, records user-confirmed setup stages, and completes only after a correlated evidence file passes the bundled schema. It does not copy browser cookies, automate credentials/MFA, call private portal endpoints, or distribute PAC. See [`power-automate/INSTALLER.md`](power-automate/INSTALLER.md).
 
-Atlas is a Tauri v2 Windows desktop application that builds the Circana Interactions Tracker from a user's own Microsoft 365 calendar, mail, and Teams evidence. It remembers one local Excel or SharePoint destination and can sync today's activity automatically while it is running. If one of the three required daily categories is missing, Atlas alerts the user and accepts a factual manual entry. The portable package includes and manages its own local Ollama runtime and model for Teams interpretation.
+Atlas is a Tauri v2 Windows desktop application that builds the Circana Interactions Tracker from a user's own Microsoft 365 calendar, mail, and Teams evidence. It remembers one local Excel or SharePoint destination and runs the daily tracker automatically at a configurable time, initially 17:30. It writes every real activity it found and opens the interface for attention when the day contains fewer than three. The portable package includes and manages its own local Ollama runtime and model for local interpretation.
 
-> **Atlas never invents interactions on its own.** Every exported row comes from real Microsoft 365 evidence or a factual manual entry. A daily export requires at least one Meeting, one E-Mail, and one Task. Atlas blocks an incomplete export and identifies the category the user must review or enter.
+> **Atlas never invents interactions on its own.** Every exported row is a completed meeting, a concrete task inferred from real Microsoft 365 evidence, or a factual manual entry. Atlas saves partial days and alerts the user when fewer than three activities were found.
 
 ## What it does
 
@@ -12,11 +12,11 @@ Atlas is a Tauri v2 Windows desktop application that builds the Circana Interact
 - Stores the refresh token in size-safe chunks in Windows Credential Manager and keeps short-lived access tokens only in memory.
 - Extracts real meetings for a selected workday and excludes Lunch, Almuerzo, Tracker Time, Hora del Tracker, and cancelled meetings.
 - Normalizes only the first MMNI/SparkTriage meeting to 09:00–09:30 in the chosen local timezone.
-- Preselects one verified meeting, one email, and one Teams task for the daily tracker while keeping the remaining evidence available as alternatives.
-- Interprets Teams evidence with bundled Local AI in both Graph and Power Automate modes. Atlas chooses an available loopback port automatically; if interpretation fails, Power Automate mode uses deterministic Teams evidence for the required task row.
+- Preselects every completed meeting and each separate task inferred from mail or Teams; receiving a message by itself is never a tracker row.
+- Interprets mail and Teams evidence with bundled Local AI in both Graph and Power Automate modes. Distinct tasks can come from the same email or conversation.
 - Lets the user edit review fields and add a genuinely manual interaction through a blank form.
 - Configures a new tracker, an existing `.xlsx` / `.xlsm`, or a SharePoint/OneDrive workbook link once and reuses it.
-- Can sync today's calendar at startup and hourly while Atlas remains open; a one-click sync is always available.
+- Registers a per-user Windows scheduled task with limited privileges and runs at 17:30 by default. If Atlas is already open, the existing instance handles the run.
 - Downloads SharePoint workbooks through Microsoft Graph, patches them locally, and uploads with an `If-Match` conflict guard so a newer remote edit is never overwritten.
 - Uses a hidden `_source_id` to update previously exported Graph rows without creating duplicates.
 - Never writes CSA Name, Capgemini Team Lead, Circana Manager, MTTR, Resolution time, or IR Time. Existing files are patched at the Office-package XML level so formulas, VBA, and unrelated worksheets remain intact.
@@ -47,7 +47,7 @@ After profile setup, choose one destination:
 - **Create a new tracker** - choose the path for a new `.xlsx`; after its first write Atlas automatically treats it as an existing tracker.
 - **SharePoint link** - paste a direct workbook sharing/browser link such as `https://tenant-my.sharepoint.com/:x:/r/.../Tracker.xlsm?web=1`.
 
-The destination and automatic-sync preference are stored in local settings. A SharePoint link is encoded as a Microsoft Graph sharing token, resolved to its drive item, downloaded to a unique temporary file, patched with the same macro-preserving writer used for local files, and uploaded to that exact drive item. Atlas requires delegated `Files.ReadWrite` access and the signed-in user must already have edit access to the workbook.
+The destination, daily time, and automatic-run preference are stored in local settings. In Graph mode, a SharePoint link is resolved and updated through Microsoft Graph. In Power Automate Inbox mode, Atlas uses the local OneDrive-synced copy of the linked workbook, preserving `.xlsm` macros while the OneDrive client publishes the update. The user must already have edit access.
 
 ## Local development
 
@@ -83,7 +83,7 @@ Atlas supports the real `Circana Interactions Tracker V 1.0` layout: the `Data` 
 
 Existing `.xlsm` / `.xlsx` files are updated by replacing only the selected worksheet XML inside the Office package. All other package entries are copied byte-for-byte, including `vbaProject.bin`, external links, other worksheets, hidden lookup data, and workbook metadata. Within the selected sheet, existing cell styles, the `Data` table, formulas, validations, and conditional formatting remain in place. Atlas fills the first unused preformatted row inside the table and stops with a clear error if the table has no capacity; it never appends a malformed row beyond the template.
 
-Calendar and mail rows are keyed as `graph:calendar:<id>` and `graph:mail:<id>`. A second export updates the matching row. App-created manual rows use `manual:<uuid>` and are skipped—not modified—if that exact ID already exists. Rows without Atlas source IDs are treated as user-owned and are never updated or deleted.
+Meetings keep their Microsoft event ID. Inferred tasks use a stable hash of their real mail or Teams evidence plus the task summary, which allows one message to support several separate tasks without producing duplicates on a rerun. App-created manual rows use `manual:<uuid>` and are skipped—not modified—if that exact ID already exists. Rows without Atlas source IDs are treated as user-owned and are never updated or deleted.
 
 The writer first creates a complete temporary package and a safety copy before replacing an existing file. The hidden `_source_id` helper is placed immediately after the template columns and is not added to the visible `Data` table. Close a workbook in Excel before exporting so Windows does not lock it.
 
@@ -91,7 +91,7 @@ The writer first creates a complete temporary package and a safety copy before r
 
 Every push to `main` runs **Build Atlas Windows x64** from [`.github/workflows/ci.yml`](.github/workflows/ci.yml). After the tests pass, GitHub Actions compiles the executable and adds a versioned Windows x64 artifact to the workflow run. Its ready-to-extract portable ZIP contains `Atlas.exe`, `README.md`, and the complete `AtlasAI` runtime/model folder; the workflow artifact also includes `SHA256SUMS.txt` and is retained for seven days.
 
-Pushing a tag that starts with `v` runs [`.github/workflows/release.yml`](.github/workflows/release.yml). It creates a permanent GitHub Release containing the self-contained portable ZIP and checksum. Repository variables can provide managed defaults, but are not required because users can enter the public identifiers inside Atlas.
+Pushing a tag that starts with `v` runs [`.github/workflows/release.yml`](.github/workflows/release.yml). It creates a permanent GitHub Release containing the self-contained portable ZIP and checksum. Repository variables may provide the optional Graph-mode public identifiers; the Power Automate Inbox setup never asks end users for tenant or application IDs.
 
 ```powershell
 git tag v0.2.2

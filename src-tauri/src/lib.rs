@@ -1,4 +1,5 @@
 mod auth;
+mod automation;
 mod bridge;
 mod connector_installer;
 mod diagnostics;
@@ -20,7 +21,7 @@ use crate::{
     state::AppState,
 };
 use std::{collections::HashSet, path::Path};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 async fn build_status(state: &AppState) -> Result<AppStatus> {
     let settings = state.read_settings()?;
@@ -64,6 +65,8 @@ async fn build_status(state: &AppState) -> Result<AppStatus> {
         local_ai_error,
         destination: settings.destination,
         auto_sync: settings.auto_sync,
+        auto_sync_time: settings.auto_sync_time,
+        scheduled_launch: std::env::args().any(|arg| arg == "--atlas-daily-run"),
         log_path: diagnostics::path(),
     })
 }
@@ -140,10 +143,6 @@ async fn save_power_automate_folder(
     folder: String,
 ) -> Result<AppStatus> {
     let folder = normalize_bridge_folder(folder)?;
-    let default_tracker = Path::new(&folder)
-        .parent()
-        .and_then(Path::parent)
-        .map(|root| root.join("Tracker_Circana.xlsx"));
     auth::clear_token(&state)?;
     state.update_settings(|settings| {
         settings.source_mode = SourceMode::PowerAutomateFolder;
@@ -155,18 +154,6 @@ async fn save_power_automate_folder(
             .is_some_and(|destination| destination.kind == TrackerDestinationKind::SharePoint)
         {
             settings.destination = None;
-        }
-        if settings.destination.is_none() {
-            if let Some(path) = default_tracker {
-                settings.destination = Some(TrackerDestination {
-                    kind: if path.is_file() {
-                        TrackerDestinationKind::LocalExisting
-                    } else {
-                        TrackerDestinationKind::LocalNew
-                    },
-                    value: path.to_string_lossy().into_owned(),
-                });
-            }
         }
     })?;
     state
@@ -254,6 +241,7 @@ fn normalize_local_destination(value: String, existing: bool) -> Result<TrackerD
             TrackerDestinationKind::LocalNew
         },
         value: value.to_string(),
+        local_path: None,
     })
 }
 
@@ -262,30 +250,39 @@ async fn save_tracker_destination(
     state: tauri::State<'_, AppState>,
     destination: TrackerDestination,
     auto_sync: bool,
+    auto_sync_time: String,
 ) -> Result<AppStatus> {
-    let source_mode = state.read_settings()?.source_mode;
+    let current = state.read_settings()?;
+    let source_mode = current.source_mode;
+    let auto_sync_time = automation::normalize_time(&auto_sync_time)?;
     let destination = match destination.kind {
         TrackerDestinationKind::LocalExisting => {
             normalize_local_destination(destination.value, true)?
         }
         TrackerDestinationKind::LocalNew => normalize_local_destination(destination.value, false)?,
         TrackerDestinationKind::SharePoint => {
-            if source_mode == SourceMode::PowerAutomateFolder {
-                return Err(AppError::Message(
-                    "Direct SharePoint access is unavailable in Power Automate Inbox mode. Choose the locally synced copy of the workbook instead.".into(),
-                ));
-            }
             let value = sharepoint::normalize_url(&destination.value)?;
-            let account = auth::sign_in(&state, true).await?;
-            state.update_settings(|settings| settings.account = Some(account))?;
-            let token = auth::access_token(&state).await?;
-            sharepoint::validate(&state, &token, &value).await?;
+            let local_path = if source_mode == SourceMode::PowerAutomateFolder {
+                Some(sharepoint::resolve_synced_copy(
+                    &value,
+                    destination.local_path.as_deref(),
+                    current.bridge_folder.as_deref(),
+                )?)
+            } else {
+                let account = auth::sign_in(&state, true).await?;
+                state.update_settings(|settings| settings.account = Some(account))?;
+                let token = auth::access_token(&state).await?;
+                sharepoint::validate(&state, &token, &value).await?;
+                None
+            };
             TrackerDestination {
                 kind: TrackerDestinationKind::SharePoint,
                 value,
+                local_path,
             }
         }
     };
+    automation::configure(auto_sync, &auto_sync_time)?;
     diagnostics::info(
         "settings",
         match &destination.kind {
@@ -296,6 +293,7 @@ async fn save_tracker_destination(
     state.update_settings(|settings| {
         settings.destination = Some(destination);
         settings.auto_sync = auto_sync;
+        settings.auto_sync_time = auto_sync_time;
     })?;
     build_status(&state).await
 }
@@ -303,6 +301,22 @@ async fn save_tracker_destination(
 #[tauri::command]
 fn log_frontend_error(context: String, message: String) {
     diagnostics::error(&format!("frontend/{context}"), &message);
+}
+
+#[tauri::command]
+fn complete_scheduled_launch(app: tauri::AppHandle, needs_attention: bool) -> Result<()> {
+    if needs_attention {
+        let window = app
+            .get_webview_window("main")
+            .ok_or_else(|| AppError::Message("Atlas main window is unavailable.".into()))?;
+        window
+            .show()
+            .map_err(|error| AppError::Message(format!("Unable to show Atlas: {error}")))?;
+        let _ = window.set_focus();
+    } else {
+        app.exit(0);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -322,7 +336,7 @@ async fn extract_interactions(
     let mut result = match settings.source_mode {
         SourceMode::MicrosoftGraph => {
             let token = auth::access_token(&state).await?;
-            if include_teams {
+            if include_email || include_teams {
                 state.local_ai.ensure_ready(&state.http).await?;
             }
             graph::extract(
@@ -367,27 +381,12 @@ async fn extract_interactions(
 
 fn select_daily_tracker_rows(interactions: &mut [Interaction]) {
     for item in interactions.iter_mut() {
-        item.selected = false;
-    }
-    for interaction_type in ["Meeting", "E-Mail", "Task"] {
-        let preferred = interactions.iter().position(|item| {
-            item.interaction_type == interaction_type
-                && match interaction_type {
-                    "Meeting" => item.status == "Resolved" && item.resolution_date_time.is_some(),
-                    "Task" => item.ai_suggested,
-                    _ => true,
-                }
-        });
-        let fallback = (interaction_type == "Task")
-            .then(|| {
-                interactions
-                    .iter()
-                    .position(|item| item.interaction_type == interaction_type)
-            })
-            .flatten();
-        if let Some(index) = preferred.or(fallback) {
-            interactions[index].selected = true;
-            interactions[index].reviewed = true;
+        item.selected = (item.interaction_type == "Meeting"
+            && item.status == "Resolved"
+            && item.resolution_date_time.is_some())
+            || (item.interaction_type == "Task" && item.ai_suggested);
+        if item.selected {
+            item.reviewed = true;
         }
     }
 }
@@ -426,7 +425,7 @@ mod selection_tests {
     }
 
     #[test]
-    fn preselects_exactly_one_row_for_each_required_category() {
+    fn preselects_all_completed_meetings_and_inferred_tasks() {
         let mut rows = vec![
             interaction(SourceKind::Calendar, "calendar-1", "Meeting"),
             interaction(SourceKind::Calendar, "calendar-2", "Meeting"),
@@ -442,10 +441,12 @@ mod selection_tests {
         select_daily_tracker_rows(&mut rows);
 
         let selected = rows.iter().filter(|row| row.selected).collect::<Vec<_>>();
-        assert_eq!(selected.len(), 3);
+        assert_eq!(selected.len(), 4);
         assert!(selected.iter().all(|row| row.reviewed));
         assert!(selected.iter().any(|row| row.source_id == "calendar-1"));
-        assert!(selected.iter().any(|row| row.source_id == "mail-1"));
+        assert!(selected.iter().any(|row| row.source_id == "calendar-2"));
+        assert!(!selected.iter().any(|row| row.source_id == "mail-1"));
+        assert!(!selected.iter().any(|row| row.source_id == "teams-direct"));
         assert!(selected.iter().any(|row| row.source_id == "teams-ai"));
     }
 
@@ -506,20 +507,6 @@ fn validate_provenance(state: &AppState, interactions: &[Interaction]) -> Result
             }
         }
     }
-    let selected: Vec<_> = interactions.iter().filter(|item| item.selected).collect();
-    let has_meeting = selected
-        .iter()
-        .any(|item| item.interaction_type == "Meeting");
-    let has_mail = selected
-        .iter()
-        .any(|item| item.interaction_type == "E-Mail");
-    let has_task = selected.iter().any(|item| item.interaction_type == "Task");
-    if selected.len() < 3 || !has_meeting || !has_mail || !has_task {
-        return Err(AppError::Message(
-            "Antes de guardar, registra al menos tres interacciones reales: una reunión/calendario, un correo y una tarea/Teams. Añade manualmente la categoría que falte."
-                .into(),
-        ));
-    }
     Ok(())
 }
 
@@ -565,12 +552,23 @@ async fn export_configured_tracker(
         }
         TrackerDestinationKind::SharePoint => {
             if settings.source_mode == SourceMode::PowerAutomateFolder {
-                return Err(AppError::Message(
-                    "Direct SharePoint export is unavailable in Power Automate Inbox mode.".into(),
-                ));
+                let path = destination.local_path.clone().ok_or_else(|| {
+                    AppError::Message(
+                        "Choose the locally synced copy of the SharePoint tracker first.".into(),
+                    )
+                })?;
+                let mut result = tauri::async_runtime::spawn_blocking(move || {
+                    excel::export(&path, true, &saved, &interactions)
+                })
+                .await
+                .map_err(|e| AppError::Message(format!("Excel export task failed: {e}")))??;
+                result.path = destination.value.clone();
+                result
+            } else {
+                let token = auth::access_token(&state).await?;
+                sharepoint::export(&state, &token, &destination.value, &saved, &interactions)
+                    .await?
             }
-            let token = auth::access_token(&state).await?;
-            sharepoint::export(&state, &token, &destination.value, &saved, &interactions).await?
         }
     };
     diagnostics::info(
@@ -583,19 +581,70 @@ async fn export_configured_tracker(
     Ok(result)
 }
 
+#[tauri::command]
+fn open_tracker_destination(state: tauri::State<'_, AppState>) -> Result<()> {
+    let destination = state
+        .read_settings()?
+        .destination
+        .ok_or_else(|| AppError::Message("Configure the tracker destination first.".into()))?;
+    let target = if destination.kind == TrackerDestinationKind::SharePoint {
+        destination.value
+    } else {
+        let value = destination
+            .value
+            .strip_prefix(r"\\?\")
+            .unwrap_or(&destination.value)
+            .to_string();
+        if !Path::new(&value).is_file() {
+            return Err(AppError::Message(
+                "The configured tracker file no longer exists.".into(),
+            ));
+        }
+        value
+    };
+    open::that_detached(&target)
+        .map_err(|error| AppError::Message(format!("Windows could not open the tracker: {error}")))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let scheduled_launch = std::env::args().any(|arg| arg == "--atlas-daily-run");
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            let scheduled = args.iter().any(|arg| arg == "--atlas-daily-run");
+            if scheduled {
+                let _ = app.emit("atlas-daily-run", ());
+            } else if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .setup(|app| {
+        .setup(move |app| {
             let config_dir = app
                 .path()
                 .app_config_dir()
                 .map_err(|e| Box::<dyn std::error::Error>::from(e))?;
             diagnostics::init(&config_dir).map_err(|e| Box::<dyn std::error::Error>::from(e))?;
             diagnostics::install_panic_hook();
-            app.manage(AppState::new(config_dir)?);
+            let state = AppState::new(config_dir)?;
+            if let Ok(settings) = state.read_settings() {
+                if settings.auto_sync
+                    && settings.destination.is_some()
+                    && settings.profile.is_some()
+                {
+                    if let Err(error) = automation::configure(true, &settings.auto_sync_time) {
+                        diagnostics::error("automation/setup", &error.to_string());
+                    }
+                }
+            }
+            app.manage(state);
+            if scheduled_launch {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+            }
             diagnostics::info("startup", "Atlas application state loaded");
             Ok(())
         })
@@ -612,6 +661,8 @@ pub fn run() {
             save_profile,
             save_tracker_destination,
             log_frontend_error,
+            open_tracker_destination,
+            complete_scheduled_launch,
             extract_interactions,
             export_configured_tracker
         ])

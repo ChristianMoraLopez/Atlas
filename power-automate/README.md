@@ -6,10 +6,10 @@ No hay un segundo flujo de subida: escribir directamente en la copia sincronizad
 
 ## Qué incluye esta carpeta
 
-- `AtlasBridge_1_0_0_0.zip`: solución no administrada AtlasBridge 1.7 para el asistente actual. Instala dos flujos activos con las mismas referencias de conexión de Outlook, Teams y OneDrive. El nombre estable permite que el cliente la encuentre; la versión interna controla la actualización.
+- `AtlasBridge_1_0_0_0.zip`: solución no administrada AtlasBridge 1.8 para el asistente actual. Instala dos flujos activos con las mismas referencias de conexión de Outlook, Teams y OneDrive. El nombre estable permite que el cliente la encuentre; la versión interna controla la actualización.
 - `solution-source/`: fuente revisable de la solución actual.
 - `INSTALLER.md`: primera ejecución, límites y diagnóstico del asistente.
-- `Atlas-Export-Evidence.zip`: paquete heredado conservado solo como referencia de desarrollo; no produce el contrato v2 actual.
+- `Atlas-Export-Evidence.zip`: paquete heredado conservado solo como referencia de desarrollo; no produce el contrato v3 actual.
 - `package-source/`: fuente legible del paquete anterior.
 - `atlas-evidence.schema.json`: contrato exacto que valida Atlas.
 - `atlas-evidence.example.json`: ejemplo válido para probar la aplicación sin Microsoft 365.
@@ -29,7 +29,7 @@ Usa **Instalar conector de Microsoft 365** dentro de Atlas y sigue `INSTALLER.md
 La solución importa dos flujos activos con fechas calculadas en la zona `SA Pacific Standard Time` (Bogotá):
 
 - **Atlas - Capture Teams messages** se dispara con cada mensaje nuevo de un chat del usuario, consulta directamente ese chat y escribe evidencia incremental en OneDrive. Así la captura diaria no depende de enumerar el historial completo de chats.
-- **Atlas - Export evidence to OneDrive** se ejecuta cada 15 minutos para correo y calendario. También conserva un respaldo de Teams que recorre todos los chats que `List chats` devuelve como recientes, espera cinco segundos entre consultas (el mínimo aceptado por Power Automate), reintenta fallos transitorios y solicita hasta 20 mensajes del día por chat.
+- **Atlas - Export evidence to OneDrive** se ejecuta cada 15 minutos para correo y calendario. También conserva un respaldo de Teams limitado a los 12 chats más recientes actualizados hoy, espera cinco segundos entre consultas (el mínimo aceptado por Power Automate), reintenta fallos transitorios y solicita hasta 20 mensajes del día por chat. La captura por evento sigue guardando mensajes de los demás chats sin recorrer una lista de 100 conversaciones.
 
 Atlas combina los paquetes del mismo día y elimina mensajes de Teams repetidos. Si una fuente falla, el flujo programado escribe las demás con una marca de estado para que Atlas muestre la alerta correspondiente y acepte datos parciales.
 
@@ -43,15 +43,15 @@ Atlas combina los paquetes del mismo día y elimina mensajes de Teams repetidos.
 
 4. Completa el perfil.
 5. Como destino, elige el `.xlsx` o `.xlsm` dentro de una carpeta sincronizada de OneDrive o de una biblioteca de SharePoint sincronizada con OneDrive.
-6. Deja **Automatic inbox import** activo. Atlas importará el paquete más reciente del día al abrirse y luego cada 15 minutos.
+6. Deja activo **Daily automatic tracker**. Windows abrirá Atlas a las 17:30, o a la hora que elijas, y la aplicación escribirá todas las actividades reales encontradas.
 
 Para probar sin esperar el flujo, copia `atlas-evidence.example.json` dentro de `inbox`, cambia `targetDate` y las fechas de ejemplo al día elegido y pulsa **Import**.
 
 ## Qué recoge y qué no
 
 - Calendario: asunto, horas, organizador e identificador. Las reuniones válidas quedan seleccionadas para Excel.
-- Correo: asunto, remitente, hora e identificador; no se guardan cuerpos ni adjuntos. Cada correo queda sin seleccionar hasta que lo confirmes en Atlas.
-- Teams: texto, autor, hora, chat e identificador. Atlas interpreta esa evidencia con la IA local incluida y mantiene cada sugerencia sin seleccionar hasta que el usuario la revise. Si la IA no está disponible, conserva una agrupación determinista de los mensajes para que la evidencia no se pierda.
+- Correo: bandeja de entrada y enviados, asunto, vista previa del contenido, participantes, hora e identificador; nunca se descargan adjuntos. La IA local convierte únicamente trabajo realizado en tareas separadas.
+- Teams: texto, autor, hora, chat e identificador. La IA local puede obtener varias tareas independientes de una conversación. Recibir o enviar un mensaje, por sí solo, no se registra como actividad.
 - Atlas no modifica, elimina ni mueve elementos en Outlook o Teams.
 
 El flujo programado consulta hasta 500 eventos, los 100 correos más recientes y hasta 20 mensajes del día por cada chat reciente que entregue el conector. **List chats** no expone paginación ni un filtro por fecha en su acción estándar, por lo que esa ruta sigue siendo solo un respaldo. La cobertura principal de Teams usa el disparador por mensaje y consulta el chat identificado por el evento, aunque el usuario participe en más de 100 conversaciones durante el día.

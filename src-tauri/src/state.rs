@@ -1,10 +1,7 @@
 use crate::{
     diagnostics,
     error::{Context, Result},
-    models::{
-        CachedAccessToken, Interaction, MicrosoftConfig, Settings, TrackerDestination,
-        TrackerDestinationKind,
-    },
+    models::{CachedAccessToken, Interaction, MicrosoftConfig, Settings},
     ollama::ManagedRuntime,
 };
 use std::{
@@ -31,7 +28,7 @@ impl AppState {
         fs::create_dir_all(&config_dir)
             .context("Unable to create the application settings directory")?;
         let settings_path = config_dir.join("settings.json");
-        let mut settings = if settings_path.exists() {
+        let settings = if settings_path.exists() {
             let bytes = fs::read(&settings_path).context("Unable to read local settings")?;
             match serde_json::from_slice(&bytes) {
                 Ok(settings) => settings,
@@ -53,26 +50,6 @@ impl AppState {
         } else {
             Settings::default()
         };
-        if settings.destination.is_none() {
-            let one_drive = std::env::var("OneDriveCommercial")
-                .or_else(|_| std::env::var("OneDrive"))
-                .ok()
-                .map(PathBuf::from)
-                .filter(|path| path.is_dir());
-            if let Some(root) = one_drive {
-                let path = root.join("Tracker_Circana.xlsx");
-                settings.destination = Some(TrackerDestination {
-                    kind: if path.is_file() {
-                        TrackerDestinationKind::LocalExisting
-                    } else {
-                        TrackerDestinationKind::LocalNew
-                    },
-                    value: path.to_string_lossy().into_owned(),
-                });
-                fs::write(&settings_path, serde_json::to_vec_pretty(&settings)?)
-                    .context("Unable to save the default OneDrive tracker destination")?;
-            }
-        }
         let http = reqwest::Client::builder()
             .user_agent("Atlas-Circana-Tracker/0.2")
             .connect_timeout(Duration::from_secs(15))

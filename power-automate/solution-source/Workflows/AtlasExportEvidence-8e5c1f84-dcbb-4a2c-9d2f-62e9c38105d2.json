@@ -265,7 +265,9 @@
                   "subject": "@coalesce(item()?['subject'],'')",
                   "receivedDateTime": "@item()?['receivedDateTime']",
                   "senderAddress": "@coalesce(item()?['from'],'')",
-                  "isDraft": false
+                  "isDraft": false,
+                  "bodyPreview": "@coalesce(item()?['bodyPreview'],'')",
+                  "direction": "received"
                 }
               },
               "runAfter": {
@@ -278,10 +280,63 @@
               "type": "SetVariable",
               "inputs": {
                 "name": "MailEvidence",
-                "value": "@body('Select_mail_fields')"
+                "value": "@union(body('Select_mail_fields'),body('Select_sent_mail_fields'))"
               },
               "runAfter": {
                 "Select_mail_fields": [
+                  "Succeeded"
+                ],
+                "Select_sent_mail_fields": [
+                  "Succeeded"
+                ]
+              }
+            },
+            "Get_sent_emails_V3": {
+              "type": "OpenApiConnection",
+              "inputs": {
+                "host": {
+                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_office365",
+                  "connectionName": "shared_office365",
+                  "operationId": "GetEmailsV3"
+                },
+                "parameters": {
+                  "folderPath": "Sent Items",
+                  "fetchOnlyUnread": false,
+                  "includeAttachments": false,
+                  "top": 100
+                },
+                "authentication": "@parameters('$authentication')"
+              },
+              "runAfter": {}
+            },
+            "Filter_sent_email_to_target_day": {
+              "type": "Query",
+              "inputs": {
+                "from": "@body('Get_sent_emails_V3')?['value']",
+                "where": "@and(not(empty(coalesce(item()?['sentDateTime'],item()?['receivedDateTime']))),greaterOrEquals(ticks(coalesce(item()?['sentDateTime'],item()?['receivedDateTime'])),ticks(outputs('StartUtc'))),less(ticks(coalesce(item()?['sentDateTime'],item()?['receivedDateTime'])),ticks(outputs('EndUtc'))))"
+              },
+              "runAfter": {
+                "Get_sent_emails_V3": [
+                  "Succeeded"
+                ]
+              }
+            },
+            "Select_sent_mail_fields": {
+              "type": "Select",
+              "inputs": {
+                "from": "@body('Filter_sent_email_to_target_day')",
+                "select": {
+                  "id": "@item()?['id']",
+                  "subject": "@coalesce(item()?['subject'],'')",
+                  "receivedDateTime": "@coalesce(item()?['sentDateTime'],item()?['receivedDateTime'])",
+                  "senderAddress": "@string(item()?['toRecipients'])",
+                  "bodyPreview": "@coalesce(item()?['bodyPreview'],'')",
+                  "direction": "sent",
+                  "isDraft": false
+                }
+              },
+              "runAfter": {
+                "Filter_sent_email_to_target_day": [
                   "Succeeded"
                 ]
               }
@@ -326,7 +381,7 @@
             },
             "For_each_chat": {
               "type": "Foreach",
-              "foreach": "@body('List_chats')?['value']",
+              "foreach": "@take(body('Filter_recent_chats'),12)",
               "actions": {
                 "Get_messages_in_chat": {
                   "type": "OpenApiConnection",
@@ -413,7 +468,7 @@
                 }
               },
               "runAfter": {
-                "List_chats": [
+                "Filter_recent_chats": [
                   "Succeeded"
                 ]
               },
@@ -421,6 +476,18 @@
                 "concurrency": {
                   "repetitions": 1
                 }
+              }
+            },
+            "Filter_recent_chats": {
+              "type": "Query",
+              "inputs": {
+                "from": "@body('List_chats')?['value']",
+                "where": "@and(not(empty(item()?['lastUpdatedDateTime'])),greaterOrEquals(ticks(item()?['lastUpdatedDateTime']),ticks(outputs('StartUtc'))))"
+              },
+              "runAfter": {
+                "List_chats": [
+                  "Succeeded"
+                ]
               }
             },
             "Set_TeamsSourceReady": {
@@ -445,7 +512,7 @@
         "Compose_Atlas_bundle": {
           "type": "Compose",
           "inputs": {
-            "schemaVersion": 2,
+            "schemaVersion": 3,
             "exportedAt": "@utcNow()",
             "targetDate": "@outputs('TargetDate')",
             "sources": {

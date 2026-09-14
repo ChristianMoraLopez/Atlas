@@ -10,11 +10,11 @@ Atlas instala el puente mediante la experiencia oficial de importación de soluc
 4. Atlas abre `https://make.powerautomate.com/` en el navegador predeterminado. Completa el inicio de sesión o MFA con la cuenta Circana si Microsoft lo solicita.
 5. Confirma que tienes conexiones propias de **Office 365 Outlook**, **Microsoft Teams** y **OneDrive for Business**. La cuenta de OneDrive debe ser la que sincroniza la carpeta elegida. La solución instala juntos el flujo programado y la captura de Teams por mensaje.
 6. En **Soluciones → Importar solución**, selecciona el archivo `AtlasBridge_1_0_0_0.zip` preparado por Atlas. Asocia cada referencia con tu conexión y confirma la importación. No copies identificadores de tenant, entorno o aplicación.
-7. La solución 1.6 se entrega activa y se ejecuta cada 15 minutos. Si ya existe `AtlasBridge`, importa como actualización de esa misma solución.
+7. La solución 1.8 se entrega activa y se ejecuta cada 15 minutos. Si ya existe `AtlasBridge`, importa como actualización de esa misma solución.
 8. Espera la ejecución programada y la sincronización de OneDrive. Marca `AtlasBridge\inbox` como **Siempre mantener en este dispositivo**. Atlas comprueba cada 15 segundos durante la instalación y cada 15 minutos durante el uso normal si aparece un JSON nuevo compatible con `atlas-evidence.schema.json`.
 9. Cuando el asistente muestre **Instalación completada**, pulsa **Usar este conector en Atlas**. Si no existe, Atlas crea `Tracker_Circana.xlsx` en la raíz de OneDrive elegida.
 
-La recurrencia es horaria, por lo que la primera comprobación puede tardar hasta una hora más el tiempo de sincronización. La comprobación acepta únicamente un archivo creado después de iniciar el asistente cuyo nombre incluya el identificador aleatorio de esa instalación. Un JSON de ejemplo o un archivo del paquete heredado no puede completar el asistente.
+La recurrencia es de 15 minutos, por lo que la primera comprobación puede tardar ese tiempo más la sincronización de OneDrive. La comprobación acepta únicamente un archivo creado después de iniciar el asistente cuyo nombre incluya el identificador aleatorio de esa instalación. Un JSON de ejemplo o un archivo del paquete heredado no puede completar el asistente.
 
 ## Interacciones inevitables
 
