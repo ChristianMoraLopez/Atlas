@@ -187,7 +187,21 @@ fn newest_bundle(folder: &Path, date: &str) -> Result<(PathBuf, EvidenceBundle)>
     let (_, path, mut merged) = candidates.remove(0);
     let mut calendar_selected = !merged.calendar.is_empty();
     let mut mail_selected = !merged.mail.is_empty();
-    let mut teams_selected = !merged.teams.is_empty();
+    // Teams event capture writes small, independent packages during the day. Keep
+    // the newest scheduled snapshot for calendar and mail, but union every Teams
+    // message for the requested day so activity from different chats is retained.
+    let mut teams_ready = merged.sources.teams;
+    let mut seen_teams = merged
+        .teams
+        .iter()
+        .map(|message| {
+            if message.chat_id.trim().is_empty() {
+                message.id.clone()
+            } else {
+                format!("{}:{}", message.chat_id, message.id)
+            }
+        })
+        .collect::<HashSet<_>>();
     for (_, _, mut candidate) in candidates {
         if !calendar_selected && !candidate.calendar.is_empty() {
             merged.sources.calendar = candidate.sources.calendar;
@@ -199,15 +213,19 @@ fn newest_bundle(folder: &Path, date: &str) -> Result<(PathBuf, EvidenceBundle)>
             merged.mail = std::mem::take(&mut candidate.mail);
             mail_selected = true;
         }
-        if !teams_selected && !candidate.teams.is_empty() {
-            merged.sources.teams = candidate.sources.teams;
-            merged.teams = std::mem::take(&mut candidate.teams);
-            teams_selected = true;
-        }
-        if calendar_selected && mail_selected && teams_selected {
-            break;
+        teams_ready |= candidate.sources.teams;
+        for message in candidate.teams {
+            let key = if message.chat_id.trim().is_empty() {
+                message.id.clone()
+            } else {
+                format!("{}:{}", message.chat_id, message.id)
+            };
+            if seen_teams.insert(key) {
+                merged.teams.push(message);
+            }
         }
     }
+    merged.sources.teams = teams_ready;
     Ok((path, merged))
 }
 
@@ -730,7 +748,67 @@ mod tests {
         assert_eq!(path.file_name().unwrap(), "newer.json");
         assert_eq!(bundle.mail.len(), 1);
         assert_eq!(bundle.teams.len(), 1);
-        assert!(!bundle.sources.teams);
+        assert!(bundle.sources.teams);
+    }
+
+    #[test]
+    fn teams_event_packages_are_unioned_and_deduplicated_for_the_day() {
+        let directory = tempfile::tempdir().unwrap();
+        for (name, exported_at, chat_id, message_id, content) in [
+            (
+                "first.json",
+                "2026-09-07T10:00:00Z",
+                "chat-1",
+                "message-1",
+                "First",
+            ),
+            (
+                "second.json",
+                "2026-09-07T11:00:00Z",
+                "chat-2",
+                "message-2",
+                "Second",
+            ),
+            (
+                "duplicate.json",
+                "2026-09-07T12:00:00Z",
+                "chat-1",
+                "message-1",
+                "First",
+            ),
+        ] {
+            let bundle = serde_json::json!({
+                "schemaVersion": 2,
+                "exportedAt": exported_at,
+                "targetDate": "2026-09-07",
+                "sources": { "calendar": false, "mail": false, "teams": true },
+                "calendar": [],
+                "mail": [],
+                "teams": [{
+                    "id": message_id,
+                    "chatId": chat_id,
+                    "topic": "",
+                    "createdDateTime": "2026-09-07T09:30:00Z",
+                    "author": "Colleague",
+                    "content": content,
+                    "messageType": "message"
+                }]
+            });
+            fs::write(
+                directory.path().join(name),
+                serde_json::to_vec(&bundle).unwrap(),
+            )
+            .unwrap();
+        }
+
+        let (path, bundle) = newest_bundle(directory.path(), "2026-09-07").unwrap();
+        assert_eq!(path.file_name().unwrap(), "duplicate.json");
+        assert_eq!(bundle.teams.len(), 2);
+        assert!(bundle.sources.teams);
+        assert!(bundle
+            .teams
+            .iter()
+            .any(|message| message.chat_id == "chat-2"));
     }
 
     #[test]

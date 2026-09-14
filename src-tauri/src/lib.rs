@@ -319,7 +319,7 @@ async fn extract_interactions(
             "Complete your profile before extracting interactions.".into(),
         ));
     }
-    let result = match settings.source_mode {
+    let mut result = match settings.source_mode {
         SourceMode::MicrosoftGraph => {
             let token = auth::access_token(&state).await?;
             if include_teams {
@@ -351,6 +351,7 @@ async fn extract_interactions(
             .await?
         }
     };
+    select_daily_tracker_rows(&mut result.interactions);
     let mut cache = state
         .verified_sources
         .lock()
@@ -362,6 +363,103 @@ async fn extract_interactions(
         }
     }
     Ok(result)
+}
+
+fn select_daily_tracker_rows(interactions: &mut [Interaction]) {
+    for item in interactions.iter_mut() {
+        item.selected = false;
+    }
+    for interaction_type in ["Meeting", "E-Mail", "Task"] {
+        let preferred = interactions.iter().position(|item| {
+            item.interaction_type == interaction_type
+                && match interaction_type {
+                    "Meeting" => item.status == "Resolved" && item.resolution_date_time.is_some(),
+                    "Task" => item.ai_suggested,
+                    _ => true,
+                }
+        });
+        let fallback = (interaction_type == "Task")
+            .then(|| {
+                interactions
+                    .iter()
+                    .position(|item| item.interaction_type == interaction_type)
+            })
+            .flatten();
+        if let Some(index) = preferred.or(fallback) {
+            interactions[index].selected = true;
+            interactions[index].reviewed = true;
+        }
+    }
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::*;
+
+    fn interaction(
+        source_kind: SourceKind,
+        source_id: &str,
+        interaction_type: &str,
+    ) -> Interaction {
+        Interaction {
+            source_kind,
+            source_id: source_id.into(),
+            interaction_type: interaction_type.into(),
+            reception_date_time: "2026-09-14T14:00:00Z".into(),
+            interaction_date_time: "2026-09-14T14:00:00Z".into(),
+            resolution_date_time: Some("2026-09-14T14:30:00Z".into()),
+            client_type: "Circana".into(),
+            end_client: String::new(),
+            status: "Resolved".into(),
+            resolution_type: "Processed & Resolved".into(),
+            category: String::new(),
+            subcategory: String::new(),
+            priority: "Intermediate".into(),
+            incident_number: String::new(),
+            comments: "Verified interaction".into(),
+            selected: true,
+            reviewed: false,
+            manual_authored: false,
+            ai_suggested: false,
+            evidence_label: "Verified interaction".into(),
+        }
+    }
+
+    #[test]
+    fn preselects_exactly_one_row_for_each_required_category() {
+        let mut rows = vec![
+            interaction(SourceKind::Calendar, "calendar-1", "Meeting"),
+            interaction(SourceKind::Calendar, "calendar-2", "Meeting"),
+            interaction(SourceKind::Email, "mail-1", "E-Mail"),
+            interaction(SourceKind::TeamsChat, "teams-direct", "Task"),
+            {
+                let mut row = interaction(SourceKind::TeamsChat, "teams-ai", "Task");
+                row.ai_suggested = true;
+                row
+            },
+        ];
+
+        select_daily_tracker_rows(&mut rows);
+
+        let selected = rows.iter().filter(|row| row.selected).collect::<Vec<_>>();
+        assert_eq!(selected.len(), 3);
+        assert!(selected.iter().all(|row| row.reviewed));
+        assert!(selected.iter().any(|row| row.source_id == "calendar-1"));
+        assert!(selected.iter().any(|row| row.source_id == "mail-1"));
+        assert!(selected.iter().any(|row| row.source_id == "teams-ai"));
+    }
+
+    #[test]
+    fn does_not_log_a_meeting_before_it_has_finished() {
+        let mut meeting = interaction(SourceKind::Calendar, "calendar-future", "Meeting");
+        meeting.status = "In Progress".into();
+        meeting.resolution_date_time = None;
+        let mut rows = vec![meeting];
+
+        select_daily_tracker_rows(&mut rows);
+
+        assert!(!rows[0].selected);
+    }
 }
 
 fn validate_provenance(state: &AppState, interactions: &[Interaction]) -> Result<()> {

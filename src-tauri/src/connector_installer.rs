@@ -17,10 +17,14 @@ use std::{
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
 const SOLUTION: &[u8] = include_bytes!("../../power-automate/AtlasBridge_1_0_0_0.zip");
-const WORKFLOW: &str = "Workflows/AtlasExportEvidence-8e5c1f84-dcbb-4a2c-9d2f-62e9c38105d2.json";
+const SCHEDULED_WORKFLOW: &str =
+    "Workflows/AtlasExportEvidence-8e5c1f84-dcbb-4a2c-9d2f-62e9c38105d2.json";
+const TEAMS_EVENT_WORKFLOW: &str =
+    "Workflows/AtlasCaptureTeamsMessages-7f7115e8-b821-4bb9-9b4e-5c7a5448610e.json";
+const WORKFLOWS: [&str; 2] = [SCHEDULED_WORKFLOW, TEAMS_EVENT_WORKFLOW];
 const MAX_FILE: u64 = 25 * 1024 * 1024;
 const PORTAL: &str = "https://make.powerautomate.com/";
-const SOLUTION_VERSION: &str = "1.6.0.0";
+const SOLUTION_VERSION: &str = "1.7.0.0";
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -421,7 +425,7 @@ fn personalized_solution(session: &Session) -> Result<Vec<u8>> {
     let mut source =
         ZipArchive::new(Cursor::new(SOLUTION)).map_err(|_| fail("invalid_bundled_solution"))?;
     let mut output = ZipWriter::new(Cursor::new(Vec::new()));
-    let mut changed = false;
+    let mut changed = 0usize;
     for index in 0..source.len() {
         let mut entry = source
             .by_index(index)
@@ -431,14 +435,14 @@ fn personalized_solution(session: &Session) -> Result<Vec<u8>> {
         entry
             .read_to_end(&mut bytes)
             .map_err(|_| fail("invalid_bundled_solution"))?;
-        if name == WORKFLOW {
+        if WORKFLOWS.contains(&name.as_str()) {
             let mut flow: Value =
                 serde_json::from_slice(&bytes).map_err(|_| fail("invalid_bundled_solution"))?;
             let actions = &mut flow["properties"]["definition"]["actions"];
             actions["AtlasInstallationId"]["inputs"] =
                 Value::String(session.installation_id.clone());
             bytes = serde_json::to_vec_pretty(&flow)?;
-            changed = true;
+            changed += 1;
         }
         output
             .start_file(
@@ -450,7 +454,7 @@ fn personalized_solution(session: &Session) -> Result<Vec<u8>> {
             .write_all(&bytes)
             .map_err(|_| fail("package_generation_failed"))?;
     }
-    if !changed {
+    if changed != WORKFLOWS.len() {
         return Err(fail("invalid_bundled_solution"));
     }
     Ok(output
@@ -803,13 +807,13 @@ mod tests {
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 
-    fn flow_from(bytes: Vec<u8>) -> Value {
+    fn flow_from(bytes: Vec<u8>, workflow: &str) -> Value {
         let mut zip = ZipArchive::new(Cursor::new(bytes)).unwrap();
         assert!(zip.by_name("[Content_Types].xml").is_ok());
         assert!(zip.by_name("solution.xml").is_ok());
         assert!(zip.by_name("customizations.xml").is_ok());
         let mut flow = String::new();
-        zip.by_name(WORKFLOW)
+        zip.by_name(workflow)
             .unwrap()
             .read_to_string(&mut flow)
             .unwrap();
@@ -830,7 +834,8 @@ mod tests {
     #[test]
     fn package_preserves_connection_references_and_personalizes_installation() {
         let session = Session::default();
-        let flow = flow_from(personalized_solution(&session).unwrap());
+        let bytes = personalized_solution(&session).unwrap();
+        let flow = flow_from(bytes.clone(), SCHEDULED_WORKFLOW);
         let actions = &flow["properties"]["definition"]["actions"];
         assert!(actions.get("AtlasCalendarName").is_none());
         assert_eq!(
@@ -853,6 +858,17 @@ mod tests {
         assert_eq!(
             actions["Compose_Atlas_bundle"]["runAfter"]["Teams_evidence"],
             json!(["Succeeded", "Failed", "Skipped", "TimedOut"])
+        );
+        let event_flow = flow_from(bytes, TEAMS_EVENT_WORKFLOW);
+        let event_actions = &event_flow["properties"]["definition"]["actions"];
+        assert_eq!(
+            event_actions["AtlasInstallationId"]["inputs"],
+            session.installation_id
+        );
+        assert_eq!(
+            event_flow["properties"]["definition"]["triggers"]["When_a_new_chat_message_is_added"]
+                ["inputs"]["host"]["operationId"],
+            "WebhookChatMessageTrigger"
         );
     }
 

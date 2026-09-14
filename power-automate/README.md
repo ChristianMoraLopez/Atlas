@@ -6,7 +6,7 @@ No hay un segundo flujo de subida: escribir directamente en la copia sincronizad
 
 ## Qué incluye esta carpeta
 
-- `AtlasBridge_1_0_0_0.zip`: solución no administrada AtlasBridge 1.6 para el asistente actual, con referencias de conexión de Outlook, Teams y OneDrive. El nombre estable permite que el cliente la encuentre; la versión interna controla la actualización.
+- `AtlasBridge_1_0_0_0.zip`: solución no administrada AtlasBridge 1.7 para el asistente actual. Instala dos flujos activos con las mismas referencias de conexión de Outlook, Teams y OneDrive. El nombre estable permite que el cliente la encuentre; la versión interna controla la actualización.
 - `solution-source/`: fuente revisable de la solución actual.
 - `INSTALLER.md`: primera ejecución, límites y diagnóstico del asistente.
 - `Atlas-Export-Evidence.zip`: paquete heredado conservado solo como referencia de desarrollo; no produce el contrato v2 actual.
@@ -26,7 +26,12 @@ Las credenciales no vienen dentro del ZIP. Al importarlo, Power Automate obliga 
 
 Usa **Instalar conector de Microsoft 365** dentro de Atlas y sigue `INSTALLER.md`. El asistente genera un ZIP personalizado para correlacionar la primera evidencia, abre el portal oficial y verifica el resultado local. No solicita IDs de aplicación, tenant, entorno o calendario. El usuario todavía debe completar el inicio de sesión, la asociación de conexiones y la confirmación de importación que muestra Microsoft.
 
-El flujo se importa activo, usa el primer calendario devuelto por Outlook y se ejecuta cada 15 minutos con fechas calculadas en la zona `SA Pacific Standard Time` (Bogotá). Calendario, correo y Teams se ejecutan de forma independiente. Teams recorre todos los chats que `List chats` devuelve como recientes, espera un segundo entre consultas, reintenta fallos transitorios y solicita hasta 20 mensajes del día por chat. Aunque falle una consulta, el flujo escribe el paquete con una marca de estado para que Atlas muestre la alerta correspondiente y acepte los datos parciales.
+La solución importa dos flujos activos con fechas calculadas en la zona `SA Pacific Standard Time` (Bogotá):
+
+- **Atlas - Capture Teams messages** se dispara con cada mensaje nuevo de un chat del usuario, consulta directamente ese chat y escribe evidencia incremental en OneDrive. Así la captura diaria no depende de enumerar el historial completo de chats.
+- **Atlas - Export evidence to OneDrive** se ejecuta cada 15 minutos para correo y calendario. También conserva un respaldo de Teams que recorre todos los chats que `List chats` devuelve como recientes, espera cinco segundos entre consultas (el mínimo aceptado por Power Automate), reintenta fallos transitorios y solicita hasta 20 mensajes del día por chat.
+
+Atlas combina los paquetes del mismo día y elimina mensajes de Teams repetidos. Si una fuente falla, el flujo programado escribe las demás con una marca de estado para que Atlas muestre la alerta correspondiente y acepte datos parciales.
 
 ## Configuración de Atlas
 
@@ -49,7 +54,7 @@ Para probar sin esperar el flujo, copia `atlas-evidence.example.json` dentro de 
 - Teams: texto, autor, hora, chat e identificador. Atlas interpreta esa evidencia con la IA local incluida y mantiene cada sugerencia sin seleccionar hasta que el usuario la revise. Si la IA no está disponible, conserva una agrupación determinista de los mensajes para que la evidencia no se pierda.
 - Atlas no modifica, elimina ni mueve elementos en Outlook o Teams.
 
-El flujo consulta hasta 500 eventos, los 100 correos más recientes y hasta 20 mensajes del día por cada chat reciente que entregue el conector. **List chats** no expone paginación ni un filtro por fecha en su acción estándar, por lo que el flujo procesa la colección completa recibida sin imponer un segundo límite propio.
+El flujo programado consulta hasta 500 eventos, los 100 correos más recientes y hasta 20 mensajes del día por cada chat reciente que entregue el conector. **List chats** no expone paginación ni un filtro por fecha en su acción estándar, por lo que esa ruta sigue siendo solo un respaldo. La cobertura principal de Teams usa el disparador por mensaje y consulta el chat identificado por el evento, aunque el usuario participe en más de 100 conversaciones durante el día.
 
 ## Si Circana oculta “Importar paquete”
 

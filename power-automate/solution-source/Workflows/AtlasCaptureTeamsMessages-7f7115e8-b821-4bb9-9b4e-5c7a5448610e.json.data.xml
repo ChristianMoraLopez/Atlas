@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Workflow WorkflowId="{8e5c1f84-dcbb-4a2c-9d2f-62e9c38105d2}" Name="Atlas - Export evidence to OneDrive">
-    <JsonFileName>/Workflows/AtlasExportEvidence-8e5c1f84-dcbb-4a2c-9d2f-62e9c38105d2.json</JsonFileName>
+<Workflow WorkflowId="{7f7115e8-b821-4bb9-9b4e-5c7a5448610e}" Name="Atlas - Capture Teams messages">
+    <JsonFileName>/Workflows/AtlasCaptureTeamsMessages-7f7115e8-b821-4bb9-9b4e-5c7a5448610e.json</JsonFileName>
     <Type>1</Type>
     <Subprocess>0</Subprocess>
     <Category>5</Category>
@@ -20,5 +20,5 @@
     <BusinessProcessType>0</BusinessProcessType>
     <IsCustomProcessingStepAllowedForOtherPublishers>1</IsCustomProcessingStepAllowedForOtherPublishers>
     <PrimaryEntity>none</PrimaryEntity>
-    <LocalizedNames><LocalizedName languagecode="1033" description="Atlas - Export evidence to OneDrive"/></LocalizedNames>
+    <LocalizedNames><LocalizedName languagecode="1033" description="Atlas - Capture Teams messages"/></LocalizedNames>
   </Workflow>

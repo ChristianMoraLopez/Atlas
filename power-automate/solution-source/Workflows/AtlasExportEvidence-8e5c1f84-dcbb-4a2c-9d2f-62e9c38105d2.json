@@ -405,7 +405,7 @@
                   "type": "Wait",
                   "inputs": {
                     "interval": {
-                      "count": 1,
+                      "count": 5,
                       "unit": "Second"
                     }
                   },

@@ -214,13 +214,46 @@ fn validate_exportable(item: &Interaction) -> Result<()> {
         return Ok(());
     }
     match item.source_kind {
-        SourceKind::Calendar if !item.source_id.starts_with("graph:calendar:") => Err(AppError::Message("Rejected a calendar row without a real Graph calendar source ID.".into())),
-        SourceKind::Email if !item.source_id.starts_with("graph:mail:") || !item.reviewed => Err(AppError::Message("Rejected an email row that was not explicitly reviewed or lacks a real Graph source ID.".into())),
-        SourceKind::TeamsChat => Err(AppError::Message("AI-suggested Teams rows cannot be exported directly. Type the real interaction into the blank manual form first.".into())),
+        SourceKind::Calendar
+            if !item.source_id.starts_with("graph:calendar:")
+                && !item.source_id.starts_with("bridge:calendar:") =>
+        {
+            Err(AppError::Message(
+                "Rejected a calendar row without a verified calendar source ID.".into(),
+            ))
+        }
+        SourceKind::Email
+            if (!item.source_id.starts_with("graph:mail:")
+                && !item.source_id.starts_with("bridge:mail:"))
+                || !item.reviewed =>
+        {
+            Err(AppError::Message(
+                "Rejected an email row that was not reviewed or lacks a verified mail source ID."
+                    .into(),
+            ))
+        }
+        SourceKind::TeamsChat
+            if (!item.source_id.starts_with("graph:teams:")
+                && !item.source_id.starts_with("bridge:teams:"))
+                || !item.reviewed
+                || item.comments.trim().is_empty() =>
+        {
+            Err(AppError::Message(
+                "Rejected a Teams row that was not reviewed or lacks verified Teams evidence."
+                    .into(),
+            ))
+        }
         SourceKind::Manual => {
-            let id = item.source_id.strip_prefix("manual:").ok_or_else(|| AppError::Message("Rejected a manual row without a manual source ID.".into()))?;
+            let id = item.source_id.strip_prefix("manual:").ok_or_else(|| {
+                AppError::Message("Rejected a manual row without a manual source ID.".into())
+            })?;
             Uuid::parse_str(id).context("Rejected a manual row with an invalid source ID")?;
-            if !item.manual_authored || !item.reviewed || item.comments.trim().is_empty() { return Err(AppError::Message("Rejected a manual row because it was not authored and completed by the user.".into())); }
+            if !item.manual_authored || !item.reviewed || item.comments.trim().is_empty() {
+                return Err(AppError::Message(
+                    "Rejected a manual row because it was not authored and completed by the user."
+                        .into(),
+                ));
+            }
             Ok(())
         }
         _ => Ok(()),
@@ -1429,12 +1462,23 @@ mod tests {
         assert!(validate_exportable(&v).is_err());
     }
     #[test]
-    fn rejects_ai_rows_as_direct_export_sources() {
+    fn accepts_reviewed_ai_rows_with_verified_teams_evidence() {
         let mut v = calendar();
         v.source_kind = SourceKind::TeamsChat;
         v.source_id = "graph:teams:evidence".into();
         v.ai_suggested = true;
+        assert!(validate_exportable(&v).is_ok());
+        v.reviewed = false;
         assert!(validate_exportable(&v).is_err());
+    }
+    #[test]
+    fn accepts_verified_power_automate_source_ids() {
+        let mut v = calendar();
+        v.source_id = "bridge:calendar:event-1".into();
+        assert!(validate_exportable(&v).is_ok());
+        v.source_kind = SourceKind::Email;
+        v.source_id = "bridge:mail:message-1".into();
+        assert!(validate_exportable(&v).is_ok());
     }
     #[test]
     fn canonicalizes_the_real_circana_header_labels() {

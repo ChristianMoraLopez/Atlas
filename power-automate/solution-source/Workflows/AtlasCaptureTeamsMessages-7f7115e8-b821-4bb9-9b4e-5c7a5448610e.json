@@ -1,0 +1,218 @@
+{
+  "properties": {
+    "connectionReferences": {
+      "shared_office365": {
+        "runtimeSource": "embedded",
+        "connection": {
+          "connectionReferenceLogicalName": "atlas_office365"
+        },
+        "api": {
+          "name": "shared_office365"
+        }
+      },
+      "shared_teams": {
+        "runtimeSource": "embedded",
+        "connection": {
+          "connectionReferenceLogicalName": "atlas_teams"
+        },
+        "api": {
+          "name": "shared_teams"
+        }
+      },
+      "shared_onedriveforbusiness": {
+        "runtimeSource": "embedded",
+        "connection": {
+          "connectionReferenceLogicalName": "atlas_onedriveforbusiness"
+        },
+        "api": {
+          "name": "shared_onedriveforbusiness"
+        }
+      }
+    },
+    "definition": {
+      "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+      "contentVersion": "1.0.0.0",
+      "parameters": {
+        "$connections": {
+          "defaultValue": {},
+          "type": "Object"
+        },
+        "$authentication": {
+          "defaultValue": {},
+          "type": "SecureObject"
+        }
+      },
+      "triggers": {
+        "When_a_new_chat_message_is_added": {
+          "type": "OpenApiConnectionWebhook",
+          "inputs": {
+            "host": {
+              "apiId": "/providers/Microsoft.PowerApps/apis/shared_teams",
+              "connectionName": "shared_teams",
+              "operationId": "WebhookChatMessageTrigger"
+            },
+            "parameters": {},
+            "authentication": "@parameters('$authentication')"
+          },
+          "runtimeConfiguration": {
+            "concurrency": {
+              "runs": 1
+            }
+          }
+        }
+      },
+      "actions": {
+        "AtlasInstallationId": {
+          "type": "Compose",
+          "inputs": "unconfigured",
+          "runAfter": {}
+        },
+        "TargetDate": {
+          "type": "Compose",
+          "inputs": "@formatDateTime(convertTimeZone(utcNow(),'UTC','SA Pacific Standard Time'),'yyyy-MM-dd')",
+          "runAfter": {
+            "AtlasInstallationId": [
+              "Succeeded"
+            ]
+          }
+        },
+        "StartUtc": {
+          "type": "Compose",
+          "inputs": "@convertToUtc(concat(outputs('TargetDate'),'T00:00:00'),'SA Pacific Standard Time','yyyy-MM-ddTHH:mm:ssZ')",
+          "runAfter": {
+            "TargetDate": [
+              "Succeeded"
+            ]
+          }
+        },
+        "EndUtc": {
+          "type": "Compose",
+          "inputs": "@convertToUtc(concat(formatDateTime(addDays(outputs('TargetDate'),1),'yyyy-MM-dd'),'T00:00:00'),'SA Pacific Standard Time','yyyy-MM-ddTHH:mm:ssZ')",
+          "runAfter": {
+            "StartUtc": [
+              "Succeeded"
+            ]
+          }
+        },
+        "For_each_notification": {
+          "type": "Foreach",
+          "foreach": "@triggerBody()?['value']",
+          "actions": {
+            "Get_messages_for_triggered_chat": {
+              "type": "OpenApiConnection",
+              "inputs": {
+                "host": {
+                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_teams",
+                  "connectionName": "shared_teams",
+                  "operationId": "GetMessagesFromChat"
+                },
+                "parameters": {
+                  "chatId": "@items('For_each_notification')?['conversationId']",
+                  "$filter": "@concat('lastModifiedDateTime gt ',outputs('StartUtc'),' and lastModifiedDateTime lt ',outputs('EndUtc'))",
+                  "$orderby": "lastModifiedDateTime desc",
+                  "$top": 20
+                },
+                "authentication": "@parameters('$authentication')",
+                "retryPolicy": {
+                  "type": "exponential",
+                  "count": 4,
+                  "interval": "PT10S",
+                  "minimumInterval": "PT5S",
+                  "maximumInterval": "PT1M"
+                }
+              },
+              "runAfter": {}
+            },
+            "Filter_messages_to_target_day": {
+              "type": "Query",
+              "inputs": {
+                "from": "@body('Get_messages_for_triggered_chat')?['value']",
+                "where": "@and(not(empty(item()?['createdDateTime'])),greaterOrEquals(ticks(item()?['createdDateTime']),ticks(outputs('StartUtc'))),less(ticks(item()?['createdDateTime']),ticks(outputs('EndUtc'))))"
+              },
+              "runAfter": {
+                "Get_messages_for_triggered_chat": [
+                  "Succeeded"
+                ]
+              }
+            },
+            "Select_Teams_fields": {
+              "type": "Select",
+              "inputs": {
+                "from": "@body('Filter_messages_to_target_day')",
+                "select": {
+                  "id": "@item()?['id']",
+                  "chatId": "@items('For_each_notification')?['conversationId']",
+                  "topic": "",
+                  "createdDateTime": "@item()?['createdDateTime']",
+                  "author": "@coalesce(item()?['from']?['user']?['displayName'],'')",
+                  "content": "@coalesce(item()?['body']?['content'],'')",
+                  "messageType": "@coalesce(item()?['messageType'],'message')"
+                }
+              },
+              "runAfter": {
+                "Filter_messages_to_target_day": [
+                  "Succeeded"
+                ]
+              }
+            },
+            "Compose_Teams_event_bundle": {
+              "type": "Compose",
+              "inputs": {
+                "schemaVersion": 2,
+                "exportedAt": "@utcNow()",
+                "targetDate": "@outputs('TargetDate')",
+                "sources": {
+                  "calendar": false,
+                  "mail": false,
+                  "teams": true
+                },
+                "calendar": [],
+                "mail": [],
+                "teams": "@body('Select_Teams_fields')"
+              },
+              "runAfter": {
+                "Select_Teams_fields": [
+                  "Succeeded"
+                ]
+              }
+            },
+            "Create_Teams_event_evidence_file": {
+              "type": "OpenApiConnection",
+              "inputs": {
+                "host": {
+                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_onedriveforbusiness",
+                  "connectionName": "shared_onedriveforbusiness",
+                  "operationId": "CreateFile"
+                },
+                "parameters": {
+                  "folderPath": "/AtlasBridge/inbox",
+                  "name": "@concat('atlas-evidence-',outputs('AtlasInstallationId'),'-',outputs('TargetDate'),'-teams-',guid(),'.json')",
+                  "body": "@string(outputs('Compose_Teams_event_bundle'))"
+                },
+                "authentication": "@parameters('$authentication')"
+              },
+              "runAfter": {
+                "Compose_Teams_event_bundle": [
+                  "Succeeded"
+                ]
+              }
+            }
+          },
+          "runAfter": {
+            "EndUtc": [
+              "Succeeded"
+            ]
+          },
+          "runtimeConfiguration": {
+            "concurrency": {
+              "repetitions": 1
+            }
+          }
+        }
+      },
+      "outputs": {}
+    },
+    "templateName": null
+  },
+  "schemaVersion": "1.0.0.0"
+}
