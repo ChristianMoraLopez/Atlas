@@ -23,7 +23,7 @@ try {
     [xml] $types = Read-Entry '[Content_Types].xml'
     if ($solution.ImportExportXml.SolutionManifest.UniqueName -ne 'AtlasBridge') { throw 'Unexpected solution identity.' }
     if ($solution.ImportExportXml.SolutionManifest.Managed -ne '0') { throw 'Expected unmanaged solution.' }
-    if ($solution.ImportExportXml.SolutionManifest.Version -ne '1.5.0.0') { throw 'Unexpected version.' }
+    if ($solution.ImportExportXml.SolutionManifest.Version -ne '1.6.0.0') { throw 'Unexpected version.' }
     $workflows = @($custom.ImportExportXml.Workflows.Workflow)
     if ($workflows.Count -ne 1 -or $workflows[0].Category -ne '5') { throw 'Expected one cloud flow.' }
     if ($workflows[0].StateCode -ne '1' -or $workflows[0].StatusCode -ne '2') { throw 'Cloud flow must be exported as active.' }
@@ -61,7 +61,7 @@ try {
                 $alias = $action.inputs.host.connectionName
                 if (-not $expected.ContainsKey($alias)) { throw 'Nonstandard or unknown connector.' }
                 if ($action.inputs.host.apiId -ne "/providers/Microsoft.PowerApps/apis/$alias") { throw 'Connector identity mismatch.' }
-            } elseif ($action.type -notin @('Compose','InitializeVariable','SetVariable','Scope','Select','Query','Foreach','AppendToArrayVariable')) {
+            } elseif ($action.type -notin @('Compose','InitializeVariable','SetVariable','Scope','Select','Query','Foreach','AppendToArrayVariable','Wait')) {
                 throw "Unexpected action type: $($action.type)"
             }
             $nestedActions = Get-OptionalProperty $action 'actions'
@@ -75,6 +75,7 @@ try {
     $actions = $flow.properties.definition.actions
     $triggers = @($flow.properties.definition.triggers.PSObject.Properties)
     if ($triggers.Count -ne 1 -or $triggers[0].Name -ne 'Every_15_minutes' -or $triggers[0].Value.type -ne 'Recurrence' -or $triggers[0].Value.recurrence.frequency -ne 'Minute' -or $triggers[0].Value.recurrence.interval -ne 15) { throw 'Expected a portable 15-minute recurrence trigger.' }
+    if ($triggers[0].Value.runtimeConfiguration.concurrency.runs -ne 1) { throw 'Recurring runs must not overlap.' }
     if ($actions.Compose_Atlas_bundle.inputs.schemaVersion -ne 2) { throw 'Expected evidence contract v2.' }
     foreach ($source in @('calendar', 'mail', 'teams')) {
         if (-not $actions.Compose_Atlas_bundle.inputs.sources.$source) { throw "Missing source health flag: $source" }
@@ -85,9 +86,13 @@ try {
     }
     if ($actions.Mail_evidence.actions.Get_emails_V3.inputs.parameters.top -gt 100) { throw 'Mail query is too broad for the connector timeout.' }
     $teamsLoop = $actions.Teams_evidence.actions.For_each_chat
-    if ($teamsLoop.foreach -ne "@take(body('List_chats')?['value'],30)") { throw 'Teams must scan only the 30 chats returned as most recent by the standard connector.' }
+    if ($teamsLoop.foreach -ne "@body('List_chats')?['value']") { throw 'Teams must scan every recent chat returned by the standard connector.' }
+    $teamsPace = $teamsLoop.actions.Pace_Teams_requests
+    if ($teamsPace.type -ne 'Wait' -or $teamsPace.inputs.interval.count -lt 1 -or $teamsPace.inputs.interval.unit -ne 'Second') { throw 'Teams requests must be paced to avoid connector throttling.' }
     $teamsRequest = $teamsLoop.actions.Get_messages_in_chat.inputs.parameters
     if ($teamsRequest.'$top' -gt 20 -or $teamsRequest.'$filter' -notmatch 'lastModifiedDateTime.+StartUtc.+lastModifiedDateTime.+EndUtc' -or $teamsRequest.'$orderby' -ne 'lastModifiedDateTime desc') { throw 'Teams query must use the supported bounded date filter.' }
+    $teamsRetry = $teamsLoop.actions.Get_messages_in_chat.inputs.retryPolicy
+    if ($teamsRetry.type -ne 'exponential' -or $teamsRetry.count -lt 4 -or $teamsRetry.minimumInterval -ne 'PT5S') { throw 'Teams requests must retry transient connector failures.' }
     if ($actions.Create_Atlas_evidence_file.inputs.parameters.folderPath -ne '/AtlasBridge/inbox') { throw 'Unexpected cloud inbox.' }
     if ($actions.Create_Atlas_evidence_file.inputs.parameters.name -notmatch 'AtlasInstallationId') { throw 'Missing installation correlation.' }
     if ($names.Count -ne 4) { throw 'Unexpected files in solution.' }

@@ -48,6 +48,11 @@
           "recurrence": {
             "frequency": "Minute",
             "interval": 15
+          },
+          "runtimeConfiguration": {
+            "concurrency": {
+              "runs": 1
+            }
           }
         }
       },
@@ -321,7 +326,7 @@
             },
             "For_each_chat": {
               "type": "Foreach",
-              "foreach": "@take(body('List_chats')?['value'],30)",
+              "foreach": "@body('List_chats')?['value']",
               "actions": {
                 "Get_messages_in_chat": {
                   "type": "OpenApiConnection",
@@ -337,9 +342,20 @@
                       "$orderby": "lastModifiedDateTime desc",
                       "$top": 20
                     },
-                    "authentication": "@parameters('$authentication')"
+                    "authentication": "@parameters('$authentication')",
+                    "retryPolicy": {
+                      "type": "exponential",
+                      "count": 4,
+                      "interval": "PT10S",
+                      "minimumInterval": "PT5S",
+                      "maximumInterval": "PT1M"
+                    }
                   },
-                  "runAfter": {}
+                  "runAfter": {
+                    "Pace_Teams_requests": [
+                      "Succeeded"
+                    ]
+                  }
                 },
                 "Filter_messages_to_target_day": {
                   "type": "Query",
@@ -384,6 +400,16 @@
                       "repetitions": 1
                     }
                   }
+                },
+                "Pace_Teams_requests": {
+                  "type": "Wait",
+                  "inputs": {
+                    "interval": {
+                      "count": 1,
+                      "unit": "Second"
+                    }
+                  },
+                  "runAfter": {}
                 }
               },
               "runAfter": {

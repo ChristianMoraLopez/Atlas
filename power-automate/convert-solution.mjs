@@ -10,19 +10,24 @@ const legacy = JSON.parse(readFileSync(join(root, `package-source/Microsoft.Flow
 const definition = legacy.properties.definition;
 delete definition.metadata; // No creator, tenant, environment or connection instance from the template.
 definition.triggers = {
-  Every_15_minutes: { type: 'Recurrence', recurrence: { frequency: 'Minute', interval: 15 } }
+  Every_15_minutes: { type: 'Recurrence', recurrence: { frequency: 'Minute', interval: 15 }, runtimeConfiguration: { concurrency: { runs: 1 } } }
 };
 const a = definition.actions;
 a.AtlasInstallationId = { type: 'Compose', inputs: 'unconfigured', runAfter: {} };
 a.TargetDate.runAfter = { AtlasInstallationId: ['Succeeded'] };
 const calendar = a.Calendar_evidence.actions;
 calendar.Get_calendar_view_of_events_V3.inputs.parameters.calendarId = "@first(body('Get_calendars_V2')?['value'])?['id']";
-// Keep connector calls bounded; broad mailbox/chat scans regularly hit the two-minute Logic Apps HTTP limit.
+// Keep each connector response bounded and pace the complete recent-chat scan below Teams throughput limits.
 a.Mail_evidence.actions.Get_emails_V3.inputs.parameters.top = 100;
-a.Teams_evidence.actions.For_each_chat.foreach = "@take(body('List_chats')?['value'],30)";
-a.Teams_evidence.actions.For_each_chat.actions.Get_messages_in_chat.inputs.parameters['$filter'] = "@concat('lastModifiedDateTime gt ',outputs('StartUtc'),' and lastModifiedDateTime lt ',outputs('EndUtc'))";
-a.Teams_evidence.actions.For_each_chat.actions.Get_messages_in_chat.inputs.parameters['$orderby'] = 'lastModifiedDateTime desc';
-a.Teams_evidence.actions.For_each_chat.actions.Get_messages_in_chat.inputs.parameters['$top'] = 20;
+const teamsLoop = a.Teams_evidence.actions.For_each_chat;
+teamsLoop.foreach = "@body('List_chats')?['value']";
+teamsLoop.actions.Pace_Teams_requests = { type: 'Wait', inputs: { interval: { count: 1, unit: 'Second' } }, runAfter: {} };
+const teamsRequest = teamsLoop.actions.Get_messages_in_chat;
+teamsRequest.inputs.parameters['$filter'] = "@concat('lastModifiedDateTime gt ',outputs('StartUtc'),' and lastModifiedDateTime lt ',outputs('EndUtc'))";
+teamsRequest.inputs.parameters['$orderby'] = 'lastModifiedDateTime desc';
+teamsRequest.inputs.parameters['$top'] = 20;
+teamsRequest.inputs.retryPolicy = { type: 'exponential', count: 4, interval: 'PT10S', minimumInterval: 'PT5S', maximumInterval: 'PT1M' };
+teamsRequest.runAfter = { Pace_Teams_requests: ['Succeeded'] };
 calendar.Set_CalendarSourceReady = { type: 'SetVariable', inputs: { name: 'CalendarSourceReady', value: true }, runAfter: { Set_CalendarEvidence: ['Succeeded'] } };
 a.Mail_evidence.actions.Set_MailSourceReady = { type: 'SetVariable', inputs: { name: 'MailSourceReady', value: true }, runAfter: { Set_MailEvidence: ['Succeeded'] } };
 a.Teams_evidence.actions.Set_TeamsSourceReady = { type: 'SetVariable', inputs: { name: 'TeamsSourceReady', value: true }, runAfter: { For_each_chat: ['Succeeded'] } };
@@ -62,7 +67,7 @@ const flow = { properties: { connectionReferences: refs, definition, templateNam
 mkdirSync(join(root, 'solution-source/Workflows'), { recursive: true });
 writeFileSync(join(root, 'solution-source/Workflows', file), JSON.stringify(flow, null, 2) + '\n');
 const solutionPath = join(root, 'solution-source/Other/Solution.xml');
-let solution = readFileSync(solutionPath, 'utf8').replace(/<Version>.*?<\/Version>/, '<Version>1.5.0.0</Version>').replace(/<Managed>.*?<\/Managed>/, '<Managed>0</Managed>');
+let solution = readFileSync(solutionPath, 'utf8').replace(/<Version>.*?<\/Version>/, '<Version>1.6.0.0</Version>').replace(/<Managed>.*?<\/Managed>/, '<Managed>0</Managed>');
 solution = solution.replace(/<RootComponents\s*\/>|<RootComponents>[\s\S]*?<\/RootComponents>/, `<RootComponents><RootComponent type="29" id="{${id}}" behavior="0" /></RootComponents>`);
 writeFileSync(solutionPath, solution);
 const fields = { JsonFileName: `/Workflows/${file}`, Type: 1, Subprocess: 0, Category: 5, Mode: 0, Scope: 4, OnDemand: 0, TriggerOnCreate: 0, TriggerOnDelete: 0, AsyncAutoDelete: 0, SyncWorkflowLogOnFailure: 0, StateCode: 1, StatusCode: 2, RunAs: 1, IsTransacted: 1, IntroducedVersion: '1.2.0.0', IsCustomizable: 1, BusinessProcessType: 0, IsCustomProcessingStepAllowedForOtherPublishers: 1, PrimaryEntity: 'none' };
