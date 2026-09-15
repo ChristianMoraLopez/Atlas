@@ -24,7 +24,7 @@ const TEAMS_EVENT_WORKFLOW: &str =
 const WORKFLOWS: [&str; 2] = [SCHEDULED_WORKFLOW, TEAMS_EVENT_WORKFLOW];
 const MAX_FILE: u64 = 25 * 1024 * 1024;
 const PORTAL: &str = "https://make.powerautomate.com/";
-const SOLUTION_VERSION: &str = "1.10.0.0";
+const SOLUTION_VERSION: &str = "1.11.0.0";
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -548,6 +548,9 @@ fn verify_inbox(session: &Session) -> Verification {
     let mut saw_placeholder = false;
     let mut saw_stale = false;
     let mut saw_future = false;
+    let mut saw_previous_installation = false;
+    let mut saw_event_only = false;
+    let mut saw_incomplete_sources = false;
     let mut checked_file = None;
     let now = Utc::now();
     // Bound directory traversal and each read. Verification never sends evidence to logs/UI.
@@ -564,6 +567,13 @@ fn verify_inbox(session: &Session) -> Verification {
             continue;
         }
         let current_installation = name.starts_with(&current_prefix);
+        if !current_installation {
+            // A package from an older personalized flow cannot prove that the
+            // ZIP prepared by this setup was imported. Accepting it allowed an
+            // outdated collector to pass verification after an Atlas upgrade.
+            saw_previous_installation = true;
+            continue;
+        }
         checked_file = Some(name);
         let Ok(metadata) = fs::metadata(&path) else {
             saw_invalid = true;
@@ -626,15 +636,26 @@ fn verify_inbox(session: &Session) -> Verification {
             saw_stale = true;
             continue;
         }
-        return verification(
-            VerificationState::Valid,
-            if current_installation {
-                "file_verified"
-            } else {
-                "existing_flow_file_verified"
-            },
-            checked_file,
-        );
+        let output_folder = path
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|value| value.to_str())
+            .unwrap_or("");
+        if output_folder.eq_ignore_ascii_case("teams") {
+            // The event flow proves only the Teams connection. Setup is ready
+            // after the scheduled collector has exercised all three sources.
+            saw_event_only = true;
+            continue;
+        }
+        let sources = &value["sources"];
+        if !sources["calendar"].as_bool().unwrap_or(false)
+            || !sources["mail"].as_bool().unwrap_or(false)
+            || !sources["teams"].as_bool().unwrap_or(false)
+        {
+            saw_incomplete_sources = true;
+            continue;
+        }
+        return verification(VerificationState::Valid, "file_verified", checked_file);
     }
     if saw_placeholder {
         verification(
@@ -652,6 +673,24 @@ fn verify_inbox(session: &Session) -> Verification {
         verification(VerificationState::Waiting, "evidence_too_old", checked_file)
     } else if saw_invalid {
         verification(VerificationState::Invalid, "invalid_evidence", checked_file)
+    } else if saw_incomplete_sources {
+        verification(
+            VerificationState::Invalid,
+            "collector_sources_incomplete",
+            checked_file,
+        )
+    } else if saw_event_only {
+        verification(
+            VerificationState::Waiting,
+            "collector_file_pending",
+            checked_file,
+        )
+    } else if saw_previous_installation {
+        verification(
+            VerificationState::Waiting,
+            "previous_installation_detected",
+            None,
+        )
     } else {
         verification(VerificationState::Waiting, "waiting_for_sync", None)
     }
@@ -978,9 +1017,9 @@ mod tests {
         ))
         .unwrap();
         bundle["exportedAt"] = json!(Utc::now().to_rfc3339());
+        let scheduled = Path::new(waiting.session.folder.as_ref().unwrap()).join("scheduled");
         fs::write(
-            Path::new(waiting.session.folder.as_ref().unwrap())
-                .join(format!("atlas-evidence-{id}-test.json")),
+            scheduled.join(format!("atlas-evidence-{id}-test.json")),
             serde_json::to_vec(&bundle).unwrap(),
         )
         .unwrap();
@@ -1018,7 +1057,9 @@ mod tests {
         let unrelated = verify_inbox(&session);
         assert_eq!(unrelated.state, VerificationState::Waiting);
         assert_eq!(unrelated.diagnostic, "waiting_for_sync");
-        let target = dir.path().join(format!(
+        let scheduled = dir.path().join("scheduled");
+        fs::create_dir(&scheduled).unwrap();
+        let target = scheduled.join(format!(
             "atlas-evidence-{}-test.json",
             session.installation_id
         ));
@@ -1049,12 +1090,31 @@ mod tests {
         assert_eq!(verify_inbox(&session).state, VerificationState::Valid);
 
         let other_id = uuid::Uuid::new_v4();
-        let other = dir
-            .path()
-            .join(format!("atlas-evidence-{other_id}-recent.json"));
+        let other = scheduled.join(format!("atlas-evidence-{other_id}-recent.json"));
         fs::rename(&target, &other).unwrap();
         let existing_flow = verify_inbox(&session);
-        assert_eq!(existing_flow.state, VerificationState::Valid);
-        assert_eq!(existing_flow.diagnostic, "existing_flow_file_verified");
+        assert_eq!(existing_flow.state, VerificationState::Waiting);
+        assert_eq!(existing_flow.diagnostic, "previous_installation_detected");
+
+        let teams = dir.path().join("teams");
+        fs::create_dir(&teams).unwrap();
+        let event = teams.join(format!(
+            "atlas-evidence-{}-teams-test.json",
+            session.installation_id
+        ));
+        bundle["sources"] = json!({ "calendar": false, "mail": false, "teams": true });
+        fs::write(&event, serde_json::to_vec(&bundle).unwrap()).unwrap();
+        let event_only = verify_inbox(&session);
+        assert_eq!(event_only.state, VerificationState::Waiting);
+        assert_eq!(event_only.diagnostic, "collector_file_pending");
+
+        let current = scheduled.join(format!(
+            "atlas-evidence-{}-partial.json",
+            session.installation_id
+        ));
+        fs::write(&current, serde_json::to_vec(&bundle).unwrap()).unwrap();
+        let incomplete = verify_inbox(&session);
+        assert_eq!(incomplete.state, VerificationState::Invalid);
+        assert_eq!(incomplete.diagnostic, "collector_sources_incomplete");
     }
 }

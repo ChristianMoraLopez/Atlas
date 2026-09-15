@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 
 const root = dirname(fileURLToPath(import.meta.url));
-const version = '1.10.0.0';
+const version = '1.11.0.0';
 const scheduled = {
   id: '8e5c1f84-dcbb-4a2c-9d2f-62e9c38105d2',
   name: 'Atlas - Export evidence to OneDrive',

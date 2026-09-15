@@ -737,7 +737,13 @@ pub fn run() {
                     let _ = window.hide();
                 }
             }
-            diagnostics::info("startup", "Atlas application state loaded");
+            diagnostics::info(
+                "startup",
+                &format!(
+                    "Atlas v{} application state loaded",
+                    env!("CARGO_PKG_VERSION")
+                ),
+            );
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

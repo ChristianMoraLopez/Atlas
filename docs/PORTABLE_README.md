@@ -23,7 +23,7 @@ For SharePoint, paste the full link that opens the workbook. In Power Automate I
 
 Power Automate Inbox mode also offers **SharePoint cloud flow**. Paste the Excel Online link and save the selected daily time. Atlas creates a personalized second solution ZIP and places `Atlas Write Tracker.osts` in the synchronized `Documents/Office Scripts` folder. Import the ZIP once in **Power Automate → Solutions → Import solution**, map OneDrive for Business, SharePoint, and Excel Online (Business), and complete the import. Atlas keeps dated JSON history in `AtlasBridge/tracker-outbox/<date>` and the active flow publishes the current package without replacing the workbook.
 
-To rebuild a past day, choose it under **Workday** and press **Import selected day**. Atlas requests the date through the synced `AtlasBridge/requests` folder, waits for solution 1.9 to export it, and imports the result automatically. Scheduled, Teams-event, and requested JSON packages remain separated by source folders.
+To rebuild a past day, choose it under **Workday** and press **Import selected day**. Atlas requests the date through the synced `AtlasBridge/requests` folder, waits for solution 1.11 to export it, and imports the result automatically. Scheduled, Teams-event, and requested JSON packages remain separated by source folders.
 
 If anything fails, use the document button in the Atlas header to open the persistent diagnostic log. It is stored at `%APPDATA%\com.capgemini.atlas-tracker\logs\atlas.log`; Local AI process output is stored beside it as `local-ai.log`. Invalid settings are backed up and reset instead of causing a silent startup exit.
 

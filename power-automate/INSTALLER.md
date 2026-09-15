@@ -10,11 +10,11 @@ Atlas instala el puente mediante la experiencia oficial de importación de soluc
 4. Atlas abre `https://make.powerautomate.com/` en el navegador predeterminado. Completa el inicio de sesión o MFA con la cuenta Circana si Microsoft lo solicita.
 5. Confirma que tienes conexiones propias de **Office 365 Outlook**, **Microsoft Teams** y **OneDrive for Business**. La cuenta de OneDrive debe ser la que sincroniza la carpeta elegida. La solución instala juntos el flujo programado y la captura de Teams por mensaje.
 6. En **Soluciones → Importar solución**, selecciona el archivo `AtlasBridge_1_0_0_0.zip` preparado por Atlas. Asocia cada referencia con tu conexión y confirma la importación. No copies identificadores de tenant, entorno o aplicación.
-7. La solución 1.10 se entrega activa y se ejecuta cada cinco minutos. Si ya existe `AtlasBridge`, importa como actualización de esa misma solución. Esta versión continúa con el día actual cuando `AtlasBridge/requests/selected-date.txt` todavía no existe o está vacío.
+7. La solución 1.11 se entrega activa y se ejecuta cada cinco minutos. Si ya existe `AtlasBridge`, importa como actualización de esa misma solución. Esta versión continúa con el día actual cuando `AtlasBridge/requests/selected-date.txt` todavía no existe o está vacío.
 8. Espera la ejecución programada y la sincronización de OneDrive. Marca `AtlasBridge` como **Siempre mantener en este dispositivo**. Atlas comprueba cada 15 segundos si aparece un JSON nuevo compatible con `atlas-evidence.schema.json`.
 9. Cuando el asistente muestre **Instalación completada**, pulsa **Usar este conector en Atlas**. Si no existe, Atlas crea `Tracker_Circana.xlsx` en la raíz de OneDrive elegida.
 
-La recurrencia es de cinco minutos, por lo que la primera comprobación puede tardar ese tiempo más la sincronización de OneDrive. La comprobación acepta únicamente un archivo creado después de iniciar el asistente cuyo nombre incluya el identificador aleatorio de esa instalación. Un JSON de ejemplo o un archivo del paquete heredado no puede completar el asistente.
+La recurrencia es de cinco minutos, por lo que la primera comprobación puede tardar ese tiempo más la sincronización de OneDrive. La comprobación acepta únicamente un paquete del recolector programado cuyo nombre incluya el identificador aleatorio de esa instalación y cuyo estado confirme calendario, correo y Teams. Un JSON de ejemplo, un paquete de la captura inmediata de Teams o un archivo de una instalación anterior no puede completar el asistente.
 
 ## Interacciones inevitables
 
