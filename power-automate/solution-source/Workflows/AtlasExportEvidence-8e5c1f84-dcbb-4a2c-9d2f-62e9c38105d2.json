@@ -43,11 +43,11 @@
         }
       },
       "triggers": {
-        "Every_15_minutes": {
+        "Every_5_minutes": {
           "type": "Recurrence",
           "recurrence": {
             "frequency": "Minute",
-            "interval": 15
+            "interval": 5
           },
           "runtimeConfiguration": {
             "concurrency": {
@@ -59,9 +59,9 @@
       "actions": {
         "TargetDate": {
           "type": "Compose",
-          "inputs": "@formatDateTime(convertTimeZone(utcNow(),'UTC','SA Pacific Standard Time'),'yyyy-MM-dd')",
+          "inputs": "@if(empty(outputs('RequestedDate')),formatDateTime(convertTimeZone(utcNow(),'UTC','SA Pacific Standard Time'),'yyyy-MM-dd'),outputs('RequestedDate'))",
           "runAfter": {
-            "AtlasInstallationId": [
+            "RequestedDate": [
               "Succeeded"
             ]
           }
@@ -554,7 +554,7 @@
               "operationId": "CreateFile"
             },
             "parameters": {
-              "folderPath": "/AtlasBridge/inbox",
+              "folderPath": "@if(empty(outputs('RequestedDate')),'/AtlasBridge/inbox/scheduled','/AtlasBridge/inbox/requested')",
               "name": "@concat('atlas-evidence-',outputs('AtlasInstallationId'),'-',outputs('TargetDate'),'-',formatDateTime(utcNow(),'yyyyMMddTHHmmssZ'),'.json')",
               "body": "@string(outputs('Compose_Atlas_bundle'))"
             },
@@ -570,6 +570,35 @@
           "type": "Compose",
           "inputs": "unconfigured",
           "runAfter": {}
+        },
+        "Read_Atlas_requested_date": {
+          "type": "OpenApiConnection",
+          "inputs": {
+            "host": {
+              "apiId": "/providers/Microsoft.PowerApps/apis/shared_onedriveforbusiness",
+              "connectionName": "shared_onedriveforbusiness",
+              "operationId": "GetFileContentByPath"
+            },
+            "parameters": {
+              "path": "/AtlasBridge/requests/selected-date.txt",
+              "inferContentType": true
+            },
+            "authentication": "@parameters('$authentication')"
+          },
+          "runAfter": {
+            "AtlasInstallationId": [
+              "Succeeded"
+            ]
+          }
+        },
+        "RequestedDate": {
+          "type": "Compose",
+          "inputs": "@trim(base64ToString(outputs('Read_Atlas_requested_date')?['body']?['$content']))",
+          "runAfter": {
+            "Read_Atlas_requested_date": [
+              "Succeeded"
+            ]
+          }
         },
         "Initialize_CalendarSourceReady": {
           "type": "InitializeVariable",

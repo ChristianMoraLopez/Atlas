@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ConnectorInstaller from "./ConnectorInstaller";
+import AtlasIntro from "./AtlasIntro";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { openPath, openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import {
   AlertCircle, ArrowRight, Bot, CalendarDays, Check, ChevronDown, Cloud,
@@ -10,7 +11,7 @@ import {
   ShieldCheck, Sparkles, Trash2, UserRound, X
 } from "lucide-react";
 import { api, fromLocalInput, localDate, toLocalInput } from "./lib";
-import type { AppStatus, ExportResult, Interaction, TrackerDestination, TrackerDestinationKind, UserProfile } from "./types";
+import type { AppStatus, ExportResult, ExtractionResult, Interaction, TrackerDestination, TrackerDestinationKind, UserProfile } from "./types";
 
 const emptyProfile: UserProfile = {
   loginId: "", fullName: "", area: "Manufacturing", teamLead: "", circanaManager: ""
@@ -136,7 +137,7 @@ function DestinationSetupScreen({ initial, initialAutoSync, initialAutoSyncTime,
       <h1 className="mt-2 font-display text-4xl">Where should Atlas write?</h1>
       <p className="mt-3 max-w-2xl text-sm leading-6 text-ink/50">{bridgeMode ? "Choose the tracker inside a locally synced OneDrive or SharePoint folder. OneDrive publishes Atlas changes automatically." : "Choose this once. Atlas remembers the destination for manual saves and automatic calendar syncs."}</p>
       <div className="mt-8 grid grid-cols-3 gap-3">{options.map(option => <button type="button" key={option.kind} onClick={() => changeKind(option.kind)} className={`rounded-2xl border p-4 text-left ${kind === option.kind ? "border-pine/35 bg-mint/55" : "border-ink/10 bg-white"}`}><span className={`grid h-10 w-10 place-items-center rounded-xl ${kind === option.kind ? "bg-pine text-white" : "bg-cream text-ink/45"}`}>{option.icon}</span><b className="mt-4 block text-sm">{option.title}</b><span className="mt-1 block text-[11px] leading-5 text-ink/45">{option.detail}</span></button>)}</div>
-      <div className="mt-7">{kind === "share_point" ? <div><label><span className="label">SharePoint or OneDrive workbook link</span><textarea className="field min-h-24 resize-none font-mono text-xs" value={value} onChange={event => setValue(event.target.value)} placeholder="https://tenant-my.sharepoint.com/:x:/r/.../Tracker.xlsm?web=1" /></label>{bridgeMode ? <div className="mt-4"><button type="button" className="btn-secondary" onClick={chooseSyncedCopy}><FolderOpen className="h-4 w-4" />{localPath ? "Change synced copy" : "Choose synced copy (optional)"}</button>{localPath && <p className="mt-3 break-all rounded-xl bg-cream p-3 text-xs text-ink/55">{localPath}</p>}<span className="mt-2 block text-[11px] leading-5 text-ink/45">Atlas tries to find the workbook automatically in OneDrive. If needed, open the link, add a shortcut to “My files”, wait for sync, and choose that local copy here.</span></div> : <span className="mt-2 block text-[11px] leading-5 text-ink/45">Saving opens Microsoft once for delegated <code>Files.ReadWrite</code> consent. Atlas preserves macros and uploads only if the workbook did not change meanwhile.</span>}</div> : <div><button type="button" className="btn-secondary" onClick={chooseLocal}><FolderOpen className="h-4 w-4" />{value ? "Change workbook" : "Choose workbook"}</button>{value && <p className="mt-3 break-all rounded-xl bg-cream p-3 text-xs text-ink/55">{value}</p>}</div>}</div>
+      <div className="mt-7">{kind === "share_point" ? <div><label><span className="label">SharePoint or OneDrive workbook link</span><textarea className="field min-h-24 resize-none font-mono text-xs" value={value} onChange={event => setValue(event.target.value)} placeholder="https://tenant-my.sharepoint.com/:x:/r/.../Tracker.xlsm?web=1" /></label>{bridgeMode ? <div className="mt-4 rounded-2xl border border-pine/15 bg-mint/25 p-5"><div className="flex flex-wrap gap-3"><button type="button" className="btn-secondary" disabled={!value.trim()} onClick={() => void openUrl(value.trim())}><ExternalLink className="h-4 w-4" />Abrir enlace</button><button type="button" className="btn-primary" onClick={chooseSyncedCopy}><FolderOpen className="h-4 w-4" />{localPath ? "Cambiar copia sincronizada" : "Seleccionar copia sincronizada"}</button></div>{localPath && <p className="mt-3 break-all rounded-xl bg-white/70 p-3 text-xs text-ink/55">{localPath}</p>}<ol className="mt-4 list-decimal space-y-2 pl-5 text-xs leading-5 text-ink/60"><li>El propietario comparte <b>la carpeta que contiene el tracker</b> contigo y permite editar. Un archivo suelto no admite “Agregar acceso directo”.</li><li>Abre el enlace y entra a <b>Compartido → Compartido contigo</b>.</li><li>Selecciona la carpeta del tracker y pulsa <b>Agregar acceso directo a Mis archivos</b>.</li><li>Espera a que aparezca en el Explorador bajo <b>OneDrive – Circana</b>. Si quieres, marca <b>Mantener siempre en este dispositivo</b>.</li><li>Vuelve a Atlas, pulsa <b>Seleccionar copia sincronizada</b> y elige el archivo exacto <code>.xlsm</code> o <code>.xlsx</code>.</li></ol><p className="mt-3 text-[11px] leading-5 text-ink/45">Atlas actualiza esa copia conservando macros y fórmulas; el cliente corporativo de OneDrive publica el cambio en la carpeta compartida.</p></div> : <span className="mt-2 block text-[11px] leading-5 text-ink/45">Saving opens Microsoft once for delegated <code>Files.ReadWrite</code> consent. Atlas preserves macros and uploads only if the workbook did not change meanwhile.</span>}</div> : <div><button type="button" className="btn-secondary" onClick={chooseLocal}><FolderOpen className="h-4 w-4" />{value ? "Change workbook" : "Choose workbook"}</button>{value && <p className="mt-3 break-all rounded-xl bg-cream p-3 text-xs text-ink/55">{value}</p>}</div>}</div>
       <div className="mt-7 flex items-start gap-4 rounded-2xl border border-pine/15 bg-mint/35 p-4"><input type="checkbox" checked={autoSync} onChange={event => setAutoSync(event.target.checked)} className="mt-1 h-4 w-4 accent-pine" /><span className="flex-1"><b className="block text-sm">Daily automatic tracker</b><span className="mt-1 block text-xs leading-5 text-ink/50">Windows launches Atlas every day, writes all completed activities it found, and opens the app only when fewer than three need your attention.</span></span><label className="w-28"><span className="label">Run at</span><input type="time" className="field" value={autoSyncTime} disabled={!autoSync} onChange={event => setAutoSyncTime(event.target.value)} /></label></div>
       {error && <div className="mt-5"><ErrorBanner message={error} /></div>}
       <div className="mt-7 flex justify-end"><button className="btn-primary" disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}Save tracker setup</button></div>
@@ -239,7 +240,24 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
     const count = values.filter(item => item.selected).length;
     return count < 3 ? `Atlas encontró y guardará ${count} ${count === 1 ? "actividad" : "actividades"}. Añade ${3 - count} ${3 - count === 1 ? "tarea real" : "tareas reales"} para llegar al mínimo diario de 3.` : "";
   };
-  const extract = async () => { if (!startWork()) return; setWarnings([]); try { const result = await api.extract(date, includeEmail, includeTeams, Intl.DateTimeFormat().resolvedOptions().timeZone); setItems(result.interactions); const warning = completionWarning(result.interactions); setWarnings(warning ? [...result.warnings, warning] : result.warnings); } catch (e) { setError(String(e)); } finally { endWork(); } };
+  const loadEvidence = async (targetDate: string, email: boolean, teams: boolean): Promise<ExtractionResult> => {
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (!bridgeMode) return api.extract(targetDate, email, teams, timezone);
+    await api.requestBridgeDate(targetDate);
+    let lastError = "";
+    for (let attempt = 0; attempt <= 26; attempt += 1) {
+      try { return await api.extract(targetDate, email, teams, timezone); }
+      catch (failure) {
+        lastError = String(failure);
+        if (!lastError.includes("No se encontró un paquete de evidencia")) throw failure;
+        if (attempt === 0) setSyncNotice(`Solicitud enviada para ${targetDate}. Power Automate la procesa en su próximo ciclo y Atlas comprobará la carpeta automáticamente.`);
+        if (attempt === 26) break;
+        await new Promise(resolve => window.setTimeout(resolve, 15_000));
+      }
+    }
+    throw new Error(`Power Automate no entregó ${targetDate} después de 6 minutos. Confirma que el flujo Atlas actualizado esté activo. Último resultado: ${lastError}`);
+  };
+  const extract = async () => { if (!startWork()) return; setWarnings([]); try { const result = await loadEvidence(date, includeEmail, includeTeams); setItems(result.interactions); const warning = completionWarning(result.interactions); setWarnings(warning ? [...result.warnings, warning] : result.warnings); setSyncNotice(bridgeMode ? `Evidencia de ${date} importada y organizada por fuente.` : ""); } catch (e) { setError(String(e)); } finally { endWork(); } };
   const changeTeams = (enabled: boolean) => setIncludeTeams(enabled);
   const saveSelected = async () => {
     const selectedItems = items.filter(i => i.selected);
@@ -251,7 +269,7 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
     if (!startWork()) return;
     const today = localDate(); setDate(today); setWarnings([]);
     try {
-      const result = await api.extract(today, true, true, Intl.DateTimeFormat().resolvedOptions().timeZone);
+      const result = await loadEvidence(today, true, true);
       setItems(result.interactions);
       const warning = completionWarning(result.interactions);
       setWarnings(warning ? [...result.warnings, warning] : result.warnings);
@@ -284,7 +302,7 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
       <div className="grid grid-cols-[minmax(0,1fr)_290px] gap-6">
         <section className="min-w-0">
           <div className="mb-7 flex items-end justify-between"><div><p className="text-xs font-bold uppercase tracking-[.18em] text-pine">Daily workspace</p><h1 className="mt-2 font-display text-4xl">Record the work you completed.</h1><p className="mt-2 text-sm text-ink/50">Meetings and inferred tasks become separate tracker rows.</p></div><div className="flex items-center gap-2"><span className="chip bg-white text-ink/55"><Inbox className="h-3 w-3" />{counts.all} found</span><span className="chip bg-mint text-pine"><Check className="h-3 w-3" />{counts.selected} selected</span>{counts.review > 0 && <span className="chip bg-[#fff0df] text-[#9a5a1e]">{counts.review} to review</span>}</div></div>
-          <div className="card p-5"><div className="grid grid-cols-[220px_1fr_1fr_auto] items-end gap-4"><label><span className="label">Workday</span><input type="date" max={localDate()} className="field" value={date} onChange={e => { setDate(e.target.value); setItems([]); }} /></label><Toggle checked={includeEmail} onChange={setIncludeEmail} label="Infer from mail" detail="Completed work, not received messages" icon={<Mail className="h-4 w-4" />} /><Toggle checked={includeTeams} onChange={changeTeams} label="Infer from Teams" detail="Separate task for each activity" icon={<Bot className="h-4 w-4" />} /><button className="btn-primary h-[46px] px-5" disabled={busy || ((includeEmail || includeTeams) && (!status.ollamaRunning || !status.ollamaModelAvailable))} onClick={extract}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}{bridgeMode ? "Import" : "Extract"}</button></div>
+          <div className="card p-5"><div className="grid grid-cols-[220px_1fr_1fr_auto] items-end gap-4"><label><span className="label">Workday</span><input type="date" max={localDate()} className="field" value={date} disabled={busy} onChange={e => { setDate(e.target.value); setItems([]); setSyncNotice(""); }} /></label><Toggle checked={includeEmail} onChange={setIncludeEmail} label="Infer from mail" detail="Completed work, not received messages" icon={<Mail className="h-4 w-4" />} /><Toggle checked={includeTeams} onChange={changeTeams} label="Infer from Teams" detail="Separate task for each activity" icon={<Bot className="h-4 w-4" />} /><button className="btn-primary h-[46px] px-5" disabled={busy || ((includeEmail || includeTeams) && (!status.ollamaRunning || !status.ollamaModelAvailable))} onClick={extract}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}{bridgeMode ? "Import selected day" : "Extract selected day"}</button></div>
             {status.ollamaRunning && status.ollamaModelAvailable && <div className="mt-4 flex items-center gap-3 rounded-xl border border-pine/15 bg-mint/55 px-4 py-3 text-xs text-pine"><Bot className="h-5 w-5" /><span><b>Atlas Local AI is ready.</b> Mail and Teams evidence stay on this computer and are interpreted by <code>{status.ollamaModel}</code>.</span></div>}
             {(!status.ollamaRunning || !status.ollamaModelAvailable) && <div className="mt-4 flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-800"><Bot className="h-5 w-5" /><span className="flex-1"><b>Bundled Local AI could not start.</b> {status.localAiError ?? "Extract the complete Atlas portable ZIP again."}</span><button className="font-bold underline" onClick={refreshStatus}>Recheck</button></div>}
           </div>
@@ -321,5 +339,5 @@ function AtlasApp() {
 }
 
 export default function App() {
-  return <AtlasApp />;
+  return <AtlasIntro><AtlasApp /></AtlasIntro>;
 }

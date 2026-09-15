@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 
 const root = dirname(fileURLToPath(import.meta.url));
-const version = '1.8.0.0';
+const version = '1.9.0.0';
 const scheduled = {
   id: '8e5c1f84-dcbb-4a2c-9d2f-62e9c38105d2',
   name: 'Atlas - Export evidence to OneDrive',
@@ -36,15 +36,34 @@ const legacy = JSON.parse(readFileSync(join(root, `package-source/Microsoft.Flow
 const scheduledDefinition = legacy.properties.definition;
 delete scheduledDefinition.metadata;
 scheduledDefinition.triggers = {
-  Every_15_minutes: {
+  Every_5_minutes: {
     type: 'Recurrence',
-    recurrence: { frequency: 'Minute', interval: 15 },
+    recurrence: { frequency: 'Minute', interval: 5 },
     runtimeConfiguration: { concurrency: { runs: 1 } },
   },
 };
 const a = scheduledDefinition.actions;
 a.AtlasInstallationId = { type: 'Compose', inputs: 'unconfigured', runAfter: {} };
-a.TargetDate.runAfter = { AtlasInstallationId: ['Succeeded'] };
+a.Read_Atlas_requested_date = {
+  type: 'OpenApiConnection',
+  inputs: {
+    host: {
+      apiId: '/providers/Microsoft.PowerApps/apis/shared_onedriveforbusiness',
+      connectionName: 'shared_onedriveforbusiness',
+      operationId: 'GetFileContentByPath',
+    },
+    parameters: { path: '/AtlasBridge/requests/selected-date.txt', inferContentType: true },
+    authentication: "@parameters('$authentication')",
+  },
+  runAfter: { AtlasInstallationId: ['Succeeded'] },
+};
+a.RequestedDate = {
+  type: 'Compose',
+  inputs: "@trim(base64ToString(outputs('Read_Atlas_requested_date')?['body']?['$content']))",
+  runAfter: { Read_Atlas_requested_date: ['Succeeded'] },
+};
+a.TargetDate.inputs = "@if(empty(outputs('RequestedDate')),formatDateTime(convertTimeZone(utcNow(),'UTC','SA Pacific Standard Time'),'yyyy-MM-dd'),outputs('RequestedDate'))";
+a.TargetDate.runAfter = { RequestedDate: ['Succeeded'] };
 const calendar = a.Calendar_evidence.actions;
 calendar.Get_calendar_view_of_events_V3.inputs.parameters.calendarId = "@first(body('Get_calendars_V2')?['value'])?['id']";
 const mail = a.Mail_evidence.actions;
@@ -145,6 +164,7 @@ a.Compose_Atlas_bundle.inputs = {
 };
 a.Compose_Atlas_bundle.runAfter = Object.fromEntries(['Calendar_evidence', 'Mail_evidence', 'Teams_evidence'].map(scope => [scope, terminalStates]));
 a.Create_Atlas_evidence_file.inputs.parameters.name = "@concat('atlas-evidence-',outputs('AtlasInstallationId'),'-',outputs('TargetDate'),'-',formatDateTime(utcNow(),'yyyyMMddTHHmmssZ'),'.json')";
+a.Create_Atlas_evidence_file.inputs.parameters.folderPath = "@if(empty(outputs('RequestedDate')),'/AtlasBridge/inbox/scheduled','/AtlasBridge/inbox/requested')";
 
 const eventDefinition = {
   '$schema': 'https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#',
@@ -251,7 +271,7 @@ const eventDefinition = {
               operationId: 'CreateFile',
             },
             parameters: {
-              folderPath: '/AtlasBridge/inbox',
+              folderPath: '/AtlasBridge/inbox/teams',
               name: "@concat('atlas-evidence-',outputs('AtlasInstallationId'),'-',outputs('TargetDate'),'-teams-',guid(),'.json')",
               body: "@string(outputs('Compose_Teams_event_bundle'))",
             },

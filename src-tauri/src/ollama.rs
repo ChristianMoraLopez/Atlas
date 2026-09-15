@@ -445,6 +445,89 @@ struct ModelCandidate {
     summary: String,
     #[serde(default)]
     participants: Vec<String>,
+    #[serde(default)]
+    completion_evidence: String,
+    #[serde(default)]
+    actor_completed: bool,
+    #[serde(default)]
+    reminder_or_plan: bool,
+}
+
+fn normalized_evidence(value: &str) -> String {
+    value
+        .to_lowercase()
+        .chars()
+        .map(|character| match character {
+            'á' | 'à' | 'ä' | 'â' => 'a',
+            'é' | 'è' | 'ë' | 'ê' => 'e',
+            'í' | 'ì' | 'ï' | 'î' => 'i',
+            'ó' | 'ò' | 'ö' | 'ô' => 'o',
+            'ú' | 'ù' | 'ü' | 'û' => 'u',
+            'ñ' => 'n',
+            value if value.is_alphanumeric() => value,
+            _ => ' ',
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn looks_like_reminder_or_notice(value: &str) -> bool {
+    let clean = normalized_evidence(value);
+    [
+        "remember ",
+        "reminder ",
+        "dont forget ",
+        "recuerda ",
+        "recordatorio ",
+        "recordar ",
+        "no olvidar ",
+        "please ",
+        "por favor ",
+        "was assigned ",
+        "assigned to ",
+        "fue asignado ",
+        "se le asigno ",
+        "was invited ",
+        "received an invitation ",
+        "received an email invitation ",
+        "fue invitado ",
+        "recibio una invitacion ",
+        "an incident was logged ",
+        "se registro un incidente ",
+        "upcoming ",
+        "pending ",
+        "pendiente ",
+    ]
+    .iter()
+    .any(|prefix| clean.starts_with(prefix))
+        || [
+            " remember to ",
+            " reminder ",
+            " was assigned ",
+            " was invited ",
+            " received an email invitation ",
+            " recibio una invitacion ",
+        ]
+        .iter()
+        .any(|phrase| format!(" {clean} ").contains(phrase))
+}
+
+fn candidate_has_completion(candidate: &ModelCandidate, evidence: &[&ChatEvidence]) -> bool {
+    if !candidate.actor_completed || candidate.reminder_or_plan {
+        return false;
+    }
+    let quote = normalized_evidence(&candidate.completion_evidence);
+    if quote.chars().count() < 8
+        || looks_like_reminder_or_notice(&candidate.summary)
+        || looks_like_reminder_or_notice(&candidate.completion_evidence)
+    {
+        return false;
+    }
+    evidence
+        .iter()
+        .any(|item| normalized_evidence(&item.text).contains(&quote))
 }
 
 async fn summarize_at(
@@ -500,8 +583,8 @@ async fn summarize_at(
         .join("\n");
     let prompt = format!(
         r#"You extract completed daily work performed by {actor} from REAL {source_label} evidence.
-Return strict JSON with this shape: {{"interactions":[{{"source_ids":["exact-message-id"],"participants":["names found in messages"],"summary":"one factual sentence"}}]}}.
-Rules: return up to {MAX_AI_INTERACTIONS} distinct completed tasks; split separate tasks into separate interactions even when they use the same source ID; keep each summary under 160 characters; use only IDs and facts present below; never invent work, people, clients, incidents, outcomes, or times. A received request, notification, greeting, acknowledgement, meeting invitation, or merely receiving/sending a message is not completed work. Include an item only when the evidence shows that {actor} actually analyzed, prepared, changed, resolved, delivered, coordinated, reviewed, tested, documented, or otherwise completed concrete work. An interaction must reference at least one exact evidence ID. The app derives times from the real evidence. Write the summary in the evidence language and return the JSON object immediately with no explanation.
+Return strict JSON with this shape: {{"interactions":[{{"source_ids":["exact-message-id"],"participants":["names found in messages"],"summary":"one factual sentence","completion_evidence":"short exact quote proving completion","actor_completed":true,"reminder_or_plan":false}}]}}.
+Rules: return up to {MAX_AI_INTERACTIONS} distinct completed tasks; split separate tasks into separate interactions even when they use the same source ID; keep each summary under 160 characters; use only IDs and facts present below; never invent work, people, clients, incidents, outcomes, or times. Set actor_completed=true only when the evidence explicitly shows that {actor} performed the completed action. Set reminder_or_plan=true for reminders, to-do items, requests, assignments, invitations, plans, future work, pending work, system notifications, or status text that does not prove who did the work. A received request, notification, greeting, acknowledgement, meeting invitation, or merely receiving/sending a message is not completed work. "Remember to send QA audits" produces no interaction. "Please send QA audits" produces no interaction. "I sent the QA audits" may produce one interaction when authored by {actor}. Include an item only when the evidence shows that {actor} actually analyzed, prepared, changed, resolved, delivered, coordinated, reviewed, tested, documented, or otherwise completed concrete work. completion_evidence must be a short verbatim quote from one referenced message that directly proves the completed action; do not paraphrase it. An interaction must reference at least one exact evidence ID. The app derives times from the real evidence. Write the summary in the evidence language and return the JSON object immediately with no explanation.
 
 MESSAGES:
 {lines}"#
@@ -533,9 +616,12 @@ MESSAGES:
                                     "maxItems": 5,
                                     "items": { "type": "string" }
                                 },
-                                "summary": { "type": "string", "maxLength": 160 }
+                                "summary": { "type": "string", "maxLength": 160 },
+                                "completion_evidence": { "type": "string", "maxLength": 240 },
+                                "actor_completed": { "type": "boolean" },
+                                "reminder_or_plan": { "type": "boolean" }
                             },
-                            "required": ["source_ids", "participants", "summary"],
+                            "required": ["source_ids", "participants", "summary", "completion_evidence", "actor_completed", "reminder_or_plan"],
                             "additionalProperties": false
                         }
                     }
@@ -581,8 +667,9 @@ MESSAGES:
     for candidate in parsed.interactions.into_iter().take(MAX_AI_INTERACTIONS) {
         let mut aliases: Vec<String> = candidate
             .source_ids
-            .into_iter()
+            .iter()
             .filter(|id| by_id.contains_key(id.as_str()))
+            .cloned()
             .collect();
         aliases.sort();
         aliases.dedup();
@@ -601,6 +688,13 @@ MESSAGES:
             .iter()
             .filter_map(|id| by_id.get(id.as_str()).copied())
             .collect();
+        if !candidate_has_completion(&candidate, &matched) {
+            diagnostics::info(
+                "local-ai/validation",
+                "Discarded a suggestion without direct evidence of completed work",
+            );
+            continue;
+        }
         matched.sort_by_key(|value| value.created);
         let start = matched.first().unwrap().created;
         let end = matched.last().unwrap().created;
@@ -716,5 +810,58 @@ mod tests {
             let bounded = bounded_evidence(&batch);
             assert!(bounded.iter().map(|item| item.text.len()).sum::<usize>() <= 8_000);
         }
+    }
+
+    fn evidence(text: &str) -> ChatEvidence {
+        ChatEvidence {
+            id: "message-1".into(),
+            author: "Christian Mora".into(),
+            created: DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
+            text: text.into(),
+        }
+    }
+
+    fn candidate(quote: &str, summary: &str) -> ModelCandidate {
+        ModelCandidate {
+            source_ids: vec!["m0".into()],
+            summary: summary.into(),
+            participants: Vec::new(),
+            completion_evidence: quote.into(),
+            actor_completed: true,
+            reminder_or_plan: false,
+        }
+    }
+
+    #[test]
+    fn completed_work_requires_an_exact_supporting_quote() {
+        let message = evidence("I sent the QA audits and documented the findings.");
+        assert!(candidate_has_completion(
+            &candidate("I sent the QA audits", "Christian sent the QA audits."),
+            &[&message]
+        ));
+        assert!(!candidate_has_completion(
+            &candidate("I resolved the production incident", "Incident resolved."),
+            &[&message]
+        ));
+    }
+
+    #[test]
+    fn reminders_assignments_and_invitations_are_not_completed_work() {
+        for value in [
+            "Remember to send QA audits",
+            "Christian was assigned a coach introduction session",
+            "Christian received an email invitation to the review",
+            "Recuerda enviar el informe",
+        ] {
+            let message = evidence(value);
+            assert!(!candidate_has_completion(
+                &candidate(value, value),
+                &[&message]
+            ));
+        }
+        let message = evidence("Please send the QA audits tomorrow");
+        let mut planned = candidate("Please send the QA audits tomorrow", "Send QA audits");
+        planned.reminder_or_plan = true;
+        assert!(!candidate_has_completion(&planned, &[&message]));
     }
 }

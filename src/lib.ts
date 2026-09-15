@@ -20,6 +20,7 @@ export const api = {
     call<AppStatus>("save_tracker_destination", { destination, autoSync, autoSyncTime }),
   extract: (date: string, includeEmail: boolean, includeTeams: boolean, timezone: string) =>
     call<ExtractionResult>("extract_interactions", { date, includeEmail, includeTeams, timezone }),
+  requestBridgeDate: (date: string) => call<void>("request_bridge_date", { date }),
   export: (date: string, profile: UserProfile, interactions: Interaction[]) =>
     call<ExportResult>("export_configured_tracker", { date, profile, interactions }),
   openTracker: () => call<void>("open_tracker_destination"),

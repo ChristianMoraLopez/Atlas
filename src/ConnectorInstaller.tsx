@@ -18,7 +18,7 @@ const diagnostics: Record<string, string> = {
   user_reported_not_remotely_verified: 'Paso anterior confirmado por ti; Atlas no ha consultado el tenant. Continúa en el mismo entorno y con tu cuenta corporativa.',
   file_verified: 'Llegó un archivo de esta instalación y cumple atlas-evidence.schema.json. Esto verifica la entrega del puente; no certifica la integridad de todos tus datos de Microsoft 365.',
   existing_flow_file_verified: 'Atlas encontró un paquete reciente y válido creado por un flujo Atlas existente. La carpeta quedó verificada y puedes continuar sin volver a importar el flujo.',
-  waiting_for_sync: 'Todavía no hay un paquete Atlas válido disponible localmente. El flujo se ejecuta cada 15 minutos. Comprueba su historial y marca inbox como Siempre mantener en este dispositivo en OneDrive; Atlas volverá a comprobar cada 15 segundos.',
+  waiting_for_sync: 'Todavía no hay un paquete Atlas válido disponible localmente. El flujo se ejecuta cada cinco minutos. Comprueba su historial y marca AtlasBridge como Siempre mantener en este dispositivo en OneDrive; Atlas volverá a comprobar cada 15 segundos.',
   evidence_not_downloaded: 'OneDrive muestra el archivo, pero todavía no está disponible localmente. Haz clic derecho sobre inbox y elige Siempre mantener en este dispositivo.',
   evidence_too_old: 'El archivo de esta instalación tiene más de 48 horas. Ejecuta el flujo para generar una comprobación reciente.',
   evidence_from_future: 'La fecha del archivo está adelantada respecto al reloj del equipo. Comprueba fecha, hora y zona horaria de Windows y vuelve a ejecutar el flujo.',
@@ -95,7 +95,7 @@ export default function ConnectorInstaller({ onClose, onUseFolder }: { onClose?:
   return <main className="mx-auto min-h-screen max-w-6xl px-10 py-8">
     <header className="flex items-center justify-between"><span className="chip bg-mint text-pine"><ShieldCheck className="h-4 w-4" />Sin instalaciones de sistema</span>{onClose && <button className="btn-secondary" onClick={onClose} disabled={busy}><X className="h-4 w-4" />Cerrar y conservar progreso</button>}</header>
     <h1 className="mt-7 font-display text-4xl">Instalar conector de Microsoft 365</h1>
-    <p className="mt-3 max-w-4xl text-sm leading-6 text-ink/65">Inicia sesión con tu cuenta Circana en el portal oficial, vincula tus conexiones e importa el paquete una sola vez. El flujo se entrega activo y se ejecuta cada 15 minutos; no necesitas abrir el diseñador ni copiar identificadores.</p>
+    <p className="mt-3 max-w-4xl text-sm leading-6 text-ink/65">Inicia sesión con tu cuenta Circana en el portal oficial, vincula tus conexiones e importa el paquete una sola vez. El flujo se entrega activo y se ejecuta cada cinco minutos; no necesitas abrir el diseñador ni copiar identificadores.</p>
     <div className="mt-7 grid grid-cols-[280px_1fr] gap-6">
       <ol className="card space-y-3 p-5" aria-label="Etapas de instalación">{steps.map(([key, label], i) => <li key={key} aria-current={key === phase ? 'step' : undefined} className={`flex gap-3 text-sm ${key === phase ? 'font-bold text-pine' : 'text-ink/50'}`}><span>{i + 1}.</span>{label}{key === 'completed' && phase === key && <Check className="h-4 w-4" />}</li>)}</ol>
       <section className="card min-w-0 p-7">

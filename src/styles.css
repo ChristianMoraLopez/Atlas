@@ -23,3 +23,30 @@ button:disabled { opacity: .48; cursor: not-allowed; }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { border: 3px solid transparent; background: rgba(15,79,69,.25); background-clip: padding-box; border-radius: 99px; }
+
+.atlas-intro { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; overflow: hidden; background: #061b18; color: #f9f6ed; opacity: 1; transition: opacity .42s ease, visibility .42s ease; }
+.atlas-intro--leaving { opacity: 0; visibility: hidden; }
+.atlas-intro__grid { position: absolute; inset: -30%; opacity: .13; transform: perspective(700px) rotateX(64deg) translateY(16%); background-image: linear-gradient(rgba(141,215,196,.35) 1px, transparent 1px), linear-gradient(90deg, rgba(141,215,196,.35) 1px, transparent 1px); background-size: 46px 46px; animation: atlas-grid 2.8s ease-out both; }
+.atlas-intro__glow { position: absolute; border-radius: 999px; filter: blur(70px); opacity: .22; }
+.atlas-intro__glow--one { width: 32rem; height: 32rem; left: -8rem; top: -12rem; background: #8dd7c4; animation: atlas-drift 3s ease-out both; }
+.atlas-intro__glow--two { width: 25rem; height: 25rem; right: -5rem; bottom: -9rem; background: #dc8b59; animation: atlas-drift 3s .15s ease-out both reverse; }
+.atlas-intro__content { position: relative; display: flex; flex-direction: column; align-items: center; }
+.atlas-intro__mark { width: 12rem; height: 12rem; overflow: visible; }
+.atlas-intro__orbit { fill: none; stroke: rgba(141,215,196,.22); stroke-width: 1; stroke-dasharray: 5 9; transform-origin: center; animation: atlas-spin 7s linear infinite, atlas-appear .8s ease-out both; }
+.atlas-intro__trace, .atlas-intro__ledger { fill: none; stroke: #f7f3e9; stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 360; stroke-dashoffset: 360; animation: atlas-draw 1.25s .15s cubic-bezier(.65,0,.35,1) forwards; }
+.atlas-intro__ledger { stroke: #8dd7c4; stroke-width: 3; animation-delay: .65s; }
+.atlas-intro__node { fill: #e89969; opacity: 0; transform-box: fill-box; transform-origin: center; animation: atlas-node .45s cubic-bezier(.2,.9,.25,1.4) forwards; }
+.atlas-intro__node--one { animation-delay: .55s; }.atlas-intro__node--two { animation-delay: .78s; }.atlas-intro__node--three { animation-delay: 1s; }
+.atlas-intro__word { display: flex; gap: .32em; margin-top: 1.1rem; padding-left: .32em; font-family: Georgia, 'Times New Roman', serif; font-size: clamp(2.7rem, 5vw, 4.7rem); letter-spacing: .14em; }
+.atlas-intro__word span { opacity: 0; transform: translateY(18px); animation: atlas-letter .55s calc(.75s + var(--atlas-letter) * .1s) ease-out forwards; }
+.atlas-intro__tagline { margin: .9rem 0 0; color: #8dd7c4; font-size: .7rem; font-weight: 800; letter-spacing: .35em; opacity: 0; animation: atlas-appear .6s 1.35s ease-out forwards; }
+.atlas-intro__skip { position: absolute; right: 2rem; bottom: 1.7rem; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(255,255,255,.06); padding: .55rem .75rem; color: rgba(255,255,255,.68); font-size: .7rem; letter-spacing: .08em; cursor: pointer; }
+.atlas-intro__skip span { margin-left: .45rem; color: rgba(255,255,255,.35); }
+@keyframes atlas-draw { to { stroke-dashoffset: 0; } }
+@keyframes atlas-node { 0% { opacity: 0; transform: scale(.1); } 100% { opacity: 1; transform: scale(1); } }
+@keyframes atlas-letter { to { opacity: 1; transform: translateY(0); } }
+@keyframes atlas-appear { from { opacity: 0; } to { opacity: 1; } }
+@keyframes atlas-spin { to { transform: rotate(360deg); } }
+@keyframes atlas-grid { from { opacity: 0; transform: perspective(700px) rotateX(64deg) translateY(24%) scale(1.08); } }
+@keyframes atlas-drift { from { opacity: 0; transform: translate3d(-3rem,-2rem,0) scale(.8); } }
+@media (prefers-reduced-motion: reduce) { .atlas-intro *, .atlas-intro *::before, .atlas-intro *::after { animation-duration: .01ms !important; animation-delay: 0ms !important; animation-iteration-count: 1 !important; } .atlas-intro { transition-duration: .12s; } }

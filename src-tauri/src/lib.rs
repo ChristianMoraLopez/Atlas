@@ -320,6 +320,20 @@ fn complete_scheduled_launch(app: tauri::AppHandle, needs_attention: bool) -> Re
 }
 
 #[tauri::command]
+fn request_bridge_date(state: tauri::State<'_, AppState>, date: String) -> Result<()> {
+    let settings = state.read_settings()?;
+    if settings.source_mode != SourceMode::PowerAutomateFolder {
+        return Err(AppError::Message(
+            "A Power Automate date request is available only in inbox mode.".into(),
+        ));
+    }
+    let folder = settings.bridge_folder.ok_or_else(|| {
+        AppError::Message("Configure the Power Automate inbox folder first.".into())
+    })?;
+    bridge::request_date(Path::new(&folder), &date)
+}
+
+#[tauri::command]
 async fn extract_interactions(
     state: tauri::State<'_, AppState>,
     date: String,
@@ -663,6 +677,7 @@ pub fn run() {
             log_frontend_error,
             open_tracker_destination,
             complete_scheduled_launch,
+            request_bridge_date,
             extract_interactions,
             export_configured_tracker
         ])

@@ -10,10 +10,11 @@ Atlas is a Tauri v2 Windows desktop application that builds the Circana Interact
 
 - Signs each teammate in through Microsoft Authorization Code + PKCE in the system browser.
 - Stores the refresh token in size-safe chunks in Windows Credential Manager and keeps short-lived access tokens only in memory.
-- Extracts real meetings for a selected workday and excludes Lunch, Almuerzo, Tracker Time, Hora del Tracker, and cancelled meetings.
+- Opens with a skippable Atlas SVG animation and honors Windows reduced-motion preferences.
+- Extracts real meetings for any selected workday and excludes cancelled events, meal/tracker blocks, focus blocks, reminders, and to-do calendar entries.
 - Normalizes only the first MMNI/SparkTriage meeting to 09:00–09:30 in the chosen local timezone.
-- Preselects every completed meeting and each separate task inferred from mail or Teams; receiving a message by itself is never a tracker row.
-- Interprets mail and Teams evidence with bundled Local AI in both Graph and Power Automate modes. Distinct tasks can come from the same email or conversation.
+- Preselects every completed meeting and each separate task inferred from mail or Teams; receiving a message, invitation, assignment, reminder, or future plan is never a tracker row.
+- Interprets mail and Teams evidence with bundled Local AI in both Graph and Power Automate modes. Every suggestion must cite a verbatim completion fragment found in its source evidence. Distinct tasks can come from the same email or conversation.
 - Lets the user edit review fields and add a genuinely manual interaction through a blank form.
 - Configures a new tracker, an existing `.xlsx` / `.xlsm`, or a SharePoint/OneDrive workbook link once and reuses it.
 - Registers a per-user Windows scheduled task with limited privileges and runs at 17:30 by default. If Atlas is already open, the existing instance handles the run.
@@ -49,6 +50,10 @@ After profile setup, choose one destination:
 
 The destination, daily time, and automatic-run preference are stored in local settings. In Graph mode, a SharePoint link is resolved and updated through Microsoft Graph. In Power Automate Inbox mode, Atlas uses the local OneDrive-synced copy of the linked workbook, preserving `.xlsm` macros while the OneDrive client publishes the update. The user must already have edit access.
 
+For a workbook shared from another person’s OneDrive, the owner must share the **containing folder** with edit permission. Open **Shared → Shared with you**, select that folder, choose **Add shortcut to My files**, wait until it appears below `OneDrive - Circana` in File Explorer, then select the exact synced `.xlsm` or `.xlsx` in Atlas. OneDrive supports this shortcut operation for folders rather than individual shared files, so a file-only share must first be moved into a shared folder.
+
+Power Automate Inbox mode creates `AtlasBridge/inbox/scheduled`, `AtlasBridge/inbox/teams`, `AtlasBridge/inbox/requested`, and `AtlasBridge/requests`. Choosing an older workday writes `requests/selected-date.txt`; solution 1.9 checks that request every five minutes, exports that date, and Atlas waits for the synchronized result. Existing flat inbox JSON remains readable.
+
 ## Local development
 
 Prerequisites:
@@ -81,7 +86,7 @@ Release packaging downloads the official Ollama Windows x64 archive, verifies it
 
 Atlas supports the real `Circana Interactions Tracker V 1.0` layout: the `Data` table starts on row 2, date headers include their `(mm/dd/yyyy hh:mm)` suffixes, and `Incident Number` includes its `If applies` suffix. For an existing workbook, Atlas requires a worksheet whose name matches the profile’s full name or Login ID. It maps these labels safely even when they contain line breaks, writes only columns A–O on that sheet, and never writes the orange formula columns P–U.
 
-Existing `.xlsm` / `.xlsx` files are updated by replacing only the selected worksheet XML inside the Office package. All other package entries are copied byte-for-byte, including `vbaProject.bin`, external links, other worksheets, hidden lookup data, and workbook metadata. Within the selected sheet, existing cell styles, the `Data` table, formulas, validations, and conditional formatting remain in place. Atlas fills the first unused preformatted row inside the table and stops with a clear error if the table has no capacity; it never appends a malformed row beyond the template.
+Existing `.xlsm` / `.xlsx` files are updated by replacing only the selected worksheet XML inside the Office package. All other package entries are copied byte-for-byte, including `vbaProject.bin`, external links, other worksheets, hidden lookup data, and workbook metadata. Within the selected sheet, existing cell styles, the `Data` table, formulas, validations, and conditional formatting remain in place. New date cells inherit the template’s date style, so Excel displays `mm/dd/yyyy hh:mm` instead of the underlying numeric serial. Atlas fills the first unused row and stops with a clear error if the template cannot accept it.
 
 Meetings keep their Microsoft event ID. Inferred tasks use a stable hash of their real mail or Teams evidence plus the task summary, which allows one message to support several separate tasks without producing duplicates on a rerun. App-created manual rows use `manual:<uuid>` and are skipped—not modified—if that exact ID already exists. Rows without Atlas source IDs are treated as user-owned and are never updated or deleted.
 

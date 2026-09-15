@@ -24,7 +24,7 @@ const TEAMS_EVENT_WORKFLOW: &str =
 const WORKFLOWS: [&str; 2] = [SCHEDULED_WORKFLOW, TEAMS_EVENT_WORKFLOW];
 const MAX_FILE: u64 = 25 * 1024 * 1024;
 const PORTAL: &str = "https://make.powerautomate.com/";
-const SOLUTION_VERSION: &str = "1.8.0.0";
+const SOLUTION_VERSION: &str = "1.9.0.0";
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -418,6 +418,28 @@ fn prepare_inbox(root: &Path) -> Result<PathBuf> {
             fs::create_dir(&folder).map_err(|_| fail("inbox_not_writable"))?;
         }
     }
+    for path in [
+        folder.join("scheduled"),
+        folder.join("teams"),
+        folder.join("requested"),
+        root.join("AtlasBridge").join("requests"),
+    ] {
+        if path.exists() {
+            let canonical = fs::canonicalize(&path).map_err(|_| fail("inbox_unavailable"))?;
+            if !canonical.starts_with(&root) || !canonical.is_dir() {
+                return Err(fail("unsafe_inbox_link"));
+            }
+        } else {
+            fs::create_dir(&path).map_err(|_| fail("inbox_not_writable"))?;
+        }
+    }
+    let request = root
+        .join("AtlasBridge")
+        .join("requests")
+        .join("selected-date.txt");
+    if !request.exists() {
+        fs::write(&request, "").map_err(|_| fail("inbox_not_writable"))?;
+    }
     Ok(folder)
 }
 
@@ -490,11 +512,35 @@ fn verification(
     }
 }
 
+fn verification_files(folder: &Path) -> std::io::Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    let mut pending = vec![(folder.to_path_buf(), 0usize)];
+    while let Some((directory, depth)) = pending.pop() {
+        for entry in fs::read_dir(directory)?.flatten() {
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_symlink() {
+                continue;
+            }
+            if kind.is_dir() && depth < 2 {
+                pending.push((entry.path(), depth + 1));
+            } else if kind.is_file() {
+                files.push(entry.path());
+                if files.len() >= 10_000 {
+                    return Ok(files);
+                }
+            }
+        }
+    }
+    Ok(files)
+}
+
 fn verify_inbox(session: &Session) -> Verification {
     let Some(folder) = &session.folder else {
         return verification(VerificationState::Unavailable, "inbox_unavailable", None);
     };
-    let Ok(entries) = fs::read_dir(folder) else {
+    let Ok(entries) = verification_files(Path::new(folder)) else {
         return verification(VerificationState::Unavailable, "inbox_unavailable", None);
     };
     let current_prefix = format!("atlas-evidence-{}-", session.installation_id);
@@ -505,8 +551,12 @@ fn verify_inbox(session: &Session) -> Verification {
     let mut checked_file = None;
     let now = Utc::now();
     // Bound directory traversal and each read. Verification never sends evidence to logs/UI.
-    for entry in entries.take(10_000).flatten() {
-        let name = entry.file_name().to_string_lossy().to_string();
+    for path in entries {
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
         if !name.ends_with(".json") {
             continue;
         }
@@ -515,15 +565,7 @@ fn verify_inbox(session: &Session) -> Verification {
         }
         let current_installation = name.starts_with(&current_prefix);
         checked_file = Some(name);
-        let Ok(kind) = entry.file_type() else {
-            saw_invalid = true;
-            continue;
-        };
-        if !kind.is_file() || kind.is_symlink() {
-            saw_invalid = true;
-            continue;
-        }
-        let Ok(metadata) = entry.metadata() else {
+        let Ok(metadata) = fs::metadata(&path) else {
             saw_invalid = true;
             continue;
         };
@@ -540,7 +582,7 @@ fn verify_inbox(session: &Session) -> Verification {
             saw_invalid = true;
             continue;
         }
-        let Ok(file) = fs::File::open(entry.path()) else {
+        let Ok(file) = fs::File::open(&path) else {
             saw_invalid = true;
             continue;
         };
@@ -783,6 +825,15 @@ mod tests {
     fn folder_preparation_is_idempotent_and_keeps_existing_evidence() {
         let dir = tempfile::tempdir().unwrap();
         let folder = prepare_inbox(dir.path()).unwrap();
+        for child in ["scheduled", "teams", "requested"] {
+            assert!(folder.join(child).is_dir());
+        }
+        assert!(dir
+            .path()
+            .join("AtlasBridge")
+            .join("requests")
+            .join("selected-date.txt")
+            .is_file());
         fs::write(folder.join("existing.json"), "keep me").unwrap();
         assert_eq!(prepare_inbox(dir.path()).unwrap(), folder);
         assert_eq!(
@@ -859,6 +910,14 @@ mod tests {
             actions["Compose_Atlas_bundle"]["runAfter"]["Teams_evidence"],
             json!(["Succeeded", "Failed", "Skipped", "TimedOut"])
         );
+        assert_eq!(
+            actions["Read_Atlas_requested_date"]["inputs"]["host"]["operationId"],
+            "GetFileContentByPath"
+        );
+        assert!(actions["TargetDate"]["inputs"]
+            .as_str()
+            .unwrap()
+            .contains("RequestedDate"));
         let event_flow = flow_from(bytes, TEAMS_EVENT_WORKFLOW);
         let event_actions = &event_flow["properties"]["definition"]["actions"];
         assert_eq!(

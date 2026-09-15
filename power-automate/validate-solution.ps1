@@ -52,7 +52,7 @@ try {
     [xml] $types = Read-Entry '[Content_Types].xml'
     if ($solution.ImportExportXml.SolutionManifest.UniqueName -ne 'AtlasBridge') { throw 'Unexpected solution identity.' }
     if ($solution.ImportExportXml.SolutionManifest.Managed -ne '0') { throw 'Expected unmanaged solution.' }
-    if ($solution.ImportExportXml.SolutionManifest.Version -ne '1.8.0.0') { throw 'Unexpected version.' }
+    if ($solution.ImportExportXml.SolutionManifest.Version -ne '1.9.0.0') { throw 'Unexpected version.' }
 
     $rootIds = @($solution.ImportExportXml.SolutionManifest.RootComponents.RootComponent | ForEach-Object id | Sort-Object)
     if (($rootIds -join ',') -ne ((@($scheduledId, $eventId) | Sort-Object) -join ',')) { throw 'Unexpected solution root components.' }
@@ -99,9 +99,11 @@ try {
     $scheduledFlow = $flows[$scheduledId]
     $actions = $scheduledFlow.properties.definition.actions
     $triggers = @($scheduledFlow.properties.definition.triggers.PSObject.Properties)
-    if ($triggers.Count -ne 1 -or $triggers[0].Name -ne 'Every_15_minutes' -or $triggers[0].Value.type -ne 'Recurrence' -or $triggers[0].Value.recurrence.frequency -ne 'Minute' -or $triggers[0].Value.recurrence.interval -ne 15) { throw 'Expected a portable 15-minute recurrence trigger.' }
+    if ($triggers.Count -ne 1 -or $triggers[0].Name -ne 'Every_5_minutes' -or $triggers[0].Value.type -ne 'Recurrence' -or $triggers[0].Value.recurrence.frequency -ne 'Minute' -or $triggers[0].Value.recurrence.interval -ne 5) { throw 'Expected a portable five-minute recurrence trigger.' }
     if ($triggers[0].Value.runtimeConfiguration.concurrency.runs -ne 1) { throw 'Recurring runs must not overlap.' }
     if ($actions.Compose_Atlas_bundle.inputs.schemaVersion -ne 3) { throw 'Expected evidence contract v3.' }
+    if ($actions.Read_Atlas_requested_date.inputs.host.operationId -ne 'GetFileContentByPath' -or $actions.Read_Atlas_requested_date.inputs.parameters.path -ne '/AtlasBridge/requests/selected-date.txt') { throw 'Selected-day request control is missing.' }
+    if ($actions.TargetDate.inputs -notmatch 'RequestedDate' -or $actions.TargetDate.inputs -notmatch 'SA Pacific Standard Time') { throw 'Target date must use the requested day or local today.' }
     foreach ($sourceName in @('calendar', 'mail', 'teams')) {
         if (-not $actions.Compose_Atlas_bundle.inputs.sources.$sourceName) { throw "Missing source health flag: $sourceName" }
     }
@@ -125,7 +127,7 @@ try {
     if ($teamsRequest.'$top' -gt 20 -or $teamsRequest.'$filter' -notmatch 'lastModifiedDateTime.+StartUtc.+lastModifiedDateTime.+EndUtc' -or $teamsRequest.'$orderby' -ne 'lastModifiedDateTime desc') { throw 'Scheduled Teams query must use the bounded date filter.' }
     $teamsRetry = $teamsLoop.actions.Get_messages_in_chat.inputs.retryPolicy
     if ($teamsRetry.type -ne 'exponential' -or $teamsRetry.count -lt 4 -or $teamsRetry.minimumInterval -ne 'PT5S') { throw 'Scheduled Teams requests must retry transient failures.' }
-    if ($actions.Create_Atlas_evidence_file.inputs.parameters.folderPath -ne '/AtlasBridge/inbox' -or $actions.Create_Atlas_evidence_file.inputs.parameters.name -notmatch 'AtlasInstallationId') { throw 'Invalid scheduled cloud inbox output.' }
+    if ($actions.Create_Atlas_evidence_file.inputs.parameters.folderPath -notmatch '/AtlasBridge/inbox/scheduled' -or $actions.Create_Atlas_evidence_file.inputs.parameters.folderPath -notmatch '/AtlasBridge/inbox/requested' -or $actions.Create_Atlas_evidence_file.inputs.parameters.name -notmatch 'AtlasInstallationId') { throw 'Invalid scheduled cloud inbox output.' }
 
     $eventFlow = $flows[$eventId]
     $eventTriggers = @($eventFlow.properties.definition.triggers.PSObject.Properties)
@@ -143,7 +145,7 @@ try {
     $eventBundle = $eventLoop.actions.Compose_Teams_event_bundle.inputs
     if ($eventBundle.schemaVersion -ne 3 -or -not $eventBundle.sources.teams -or $eventBundle.sources.calendar -or $eventBundle.sources.mail) { throw 'Event flow must report Teams-only evidence.' }
     $eventOutput = $eventLoop.actions.Create_Teams_event_evidence_file.inputs.parameters
-    if ($eventOutput.folderPath -ne '/AtlasBridge/inbox' -or $eventOutput.name -notmatch 'AtlasInstallationId' -or $eventOutput.name -notmatch 'guid\(\)') { throw 'Invalid event cloud inbox output.' }
+    if ($eventOutput.folderPath -ne '/AtlasBridge/inbox/teams' -or $eventOutput.name -notmatch 'AtlasInstallationId' -or $eventOutput.name -notmatch 'guid\(\)') { throw 'Invalid event cloud inbox output.' }
 
     if ($names.Count -ne 5) { throw 'Unexpected files in solution.' }
     Write-Host 'PASS: two active cloud flows, event-driven Teams capture, bounded fallback, three standard references, source parity and no user credentials.'

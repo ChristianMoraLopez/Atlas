@@ -2,11 +2,11 @@
 
 Este modo evita por completo el registro de una aplicación en Microsoft Entra. Power Automate usa las conexiones corporativas que ya tienes, crea un paquete JSON en OneDrive y el cliente de OneDrive lo sincroniza al PC. Atlas lee ese paquete, actualiza el tracker local y OneDrive vuelve a publicar el Excel.
 
-No hay un segundo flujo de subida: escribir directamente en la copia sincronizada del tracker es más simple y evita carreras en las que un flujo podría sobrescribir una versión más nueva.
+No hay un segundo flujo que edite el Excel: Atlas escribe la copia sincronizada y OneDrive publica esa misma versión. Esto conserva macros y evita carreras en las que Power Automate y Excel intenten modificar el libro al mismo tiempo.
 
 ## Qué incluye esta carpeta
 
-- `AtlasBridge_1_0_0_0.zip`: solución no administrada AtlasBridge 1.8 para el asistente actual. Instala dos flujos activos con las mismas referencias de conexión de Outlook, Teams y OneDrive. El nombre estable permite que el cliente la encuentre; la versión interna controla la actualización.
+- `AtlasBridge_1_0_0_0.zip`: solución no administrada AtlasBridge 1.9 para el asistente actual. Instala dos flujos activos con las mismas referencias de conexión de Outlook, Teams y OneDrive. El nombre estable permite que el cliente la encuentre; la versión interna controla la actualización.
 - `solution-source/`: fuente revisable de la solución actual.
 - `INSTALLER.md`: primera ejecución, límites y diagnóstico del asistente.
 - `Atlas-Export-Evidence.zip`: paquete heredado conservado solo como referencia de desarrollo; no produce el contrato v3 actual.
@@ -29,9 +29,9 @@ Usa **Instalar conector de Microsoft 365** dentro de Atlas y sigue `INSTALLER.md
 La solución importa dos flujos activos con fechas calculadas en la zona `SA Pacific Standard Time` (Bogotá):
 
 - **Atlas - Capture Teams messages** se dispara con cada mensaje nuevo de un chat del usuario, consulta directamente ese chat y escribe evidencia incremental en OneDrive. Así la captura diaria no depende de enumerar el historial completo de chats.
-- **Atlas - Export evidence to OneDrive** se ejecuta cada 15 minutos para correo y calendario. También conserva un respaldo de Teams limitado a los 12 chats más recientes actualizados hoy, espera cinco segundos entre consultas (el mínimo aceptado por Power Automate), reintenta fallos transitorios y solicita hasta 20 mensajes del día por chat. La captura por evento sigue guardando mensajes de los demás chats sin recorrer una lista de 100 conversaciones.
+- **Atlas - Export evidence to OneDrive** se ejecuta cada cinco minutos para correo y calendario. Lee `AtlasBridge/requests/selected-date.txt`: si Atlas solicitó una fecha usa esa fecha; si está vacío usa el día actual de Bogotá. También conserva un respaldo de Teams limitado a los 12 chats recientes, espera cinco segundos entre consultas, reintenta fallos transitorios y solicita hasta 20 mensajes del día por chat. La captura por evento sigue guardando mensajes de los demás chats sin recorrer una lista de 100 conversaciones.
 
-Atlas combina los paquetes del mismo día y elimina mensajes de Teams repetidos. Si una fuente falla, el flujo programado escribe las demás con una marca de estado para que Atlas muestre la alerta correspondiente y acepte datos parciales.
+Los JSON quedan separados en `inbox/scheduled`, `inbox/teams` e `inbox/requested`. Atlas busca también paquetes antiguos en la raíz, combina los del mismo día y elimina mensajes de Teams repetidos. Si una fuente falla, el flujo programado escribe las demás con una marca de estado para que Atlas muestre la alerta correspondiente y acepte datos parciales.
 
 ## Configuración de Atlas
 
@@ -45,12 +45,14 @@ Atlas combina los paquetes del mismo día y elimina mensajes de Teams repetidos.
 5. Como destino, elige el `.xlsx` o `.xlsm` dentro de una carpeta sincronizada de OneDrive o de una biblioteca de SharePoint sincronizada con OneDrive.
 6. Deja activo **Daily automatic tracker**. Windows abrirá Atlas a las 17:30, o a la hora que elijas, y la aplicación escribirá todas las actividades reales encontradas.
 
+Para recuperar otro día, elige la fecha en **Workday** y pulsa **Import selected day**. Atlas escribe la solicitud, espera la próxima ejecución del flujo y comprueba la respuesta durante seis minutos sin pedir otro paso.
+
 Para probar sin esperar el flujo, copia `atlas-evidence.example.json` dentro de `inbox`, cambia `targetDate` y las fechas de ejemplo al día elegido y pulsa **Import**.
 
 ## Qué recoge y qué no
 
-- Calendario: asunto, horas, organizador e identificador. Las reuniones válidas quedan seleccionadas para Excel.
-- Correo: bandeja de entrada y enviados, asunto, vista previa del contenido, participantes, hora e identificador; nunca se descargan adjuntos. La IA local convierte únicamente trabajo realizado en tareas separadas.
+- Calendario: asunto, horas, organizador e identificador. Las reuniones válidas quedan seleccionadas; recordatorios, planes y bloques de foco se excluyen.
+- Correo: bandeja de entrada y enviados, asunto, vista previa del contenido, participantes, hora e identificador; nunca se descargan adjuntos. La IA local convierte únicamente trabajo realizado en tareas separadas y debe citar texto exacto que pruebe cada tarea.
 - Teams: texto, autor, hora, chat e identificador. La IA local puede obtener varias tareas independientes de una conversación. Recibir o enviar un mensaje, por sí solo, no se registra como actividad.
 - Atlas no modifica, elimina ni mueve elementos en Outlook o Teams.
 
@@ -58,6 +60,6 @@ El flujo programado consulta hasta 500 eventos, los 100 correos más recientes y
 
 ## Si Circana oculta “Importar paquete”
 
-La importación de paquetes puede estar deshabilitada aunque sí puedas crear flujos. En ese caso crea un flujo programado y replica `package-source/Microsoft.Flow/flows/8e5c1f84-dcbb-4a2c-9d2f-62e9c38105d2/definition.json` en el diseñador. Los nombres de acciones y expresiones están ahí completos. El resultado final debe respetar `atlas-evidence.schema.json` y escribirse en `/AtlasBridge/inbox`.
+La importación de soluciones puede estar deshabilitada aunque sí puedas crear flujos. En ese caso usa `solution-source/Workflows/AtlasExportEvidence-8e5c1f84-dcbb-4a2c-9d2f-62e9c38105d2.json` como referencia del flujo programado actual. El resultado final debe respetar `atlas-evidence.schema.json` y escribir en las subcarpetas de `/AtlasBridge/inbox`.
 
 No hay forma legítima de empaquetar la autenticación corporativa dentro del flujo: siempre tendrás que escoger tus conexiones al importar. Eso no es permiso de una app nueva; son las mismas conexiones delegadas que Power Automate ya usa con tu correo.

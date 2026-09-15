@@ -54,7 +54,7 @@ const ORANGE_FORMULA_COLUMNS: &[&str] = &[
 #[derive(Clone, Debug, PartialEq)]
 enum PackageCellValue {
     Text(String),
-    Number(f64),
+    Date(f64),
     Blank,
 }
 
@@ -459,7 +459,7 @@ fn add_package_datetime(
 ) -> Result<()> {
     if let Some(col) = headers.get(key) {
         let value = match value.filter(|v| !v.is_empty()) {
-            Some(value) => PackageCellValue::Number(excel_serial(value)?),
+            Some(value) => PackageCellValue::Date(excel_serial(value)?),
             None => PackageCellValue::Blank,
         };
         updates.entry(row).or_default().insert(*col, value);
@@ -599,12 +599,51 @@ fn coordinate_column(coordinate: &str) -> Option<u32> {
     found.then_some(result)
 }
 
+fn coordinate_row(coordinate: &str) -> Option<u32> {
+    coordinate
+        .trim_start_matches(|value: char| value.is_ascii_alphabetic() || value == '$')
+        .parse()
+        .ok()
+}
+
+fn worksheet_date_style(
+    xml: &[u8],
+    date_columns: &HashSet<u32>,
+    header_row: u32,
+) -> Result<Option<String>> {
+    let mut reader = Reader::from_reader(Cursor::new(xml));
+    reader.config_mut().trim_text(false);
+    let mut buffer = Vec::new();
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .context("Unable to inspect Excel date styles")?
+        {
+            Event::Start(start) | Event::Empty(start) if local_name_is(&start, b"c") => {
+                let coordinate = attribute(&start, b"r")?.unwrap_or_default();
+                if coordinate_row(&coordinate).is_some_and(|row| row > header_row)
+                    && coordinate_column(&coordinate)
+                        .is_some_and(|column| date_columns.contains(&column))
+                {
+                    if let Some(style) = attribute(&start, b"s")? {
+                        return Ok(Some(style));
+                    }
+                }
+            }
+            Event::Eof => return Ok(None),
+            _ => {}
+        }
+        buffer.clear();
+    }
+}
+
 fn write_cell(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     row: u32,
     column: u32,
     value: &PackageCellValue,
     original: Option<&BytesStart<'_>>,
+    date_style: Option<&str>,
 ) -> Result<()> {
     let coordinate = format!("{}{}", column_name(column), row);
     let base = original
@@ -616,9 +655,21 @@ fn write_cell(
             &[("r", coordinate), ("t", "inlineStr".into())],
             &["r", "t"],
         )?,
-        PackageCellValue::Number(_) | PackageCellValue::Blank => {
-            rebuilt_start(&base, &[("r", coordinate)], &["r", "t"])?
+        PackageCellValue::Date(_) => {
+            let needs_style = attribute(&base, b"s")?.is_none();
+            let mut overrides = vec![("r", coordinate)];
+            if needs_style {
+                let style = date_style.ok_or_else(|| {
+                    AppError::Message(
+                        "Atlas could not find the tracker date format for a new row. Add one preformatted blank row to the Excel table and try again."
+                            .into(),
+                    )
+                })?;
+                overrides.push(("s", style.to_string()));
+            }
+            rebuilt_start(&base, &overrides, &["r", "t"])?
         }
+        PackageCellValue::Blank => rebuilt_start(&base, &[("r", coordinate)], &["r", "t"])?,
     };
     if value == &PackageCellValue::Blank {
         writer
@@ -651,7 +702,7 @@ fn write_cell(
                 .write_event(Event::End(BytesEnd::new("is")))
                 .context("Unable to finish a tracker text cell")?;
         }
-        PackageCellValue::Number(value) => {
+        PackageCellValue::Date(value) => {
             writer
                 .write_event(Event::Start(BytesStart::new("v")))
                 .context("Unable to write a tracker date cell")?;
@@ -675,6 +726,7 @@ fn write_pending_before(
     row: u32,
     before_column: u32,
     pending: &mut BTreeMap<u32, PackageCellValue>,
+    date_style: Option<&str>,
 ) -> Result<()> {
     let columns = pending
         .range(..before_column)
@@ -682,7 +734,7 @@ fn write_pending_before(
         .collect::<Vec<_>>();
     for column in columns {
         let value = pending.remove(&column).expect("pending column disappeared");
-        write_cell(writer, row, column, &value, None)?;
+        write_cell(writer, row, column, &value, None, date_style)?;
     }
     Ok(())
 }
@@ -691,6 +743,7 @@ fn write_complete_row(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     row: u32,
     values: BTreeMap<u32, PackageCellValue>,
+    date_style: Option<&str>,
 ) -> Result<()> {
     let last = values.keys().next_back().copied().unwrap_or(1);
     let mut start = BytesStart::new("row");
@@ -702,7 +755,7 @@ fn write_complete_row(
         .write_event(Event::Start(start))
         .context("Unable to insert an Excel row")?;
     for (column, value) in values {
-        write_cell(writer, row, column, &value, None)?;
+        write_cell(writer, row, column, &value, None, date_style)?;
     }
     writer
         .write_event(Event::End(BytesEnd::new("row")))
@@ -838,6 +891,12 @@ fn patch_worksheet_xml(
     source_column: u32,
     header_row: u32,
 ) -> Result<Vec<u8>> {
+    let date_columns = updates
+        .values()
+        .flat_map(|values| values.iter())
+        .filter_map(|(column, value)| matches!(value, PackageCellValue::Date(_)).then_some(*column))
+        .collect::<HashSet<_>>();
+    let date_style = worksheet_date_style(xml, &date_columns, header_row)?;
     updates
         .entry(header_row)
         .or_default()
@@ -917,7 +976,7 @@ fn patch_worksheet_xml(
             Event::End(end) if end.local_name().as_ref() == b"sheetData" => {
                 let remaining = std::mem::take(&mut updates);
                 for (row, values) in remaining {
-                    write_complete_row(&mut writer, row, values)?;
+                    write_complete_row(&mut writer, row, values, date_style.as_deref())?;
                 }
                 in_sheet_data = false;
                 writer
@@ -938,7 +997,7 @@ fn patch_worksheet_xml(
                     let values = updates
                         .remove(&missing_row)
                         .expect("pending Excel row disappeared");
-                    write_complete_row(&mut writer, missing_row, values)?;
+                    write_complete_row(&mut writer, missing_row, values, date_style.as_deref())?;
                 }
                 pending = updates.remove(&row).unwrap_or_default();
                 current_row = Some(row);
@@ -953,7 +1012,13 @@ fn patch_worksheet_xml(
             }
             Event::End(end) if end.local_name().as_ref() == b"row" => {
                 if let Some(row) = current_row {
-                    write_pending_before(&mut writer, row, u32::MAX, &mut pending)?;
+                    write_pending_before(
+                        &mut writer,
+                        row,
+                        u32::MAX,
+                        &mut pending,
+                        date_style.as_deref(),
+                    )?;
                 }
                 current_row = None;
                 writer
@@ -968,9 +1033,22 @@ fn patch_worksheet_xml(
                     AppError::Message("An Excel cell has an invalid coordinate.".into())
                 })?;
                 let row = current_row.expect("current row disappeared");
-                write_pending_before(&mut writer, row, column, &mut pending)?;
+                write_pending_before(
+                    &mut writer,
+                    row,
+                    column,
+                    &mut pending,
+                    date_style.as_deref(),
+                )?;
                 if let Some(value) = pending.remove(&column) {
-                    write_cell(&mut writer, row, column, &value, Some(&start))?;
+                    write_cell(
+                        &mut writer,
+                        row,
+                        column,
+                        &value,
+                        Some(&start),
+                        date_style.as_deref(),
+                    )?;
                     skip_cell_depth = 1;
                 } else {
                     writer
@@ -986,9 +1064,22 @@ fn patch_worksheet_xml(
                     AppError::Message("An Excel cell has an invalid coordinate.".into())
                 })?;
                 let row = current_row.expect("current row disappeared");
-                write_pending_before(&mut writer, row, column, &mut pending)?;
+                write_pending_before(
+                    &mut writer,
+                    row,
+                    column,
+                    &mut pending,
+                    date_style.as_deref(),
+                )?;
                 if let Some(value) = pending.remove(&column) {
-                    write_cell(&mut writer, row, column, &value, Some(&start))?;
+                    write_cell(
+                        &mut writer,
+                        row,
+                        column,
+                        &value,
+                        Some(&start),
+                        date_style.as_deref(),
+                    )?;
                 } else {
                     writer
                         .write_event(Event::Empty(start.into_owned()))
@@ -1561,7 +1652,7 @@ mod tests {
         updates
             .entry(3)
             .or_default()
-            .insert(3, PackageCellValue::Number(46_536.5));
+            .insert(3, PackageCellValue::Date(46_536.5));
         updates
             .entry(3)
             .or_default()
@@ -1588,5 +1679,30 @@ mod tests {
         assert!(xml.contains("r=\"C3\""));
         assert!(xml.contains("s=\"46\""));
         assert!(xml.contains("<v>46536.5</v>"));
+    }
+
+    #[test]
+    fn package_patch_copies_date_style_to_new_rows() {
+        let worksheet = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><dimension ref="A1:E4"/><cols><col min="1" max="22" width="8.5"/></cols><sheetData><row r="2" spans="1:5"><c r="A2" t="inlineStr"><is><t>Interaction</t></is></c><c r="C2" s="77" t="inlineStr"><is><t>Reception Date/Time</t></is></c></row><row r="3" spans="1:5"><c r="C3" s="46"><v>46535</v></c></row></sheetData></worksheet>"#;
+        let mut updates = RowUpdates::new();
+        updates
+            .entry(4)
+            .or_default()
+            .insert(1, PackageCellValue::Text("Meeting".into()));
+        for column in 3..=5 {
+            updates
+                .entry(4)
+                .or_default()
+                .insert(column, PackageCellValue::Date(46_536.5));
+        }
+        let patched =
+            String::from_utf8(patch_worksheet_xml(worksheet, updates, 22, 2).unwrap()).unwrap();
+        for coordinate in ["C4", "D4", "E4"] {
+            assert!(
+                patched.contains(&format!("r=\"{coordinate}\" s=\"46\"")),
+                "missing copied date style for {coordinate}: {patched}"
+            );
+        }
     }
 }

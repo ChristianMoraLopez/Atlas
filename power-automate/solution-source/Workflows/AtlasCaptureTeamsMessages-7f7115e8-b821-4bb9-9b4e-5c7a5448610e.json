@@ -185,7 +185,7 @@
                   "operationId": "CreateFile"
                 },
                 "parameters": {
-                  "folderPath": "/AtlasBridge/inbox",
+                  "folderPath": "/AtlasBridge/inbox/teams",
                   "name": "@concat('atlas-evidence-',outputs('AtlasInstallationId'),'-',outputs('TargetDate'),'-teams-',guid(),'.json')",
                   "body": "@string(outputs('Compose_Teams_event_bundle'))"
                 },

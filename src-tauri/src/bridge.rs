@@ -6,7 +6,7 @@ use crate::{
     ollama::{self, ChatEvidence},
     state::AppState,
 };
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use chrono_tz::Tz;
 use regex::Regex;
 use serde::Deserialize;
@@ -21,6 +21,62 @@ const MAX_BUNDLE_BYTES: u64 = 25 * 1024 * 1024;
 const MAX_CALENDAR_ITEMS: usize = 500;
 const MAX_MAIL_ITEMS: usize = 2_000;
 const MAX_TEAMS_ITEMS: usize = 20_000;
+const MAX_INBOX_FILES: usize = 10_000;
+
+fn evidence_files(folder: &Path) -> Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    let mut pending = vec![(folder.to_path_buf(), 0usize)];
+    while let Some((directory, depth)) = pending.pop() {
+        for entry in fs::read_dir(&directory).context("Unable to read the Power Automate inbox")? {
+            let entry = entry.context("Unable to inspect a Power Automate inbox item")?;
+            let kind = entry
+                .file_type()
+                .context("Unable to inspect a Power Automate inbox item type")?;
+            if kind.is_symlink() {
+                continue;
+            }
+            let path = entry.path();
+            if kind.is_dir() && depth < 2 {
+                pending.push((path, depth + 1));
+            } else if kind.is_file()
+                && path
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .is_some_and(|value| value.eq_ignore_ascii_case("json"))
+            {
+                files.push(path);
+                if files.len() >= MAX_INBOX_FILES {
+                    return Ok(files);
+                }
+            }
+        }
+    }
+    Ok(files)
+}
+
+fn request_path(folder: &Path) -> Result<PathBuf> {
+    let root = folder.parent().ok_or_else(|| {
+        AppError::Message("The Power Automate inbox has no AtlasBridge parent folder.".into())
+    })?;
+    let requests = root.join("requests");
+    fs::create_dir_all(&requests).context("Unable to create the Atlas date request folder")?;
+    Ok(requests.join("selected-date.txt"))
+}
+
+pub fn request_date(folder: &Path, date: &str) -> Result<()> {
+    NaiveDate::parse_from_str(date, "%Y-%m-%d")
+        .map_err(|_| AppError::Message("Choose a valid evidence date.".into()))?;
+    fs::write(request_path(folder)?, date)
+        .context("Unable to queue the selected date for Power Automate")
+}
+
+fn clear_requested_date(folder: &Path, date: &str) -> Result<()> {
+    let path = request_path(folder)?;
+    if fs::read_to_string(&path).unwrap_or_default().trim() == date {
+        fs::write(path, "").context("Unable to clear the completed Power Automate date request")?;
+    }
+    Ok(())
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -110,22 +166,9 @@ fn newest_bundle(folder: &Path, date: &str) -> Result<(PathBuf, EvidenceBundle)>
     let mut candidates = Vec::new();
     let mut latest_other_date: Option<(DateTime<Utc>, String)> = None;
     let mut unavailable_files = 0usize;
-    for entry in fs::read_dir(folder).context("Unable to read the Power Automate inbox")? {
-        let entry = entry.context("Unable to inspect a Power Automate inbox item")?;
-        let file_type = entry
-            .file_type()
-            .context("Unable to inspect a Power Automate inbox item type")?;
-        let path = entry.path();
-        let is_json = path
-            .extension()
-            .and_then(|value| value.to_str())
-            .is_some_and(|value| value.eq_ignore_ascii_case("json"));
-        if !file_type.is_file() || !is_json {
-            continue;
-        }
-        let metadata = entry
-            .metadata()
-            .context("Unable to inspect a Power Automate evidence file")?;
+    for path in evidence_files(folder)? {
+        let metadata =
+            fs::metadata(&path).context("Unable to inspect a Power Automate evidence file")?;
         if metadata.len() == 0 {
             unavailable_files += 1;
             continue;
@@ -681,6 +724,9 @@ pub async fn extract(
 ) -> Result<ExtractionResult> {
     let (path, mut bundle) = newest_bundle(folder, date)?;
     validate_limits(&bundle)?;
+    if let Err(error) = clear_requested_date(folder, date) {
+        crate::diagnostics::error("bridge/request", &error.to_string());
+    }
     crate::diagnostics::info(
         "bridge/sources",
         &format!(
@@ -891,6 +937,39 @@ mod tests {
         }
         let (path, _) = newest_bundle(directory.path(), "2026-09-07").unwrap();
         assert_eq!(path.file_name().unwrap(), "newer.json");
+    }
+
+    #[test]
+    fn evidence_is_discovered_in_source_subfolders() {
+        let directory = tempfile::tempdir().unwrap();
+        let scheduled = directory.path().join("scheduled");
+        fs::create_dir(&scheduled).unwrap();
+        fs::write(
+            scheduled.join("nested.json"),
+            r#"{"schemaVersion":3,"exportedAt":"2026-09-07T11:00:00Z","targetDate":"2026-09-07","sources":{"calendar":true,"mail":true,"teams":true},"calendar":[],"mail":[],"teams":[]}"#,
+        )
+        .unwrap();
+
+        let (path, _) = newest_bundle(directory.path(), "2026-09-07").unwrap();
+        assert_eq!(path.file_name().unwrap(), "nested.json");
+    }
+
+    #[test]
+    fn selected_date_request_is_validated_written_and_cleared() {
+        let root = tempfile::tempdir().unwrap();
+        let inbox = root.path().join("AtlasBridge").join("inbox");
+        fs::create_dir_all(&inbox).unwrap();
+
+        request_date(&inbox, "2026-09-04").unwrap();
+        let request = root
+            .path()
+            .join("AtlasBridge")
+            .join("requests")
+            .join("selected-date.txt");
+        assert_eq!(fs::read_to_string(&request).unwrap(), "2026-09-04");
+        clear_requested_date(&inbox, "2026-09-04").unwrap();
+        assert_eq!(fs::read_to_string(request).unwrap(), "");
+        assert!(request_date(&inbox, "last Friday").is_err());
     }
 
     #[test]

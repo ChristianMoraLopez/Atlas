@@ -182,6 +182,31 @@ pub(crate) fn excluded_subject(subject: &str) -> bool {
         || clean == "almuerzo"
         || clean.contains("tracker time")
         || clean.contains("hora del tracker")
+        || [
+            "remember ",
+            "reminder ",
+            "remember to ",
+            "don't forget ",
+            "dont forget ",
+            "recuerda ",
+            "recordatorio ",
+            "recordar ",
+            "no olvidar ",
+            "to do ",
+            "todo ",
+        ]
+        .iter()
+        .any(|prefix| clean.starts_with(prefix))
+        || matches!(
+            clean.as_str(),
+            "focus time"
+                | "out of office"
+                | "ooo"
+                | "pto"
+                | "vacation"
+                | "vacaciones"
+                | "personal reminder"
+        )
 }
 
 pub(crate) fn classify_client(address: Option<&str>) -> (String, String) {
@@ -604,10 +629,15 @@ mod tests {
             "Tracker-Time",
             "Weekly TRACKER_time",
             "Hora del Tracker",
+            "Remember to send QA audits",
+            "Reminder: update the tracker",
+            "Recuerda enviar el informe",
+            "Focus time",
         ] {
             assert!(excluded_subject(value), "{value}");
         }
         assert!(!excluded_subject("Customer triage"));
+        assert!(!excluded_subject("QA audit review with the team"));
     }
     #[test]
     fn graph_paging_never_leaves_microsoft_graph() {
