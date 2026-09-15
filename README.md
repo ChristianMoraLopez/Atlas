@@ -17,7 +17,7 @@ Atlas is a Tauri v2 Windows desktop application that builds the Circana Interact
 - Interprets mail and Teams evidence with bundled Local AI in both Graph and Power Automate modes. Every suggestion stays linked to its real source evidence, distinct tasks can come from the same email or conversation, and tracker summaries are written in English.
 - Lets the user edit review fields and add a genuinely manual interaction through a blank form.
 - Configures a new tracker, an existing `.xlsx` / `.xlsm`, or a SharePoint/OneDrive workbook link once and reuses it.
-- Registers a per-user Windows scheduled task with limited privileges and runs at 17:30 by default. If Atlas is already open, the existing instance handles the run.
+- Registers Atlas in the current user's Windows startup and runs its internal daily timer at 17:30 by default, without administrator rights. If the computer starts after the chosen time, Atlas catches up once for that day.
 - Downloads SharePoint workbooks through Microsoft Graph, patches them locally, and uploads with an `If-Match` conflict guard so a newer remote edit is never overwritten.
 - Uses a hidden `_source_id` to update previously exported Graph rows without creating duplicates.
 - Never writes CSA Name, Capgemini Team Lead, Circana Manager, MTTR, Resolution time, or IR Time. Existing files are patched at the Office-package XML level so formulas, VBA, and unrelated worksheets remain intact.
@@ -56,7 +56,7 @@ For a workbook shared from another person’s OneDrive, the owner must share the
 
 Power Automate Inbox mode creates `AtlasBridge/inbox/scheduled`, `AtlasBridge/inbox/teams`, `AtlasBridge/inbox/requested`, and `AtlasBridge/requests`. Choosing an older workday writes `requests/selected-date.txt`; solution 1.9 checks that request every five minutes, exports that date, and Atlas waits for the synchronized result. Existing flat inbox JSON remains readable.
 
-When daily automation is enabled, Atlas registers both an `ONLOGON` background task and the selected daily task for the current Windows account. The background instance stays hidden and receives the daily trigger through Atlas's single-instance channel, so users do not need to open the interface each afternoon.
+When daily automation is enabled, Atlas registers its hidden startup command under the current user's Windows `Run` key and keeps an internal once-per-day marker. This avoids Task Scheduler policies that deny standard corporate accounts, catches up after the configured time, and does not require users to open the interface each afternoon.
 
 ## Local development
 

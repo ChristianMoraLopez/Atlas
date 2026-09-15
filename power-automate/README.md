@@ -6,7 +6,7 @@ No hay un segundo flujo que edite el Excel: Atlas escribe la copia sincronizada 
 
 ## Qué incluye esta carpeta
 
-- `AtlasBridge_1_0_0_0.zip`: solución no administrada AtlasBridge 1.9 para el asistente actual. Instala dos flujos activos con las mismas referencias de conexión de Outlook, Teams y OneDrive. El nombre estable permite que el cliente la encuentre; la versión interna controla la actualización.
+- `AtlasBridge_1_0_0_0.zip`: solución no administrada AtlasBridge 1.10 para el asistente actual. Instala dos flujos activos con las mismas referencias de conexión de Outlook, Teams y OneDrive. La fecha histórica es opcional: si `selected-date.txt` no existe o está vacío, el flujo continúa con el día actual. El nombre estable permite que el cliente la encuentre; la versión interna controla la actualización.
 - `solution-source/`: fuente revisable de la solución actual.
 - `INSTALLER.md`: primera ejecución, límites y diagnóstico del asistente.
 - `Atlas-Export-Evidence.zip`: paquete heredado conservado solo como referencia de desarrollo; no produce el contrato v3 actual.

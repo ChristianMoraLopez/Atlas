@@ -52,7 +52,7 @@ try {
     [xml] $types = Read-Entry '[Content_Types].xml'
     if ($solution.ImportExportXml.SolutionManifest.UniqueName -ne 'AtlasBridge') { throw 'Unexpected solution identity.' }
     if ($solution.ImportExportXml.SolutionManifest.Managed -ne '0') { throw 'Expected unmanaged solution.' }
-    if ($solution.ImportExportXml.SolutionManifest.Version -ne '1.9.0.0') { throw 'Unexpected version.' }
+    if ($solution.ImportExportXml.SolutionManifest.Version -ne '1.10.0.0') { throw 'Unexpected version.' }
 
     $rootIds = @($solution.ImportExportXml.SolutionManifest.RootComponents.RootComponent | ForEach-Object id | Sort-Object)
     if (($rootIds -join ',') -ne ((@($scheduledId, $eventId) | Sort-Object) -join ',')) { throw 'Unexpected solution root components.' }
@@ -103,6 +103,8 @@ try {
     if ($triggers[0].Value.runtimeConfiguration.concurrency.runs -ne 1) { throw 'Recurring runs must not overlap.' }
     if ($actions.Compose_Atlas_bundle.inputs.schemaVersion -ne 3) { throw 'Expected evidence contract v3.' }
     if ($actions.Read_Atlas_requested_date.inputs.host.operationId -ne 'GetFileContentByPath' -or $actions.Read_Atlas_requested_date.inputs.parameters.path -ne '/AtlasBridge/requests/selected-date.txt') { throw 'Selected-day request control is missing.' }
+    $requestStates = @($actions.RequestedDate.runAfter.Read_Atlas_requested_date | Sort-Object)
+    if (($requestStates -join ',') -ne 'Failed,Skipped,Succeeded,TimedOut' -or $actions.RequestedDate.inputs -notmatch 'coalesce') { throw 'A missing or empty selected-day request must fall back to today.' }
     if ($actions.TargetDate.inputs -notmatch 'RequestedDate' -or $actions.TargetDate.inputs -notmatch 'SA Pacific Standard Time') { throw 'Target date must use the requested day or local today.' }
     foreach ($sourceName in @('calendar', 'mail', 'teams')) {
         if (-not $actions.Compose_Atlas_bundle.inputs.sources.$sourceName) { throw "Missing source health flag: $sourceName" }

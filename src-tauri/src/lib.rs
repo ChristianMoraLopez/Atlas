@@ -699,9 +699,13 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             let scheduled = args.iter().any(|arg| arg == "--atlas-daily-run");
+            let startup = args.iter().any(|arg| arg == "--atlas-startup");
             if scheduled {
                 let _ = app.emit("atlas-daily-run", ());
-            } else if let Some(window) = app.get_webview_window("main") {
+            } else if !startup {
+                let Some(window) = app.get_webview_window("main") else {
+                    return;
+                };
                 let _ = window.show();
                 let _ = window.set_focus();
             }
@@ -715,7 +719,7 @@ pub fn run() {
                 .map_err(|e| Box::<dyn std::error::Error>::from(e))?;
             diagnostics::init(&config_dir).map_err(|e| Box::<dyn std::error::Error>::from(e))?;
             diagnostics::install_panic_hook();
-            let state = AppState::new(config_dir)?;
+            let state = AppState::new(config_dir.clone())?;
             if let Ok(settings) = state.read_settings() {
                 if settings.auto_sync
                     && settings.destination.is_some()
@@ -727,6 +731,7 @@ pub fn run() {
                 }
             }
             app.manage(state);
+            automation::start_background_scheduler(app.handle().clone(), config_dir);
             if scheduled_launch || startup_launch {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.hide();

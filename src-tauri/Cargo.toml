@@ -1,6 +1,6 @@
 [package]
 name = "atlas-tracker"
-version = "0.2.17"
+version = "0.2.18"
 description = "Circana Interactions Tracker"
 authors = ["Christian Mora Lopez"]
 edition = "2021"

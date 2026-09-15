@@ -593,10 +593,13 @@
         },
         "RequestedDate": {
           "type": "Compose",
-          "inputs": "@trim(base64ToString(outputs('Read_Atlas_requested_date')?['body']?['$content']))",
+          "inputs": "@trim(base64ToString(coalesce(outputs('Read_Atlas_requested_date')?['body']?['$content'],'')))",
           "runAfter": {
             "Read_Atlas_requested_date": [
-              "Succeeded"
+              "Succeeded",
+              "Failed",
+              "Skipped",
+              "TimedOut"
             ]
           }
         },

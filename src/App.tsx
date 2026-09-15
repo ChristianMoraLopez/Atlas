@@ -269,7 +269,7 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
     if (!startWork()) return;
     try { setSuccess(await api.export(date, profile, items)); const warning = completionWarning(items); if (warning) setWarnings(old => [...old.filter(value => !value.startsWith("Atlas encontró y guardará")), warning]); await refreshStatus(); } catch (e) { setError(String(e)); } finally { endWork(); }
   };
-  const syncCalendar = async (automatic = false, scheduled = false) => {
+  const syncCalendar = async (automatic = false, scheduled = false, background = false) => {
     if (!startWork()) return;
     const today = localDate(); setDate(today); setWarnings([]);
     try {
@@ -287,18 +287,21 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
         setSyncNotice("Atlas no encontró reuniones ni tareas de trabajo para guardar. Añádelas manualmente si realizaste trabajo que no aparece en Microsoft 365.");
       }
       if (scheduled) await api.completeScheduled(selectedCount < 3);
+      else if (background && selectedCount < 3) await api.completeScheduled(true);
     } catch (e) {
       setError(`${automatic ? "Automatic daily run failed: " : ""}${String(e)}`);
-      if (scheduled) await api.completeScheduled(true).catch(() => undefined);
+      if (scheduled || background) await api.completeScheduled(true).catch(() => undefined);
     } finally { endWork(); }
   };
   const saveProfile = async (p: UserProfile) => { await api.saveProfile(p); setEditingProfile(false); await refreshStatus(); };
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
+    let unlistenBackground: (() => void) | undefined;
     void listen("atlas-daily-run", () => { if (status.autoSync) void syncCalendar(true, true); else void api.completeScheduled(true); }).then(stop => { if (disposed) stop(); else unlisten = stop; });
+    void listen("atlas-background-daily-run", () => { void syncCalendar(true, false, true); }).then(stop => { if (disposed) stop(); else unlistenBackground = stop; });
     const first = status.autoSync && status.scheduledLaunch ? window.setTimeout(() => { void syncCalendar(true, true); }, 900) : undefined;
-    return () => { disposed = true; unlisten?.(); if (first) window.clearTimeout(first); };
+    return () => { disposed = true; unlisten?.(); unlistenBackground?.(); if (first) window.clearTimeout(first); };
   }, []);
   return <div className="min-h-screen">
     <header className="sticky top-0 z-30 border-b border-white/70 bg-cream/80 px-8 py-4 backdrop-blur-xl"><div className="mx-auto flex max-w-[1540px] items-center justify-between"><Brand /><div className="flex items-center gap-2"><div className="mr-3 max-w-xs text-right"><p className="text-xs font-bold">{bridgeMode ? "Power Automate Inbox" : status.account?.displayName}</p><p className="truncate text-[10px] text-ink/40">{bridgeMode ? status.bridgeFolder : status.account?.email}</p></div><button title="Tracker destination" className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={editDestination}><FileSpreadsheet className="h-4 w-4" /></button><button title="Open failure log" className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={() => openPath(status.logPath)}><FileText className="h-4 w-4" /></button><button title="Data source" className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={editMicrosoft}>{bridgeMode ? <Inbox className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}</button><button title="Profile settings" className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={() => setEditingProfile(true)}><Settings className="h-4 w-4" /></button>{!bridgeMode && <button title="Sign out" className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-red-50 hover:text-red-600" onClick={signOut}><LogOut className="h-4 w-4" /></button>}</div></div></header>

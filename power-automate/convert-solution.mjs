@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 
 const root = dirname(fileURLToPath(import.meta.url));
-const version = '1.9.0.0';
+const version = '1.10.0.0';
 const scheduled = {
   id: '8e5c1f84-dcbb-4a2c-9d2f-62e9c38105d2',
   name: 'Atlas - Export evidence to OneDrive',
@@ -59,8 +59,8 @@ a.Read_Atlas_requested_date = {
 };
 a.RequestedDate = {
   type: 'Compose',
-  inputs: "@trim(base64ToString(outputs('Read_Atlas_requested_date')?['body']?['$content']))",
-  runAfter: { Read_Atlas_requested_date: ['Succeeded'] },
+  inputs: "@trim(base64ToString(coalesce(outputs('Read_Atlas_requested_date')?['body']?['$content'],'')))",
+  runAfter: { Read_Atlas_requested_date: ['Succeeded', 'Failed', 'Skipped', 'TimedOut'] },
 };
 a.TargetDate.inputs = "@if(empty(outputs('RequestedDate')),formatDateTime(convertTimeZone(utcNow(),'UTC','SA Pacific Standard Time'),'yyyy-MM-dd'),outputs('RequestedDate'))";
 a.TargetDate.runAfter = { RequestedDate: ['Succeeded'] };
