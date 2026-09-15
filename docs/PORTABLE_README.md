@@ -9,7 +9,7 @@ Atlas creates Circana interaction trackers from real Microsoft 365 activity.
 3. Sign in with the Circana account in Microsoft's page and associate that account's Outlook, Teams and OneDrive connections during import. The single solution activates the scheduled Outlook flow and the per-message Teams capture flow.
 4. Enter your Corp ID, name, Area, Team Lead, and Circana Manager.
 5. Configure the tracker once: select an existing `.xlsx` / `.xlsm`, create a new `.xlsx`, or paste a SharePoint/OneDrive workbook link.
-6. Keep the daily automatic tracker enabled and choose its time (17:30 by default). Windows launches Atlas with the signed-in user's limited privileges, saves every completed meeting and inferred task, then opens the app only when fewer than three activities need attention.
+6. Keep the daily automatic tracker enabled and choose its time (17:30 by default). Windows launches Atlas with the signed-in user's limited privileges, saves every finished meeting and inferred work task, then opens the app only when fewer than three activities need attention.
 
 Atlas uses Microsoft WebView2 for its interface. WebView2 is normally already installed on supported Windows 10 and Windows 11 systems; if Windows reports that it is missing, install the Evergreen WebView2 Runtime from Microsoft.
 
@@ -25,4 +25,4 @@ To rebuild a past day, choose it under **Workday** and press **Import selected d
 
 If anything fails, use the document button in the Atlas header to open the persistent diagnostic log. It is stored at `%APPDATA%\com.capgemini.atlas-tracker\logs\atlas.log`; Local AI process output is stored beside it as `local-ai.log`. Invalid settings are backed up and reset instead of causing a silent startup exit.
 
-**Atlas never invents interactions.** A received email, Teams message, invitation, assignment, future plan, or reminder is evidence, not a tracker row. Atlas records only completed meetings, concrete tasks with an exact supporting quote, and factual manual entries. Partial days are saved and a warning explains how many activities are missing from the daily minimum of three.
+**Atlas never invents interactions.** Atlas records finished meetings, concrete work tasks supported by mail or Teams evidence, and factual manual entries. A task can be assigned, in progress, or resolved. Reminders, invitations, automatic notices, and messages without a concrete task are excluded. AI summaries are written in English. Partial days are saved and a warning explains how many activities are missing from the daily minimum of three.

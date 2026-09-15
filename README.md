@@ -4,7 +4,7 @@ For tenants that block the Atlas Entra application, Atlas includes a portal-assi
 
 Atlas is a Tauri v2 Windows desktop application that builds the Circana Interactions Tracker from a user's own Microsoft 365 calendar, mail, and Teams evidence. It remembers one local Excel or SharePoint destination and runs the daily tracker automatically at a configurable time, initially 17:30. It writes every real activity it found and opens the interface for attention when the day contains fewer than three. The portable package includes and manages its own local Ollama runtime and model for local interpretation.
 
-> **Atlas never invents interactions on its own.** Every exported row is a completed meeting, a concrete task inferred from real Microsoft 365 evidence, or a factual manual entry. Atlas saves partial days and alerts the user when fewer than three activities were found.
+> **Atlas never invents interactions on its own.** Every exported row is a finished meeting, a concrete work task inferred from real Microsoft 365 evidence, or a factual manual entry. A task may be assigned, in progress, or resolved. Atlas saves partial days and alerts the user when fewer than three activities were found.
 
 ## What it does
 
@@ -13,8 +13,8 @@ Atlas is a Tauri v2 Windows desktop application that builds the Circana Interact
 - Opens with a skippable Atlas SVG animation and honors Windows reduced-motion preferences.
 - Extracts real meetings for any selected workday and excludes cancelled events, meal/tracker blocks, focus blocks, reminders, and to-do calendar entries.
 - Normalizes only the first MMNI/SparkTriage meeting to 09:00–09:30 in the chosen local timezone.
-- Preselects every completed meeting and each separate task inferred from mail or Teams; receiving a message, invitation, assignment, reminder, or future plan is never a tracker row.
-- Interprets mail and Teams evidence with bundled Local AI in both Graph and Power Automate modes. Every suggestion must cite a verbatim completion fragment found in its source evidence. Distinct tasks can come from the same email or conversation.
+- Preselects every finished meeting and each separate work task inferred from mail or Teams. Assigned and in-progress work is included; reminders, invitations, automatic notices, and inbox activity without a concrete task are excluded.
+- Interprets mail and Teams evidence with bundled Local AI in both Graph and Power Automate modes. Every suggestion stays linked to its real source evidence, distinct tasks can come from the same email or conversation, and tracker summaries are written in English.
 - Lets the user edit review fields and add a genuinely manual interaction through a blank form.
 - Configures a new tracker, an existing `.xlsx` / `.xlsm`, or a SharePoint/OneDrive workbook link once and reuses it.
 - Registers a per-user Windows scheduled task with limited privileges and runs at 17:30 by default. If Atlas is already open, the existing instance handles the run.

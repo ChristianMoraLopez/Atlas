@@ -246,7 +246,7 @@ pub async fn extract(
         match mail(state, token, start, end, model, &actor).await {
             Ok(values) if !values.is_empty() => interactions.extend(values),
             Ok(_) => warnings
-                .push("La IA local no identificó trabajo realizado en los correos del día.".into()),
+                .push("La IA local no identificó tareas de trabajo en los correos del día.".into()),
             Err(error) => {
                 warnings.push(format!("La interpretación local del correo falló: {error}"))
             }
@@ -444,6 +444,7 @@ async fn mail(
                 .all(|id| real_ids.contains(id.as_str()))
         })
         .map(|suggestion| {
+            let resolved = suggestion.resolved;
             let identity = format!(
                 "{}|{}",
                 suggestion.source_ids.join("|"),
@@ -462,11 +463,11 @@ async fn mail(
                 interaction_type: "Task".into(),
                 reception_date_time: suggestion.start.to_rfc3339(),
                 interaction_date_time: suggestion.start.to_rfc3339(),
-                resolution_date_time: Some(suggestion.end.to_rfc3339()),
+                resolution_date_time: resolved.then(|| suggestion.end.to_rfc3339()),
                 client_type,
                 end_client,
-                status: "Resolved".into(),
-                resolution_type: "Processed & Resolved".into(),
+                status: if resolved { "Resolved" } else { "In Progress" }.into(),
+                resolution_type: if resolved { "Processed & Resolved" } else { "" }.into(),
                 category: String::new(),
                 subcategory: String::new(),
                 priority: "Intermediate".into(),
@@ -581,6 +582,7 @@ async fn teams(
         {
             continue;
         }
+        let resolved = suggestion.resolved;
         let identity = format!(
             "{}|{}",
             suggestion.source_ids.join("|"),
@@ -594,11 +596,11 @@ async fn teams(
             interaction_type: "Task".into(),
             reception_date_time: suggestion.start.to_rfc3339(),
             interaction_date_time: suggestion.start.to_rfc3339(),
-            resolution_date_time: Some(suggestion.end.to_rfc3339()),
+            resolution_date_time: resolved.then(|| suggestion.end.to_rfc3339()),
             client_type: String::new(),
             end_client: String::new(),
-            status: "Resolved".into(),
-            resolution_type: "Processed & Resolved".into(),
+            status: if resolved { "Resolved" } else { "In Progress" }.into(),
+            resolution_type: if resolved { "Processed & Resolved" } else { "" }.into(),
             category: String::new(),
             subcategory: String::new(),
             priority: "Intermediate".into(),

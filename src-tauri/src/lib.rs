@@ -439,7 +439,7 @@ mod selection_tests {
     }
 
     #[test]
-    fn preselects_all_completed_meetings_and_inferred_tasks() {
+    fn preselects_completed_meetings_and_all_inferred_work_tasks() {
         let mut rows = vec![
             interaction(SourceKind::Calendar, "calendar-1", "Meeting"),
             interaction(SourceKind::Calendar, "calendar-2", "Meeting"),

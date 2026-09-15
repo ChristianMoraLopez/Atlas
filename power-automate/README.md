@@ -52,7 +52,7 @@ Para probar sin esperar el flujo, copia `atlas-evidence.example.json` dentro de 
 ## Qué recoge y qué no
 
 - Calendario: asunto, horas, organizador e identificador. Las reuniones válidas quedan seleccionadas; recordatorios, planes y bloques de foco se excluyen.
-- Correo: bandeja de entrada y enviados, asunto, vista previa del contenido, participantes, hora e identificador; nunca se descargan adjuntos. La IA local convierte únicamente trabajo realizado en tareas separadas y debe citar texto exacto que pruebe cada tarea.
+- Correo: bandeja de entrada y enviados, asunto, vista previa del contenido, participantes, hora e identificador; nunca se descargan adjuntos. La IA local separa las tareas de trabajo aunque estén asignadas o en curso, las resume en inglés y excluye recordatorios, invitaciones y avisos automáticos.
 - Teams: texto, autor, hora, chat e identificador. La IA local puede obtener varias tareas independientes de una conversación. Recibir o enviar un mensaje, por sí solo, no se registra como actividad.
 - Atlas no modifica, elimina ni mueve elementos en Outlook o Teams.
 

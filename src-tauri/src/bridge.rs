@@ -589,6 +589,7 @@ async fn interpret_mail(
     Ok(suggestions
         .into_iter()
         .map(|suggestion| {
+            let resolved = suggestion.resolved;
             let identity = format!(
                 "{}|{}",
                 suggestion.source_ids.join("|"),
@@ -614,11 +615,11 @@ async fn interpret_mail(
                 interaction_type: "Task".into(),
                 reception_date_time: suggestion.start.to_rfc3339(),
                 interaction_date_time: suggestion.start.to_rfc3339(),
-                resolution_date_time: Some(suggestion.end.to_rfc3339()),
+                resolution_date_time: resolved.then(|| suggestion.end.to_rfc3339()),
                 client_type,
                 end_client,
-                status: "Resolved".into(),
-                resolution_type: "Processed & Resolved".into(),
+                status: if resolved { "Resolved" } else { "In Progress" }.into(),
+                resolution_type: if resolved { "Processed & Resolved" } else { "" }.into(),
                 category: String::new(),
                 subcategory: String::new(),
                 priority: "Intermediate".into(),
@@ -671,6 +672,7 @@ async fn interpret_teams(
     Ok(suggestions
         .into_iter()
         .map(|suggestion| {
+            let resolved = suggestion.resolved;
             let identity = format!(
                 "{}|{}",
                 suggestion.source_ids.join("|"),
@@ -690,11 +692,11 @@ async fn interpret_teams(
                 interaction_type: "Task".into(),
                 reception_date_time: suggestion.start.to_rfc3339(),
                 interaction_date_time: suggestion.start.to_rfc3339(),
-                resolution_date_time: Some(suggestion.end.to_rfc3339()),
+                resolution_date_time: resolved.then(|| suggestion.end.to_rfc3339()),
                 client_type: String::new(),
                 end_client: String::new(),
-                status: "Resolved".into(),
-                resolution_type: "Processed & Resolved".into(),
+                status: if resolved { "Resolved" } else { "In Progress" }.into(),
+                resolution_type: if resolved { "Processed & Resolved" } else { "" }.into(),
                 category: String::new(),
                 subcategory: String::new(),
                 priority: "Intermediate".into(),
@@ -774,7 +776,7 @@ pub async fn extract(
             Ok(values) => match interpret_mail(state, &values, &actor).await {
                 Ok(tasks) if !tasks.is_empty() => interactions.extend(tasks),
                 Ok(_) => warnings.push(
-                    "La IA local no identificó trabajo realizado en los correos del día.".into(),
+                    "La IA local no identificó tareas de trabajo en los correos del día.".into(),
                 ),
                 Err(error) => {
                     crate::diagnostics::error(
@@ -796,7 +798,7 @@ pub async fn extract(
                 Ok(suggestions) if !suggestions.is_empty() => interactions.extend(suggestions),
                 Ok(_) => {
                     warnings.push(
-                        "La IA local no identificó trabajo realizado en Teams durante el día."
+                        "La IA local no identificó tareas de trabajo en Teams durante el día."
                             .into(),
                     );
                 }
