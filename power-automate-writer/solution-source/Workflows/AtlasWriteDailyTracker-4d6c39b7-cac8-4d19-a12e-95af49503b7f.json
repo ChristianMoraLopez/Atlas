@@ -1,0 +1,28 @@
+{
+  "properties": {
+    "connectionReferences": {
+      "shared_onedriveforbusiness": { "runtimeSource": "embedded", "connection": { "connectionReferenceLogicalName": "atlas_writer_onedrive" }, "api": { "name": "shared_onedriveforbusiness" } },
+      "shared_sharepointonline": { "runtimeSource": "embedded", "connection": { "connectionReferenceLogicalName": "atlas_writer_sharepoint" }, "api": { "name": "shared_sharepointonline" } },
+      "shared_excelonlinebusiness": { "runtimeSource": "embedded", "connection": { "connectionReferenceLogicalName": "atlas_writer_excel" }, "api": { "name": "shared_excelonlinebusiness" } }
+    },
+    "definition": {
+      "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+      "contentVersion": "1.0.0.0",
+      "parameters": { "$connections": { "defaultValue": {}, "type": "Object" }, "$authentication": { "defaultValue": {}, "type": "SecureObject" } },
+      "triggers": { "Check_Atlas_outbox": { "type": "Recurrence", "recurrence": { "frequency": "Minute", "interval": 5 }, "runtimeConfiguration": { "concurrency": { "runs": 1 } } } },
+      "actions": {
+        "AtlasTargetSite": { "type": "Compose", "inputs": "__ATLAS_TARGET_SITE__", "runAfter": {} },
+        "AtlasTargetFileId": { "type": "Compose", "inputs": "__ATLAS_TARGET_FILE_ID__", "runAfter": { "AtlasTargetSite": ["Succeeded"] } },
+        "Get_current_tracker_package": { "type": "OpenApiConnection", "inputs": { "host": { "apiId": "/providers/Microsoft.PowerApps/apis/shared_onedriveforbusiness", "connectionName": "shared_onedriveforbusiness", "operationId": "GetFileContentByPath" }, "parameters": { "path": "/AtlasBridge/tracker-outbox/current.json", "inferContentType": true }, "authentication": "@parameters('$authentication')" }, "runAfter": { "AtlasTargetFileId": ["Succeeded"] } },
+        "Get_writer_script_metadata": { "type": "OpenApiConnection", "inputs": { "host": { "apiId": "/providers/Microsoft.PowerApps/apis/shared_onedriveforbusiness", "connectionName": "shared_onedriveforbusiness", "operationId": "GetFileMetadataByPath" }, "parameters": { "path": "/Documents/Office Scripts/Atlas Write Tracker.osts" }, "authentication": "@parameters('$authentication')" }, "runAfter": { "Get_current_tracker_package": ["Succeeded"] } },
+        "Resolve_tracker_by_id": { "type": "OpenApiConnection", "inputs": { "host": { "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline", "connectionName": "shared_sharepointonline", "operationId": "HttpRequest" }, "parameters": { "dataset": "@outputs('AtlasTargetSite')", "parameters/method": "GET", "parameters/uri": "@concat('_api/web/GetFileById(guid''',outputs('AtlasTargetFileId'),''')?$select=ServerRelativeUrl')" }, "authentication": "@parameters('$authentication')" }, "runAfter": { "Get_writer_script_metadata": ["Succeeded"] } },
+        "Get_tracker_metadata": { "type": "OpenApiConnection", "inputs": { "host": { "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline", "connectionName": "shared_sharepointonline", "operationId": "GetFileMetadataByPath" }, "parameters": { "dataset": "@outputs('AtlasTargetSite')", "path": "@body('Resolve_tracker_by_id')?['d']?['ServerRelativeUrl']" }, "authentication": "@parameters('$authentication')" }, "runAfter": { "Resolve_tracker_by_id": ["Succeeded"] } },
+        "Write_rows_with_Office_Script": { "type": "OpenApiConnection", "inputs": { "host": { "apiId": "/providers/Microsoft.PowerApps/apis/shared_excelonlinebusiness", "connectionName": "shared_excelonlinebusiness", "operationId": "RunScriptProdV2" }, "parameters": { "source": "@outputs('Get_tracker_metadata')?['body/{SiteId}']", "drive": "@outputs('Get_tracker_metadata')?['body/{DriveId}']", "file": "@outputs('Get_tracker_metadata')?['body/{DriveItemId}']", "scriptId": "@outputs('Get_writer_script_metadata')?['body/Id']", "ScriptParameters/payloadJson": "@base64ToString(body('Get_current_tracker_package')?['$content'])" }, "authentication": "@parameters('$authentication')" }, "runAfter": { "Get_tracker_metadata": ["Succeeded"] }, "limit": { "timeout": "PT10M" } }
+      },
+      "outputs": {}
+    },
+    "templateName": "",
+    "state": "Started"
+  },
+  "schemaVersion": "1.0.0.0"
+}

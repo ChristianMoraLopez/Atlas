@@ -24,6 +24,8 @@ export const api = {
   export: (date: string, profile: UserProfile, interactions: Interaction[]) =>
     call<ExportResult>("export_configured_tracker", { date, profile, interactions }),
   openTracker: () => call<void>("open_tracker_destination"),
+  showWriterPackage: () => call<void>("show_tracker_writer_package"),
+  openPowerAutomate: () => call<void>("open_power_automate_portal"),
   completeScheduled: (needsAttention: boolean) =>
     call<void>("complete_scheduled_launch", { needsAttention }),
   logError: (context: string, message: string) => invoke<void>("log_frontend_error", { context, message })

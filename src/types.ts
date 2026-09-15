@@ -15,12 +15,13 @@ export interface AccountInfo {
 
 export type SourceMode = "microsoft_graph" | "power_automate_folder";
 
-export type TrackerDestinationKind = "local_existing" | "local_new" | "share_point";
+export type TrackerDestinationKind = "local_existing" | "local_new" | "share_point" | "share_point_flow";
 
 export interface TrackerDestination {
   kind: TrackerDestinationKind;
   value: string;
   localPath?: string;
+  writerPackagePath?: string;
 }
 
 export interface AppStatus {
@@ -74,4 +75,5 @@ export interface ExportResult {
   inserted: number;
   updated: number;
   skipped: number;
+  queued: boolean;
 }

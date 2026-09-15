@@ -38,6 +38,7 @@ pub enum TrackerDestinationKind {
     LocalExisting,
     LocalNew,
     SharePoint,
+    SharePointFlow,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -47,6 +48,8 @@ pub struct TrackerDestination {
     pub value: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub writer_package_path: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -170,4 +173,6 @@ pub struct ExportResult {
     pub inserted: usize,
     pub updated: usize,
     pub skipped: usize,
+    #[serde(default)]
+    pub queued: bool,
 }

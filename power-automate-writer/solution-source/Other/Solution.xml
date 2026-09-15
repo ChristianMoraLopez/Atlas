@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ImportExportXml version="9.1.0.643" SolutionPackageVersion="9.1" languagecode="1033" generatedBy="CrmLive" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <SolutionManifest>
+    <UniqueName>AtlasTrackerWriter</UniqueName>
+    <LocalizedNames><LocalizedName description="Atlas Tracker Writer" languagecode="1033" /></LocalizedNames>
+    <Descriptions><Description description="Publishes Atlas daily work packages to one SharePoint Excel tracker." languagecode="1033" /></Descriptions>
+    <Version>1.0.0.0</Version><Managed>0</Managed>
+    <Publisher><UniqueName>Atlas</UniqueName><LocalizedNames><LocalizedName description="Atlas" languagecode="1033" /></LocalizedNames><Descriptions><Description description="Atlas" languagecode="1033" /></Descriptions><EMailAddress xsi:nil="true"/><SupportingWebsiteUrl xsi:nil="true"/><CustomizationPrefix>atlas</CustomizationPrefix><CustomizationOptionValuePrefix>80524</CustomizationOptionValuePrefix><Addresses /></Publisher>
+    <RootComponents><RootComponent type="29" id="{4d6c39b7-cac8-4d19-a12e-95af49503b7f}" behavior="0" /></RootComponents><MissingDependencies />
+  </SolutionManifest>
+</ImportExportXml>

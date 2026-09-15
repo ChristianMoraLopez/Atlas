@@ -154,6 +154,11 @@ try {
     foreach ($bridgeFile in @("AtlasBridge_1_0_0_0.zip", "atlas-evidence.schema.json", "atlas-evidence.example.json", "README.md", "INSTALLER.md")) {
         Copy-Item -LiteralPath (Join-Path $RepositoryRoot "power-automate\$bridgeFile") -Destination $bridgeRoot
     }
+    & (Join-Path $RepositoryRoot "power-automate-writer\validate-solution.ps1")
+    $writerRoot = Join-Path $PortableRoot "power-automate-writer"
+    New-Item -ItemType Directory -Path $writerRoot -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $RepositoryRoot "power-automate-writer\AtlasTrackerWriter_1_0_0_0.zip") -Destination $writerRoot
+    Copy-Item -LiteralPath (Join-Path $RepositoryRoot "power-automate-writer\README.md") -Destination $writerRoot
 
     New-Item -ItemType Directory -Path $OutputRoot -Force | Out-Null
     $archive = Join-Path $OutputRoot $ArchiveName
@@ -171,6 +176,8 @@ try {
             "README.md",
             "power-automate/AtlasBridge_1_0_0_0.zip",
             "power-automate/INSTALLER.md",
+            "power-automate-writer/AtlasTrackerWriter_1_0_0_0.zip",
+            "power-automate-writer/README.md",
             "AtlasAI/ollama.exe",
             "AtlasAI/BUILD_INFO.txt",
             "AtlasAI/models/blobs/sha256-$ModelBlobSha256"

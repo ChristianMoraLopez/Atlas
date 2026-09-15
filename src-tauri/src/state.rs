@@ -21,6 +21,7 @@ pub struct AppState {
     pub cached_access_token: Mutex<Option<CachedAccessToken>>,
     pub local_ai: ManagedRuntime,
     pub connector_installer: Arc<crate::connector_installer::Installer>,
+    pub config_dir: PathBuf,
 }
 
 impl AppState {
@@ -76,6 +77,7 @@ impl AppState {
             connector_installer: Arc::new(crate::connector_installer::Installer::new(
                 config_dir.join("connector-installer"),
             )),
+            config_dir,
         })
     }
 

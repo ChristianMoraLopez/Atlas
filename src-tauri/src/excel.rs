@@ -1378,6 +1378,7 @@ fn export_new(
         inserted: selected.len(),
         updated: 0,
         skipped: 0,
+        queued: false,
     })
 }
 
@@ -1455,6 +1456,7 @@ fn export_existing(
         inserted,
         updated,
         skipped,
+        queued: false,
     })
 }
 

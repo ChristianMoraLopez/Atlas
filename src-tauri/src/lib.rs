@@ -11,6 +11,7 @@ mod models;
 mod ollama;
 mod sharepoint;
 mod state;
+mod tracker_writer;
 
 use crate::{
     error::{AppError, Result},
@@ -148,11 +149,12 @@ async fn save_power_automate_folder(
         settings.source_mode = SourceMode::PowerAutomateFolder;
         settings.bridge_folder = Some(folder);
         settings.account = None;
-        if settings
-            .destination
-            .as_ref()
-            .is_some_and(|destination| destination.kind == TrackerDestinationKind::SharePoint)
-        {
+        if settings.destination.as_ref().is_some_and(|destination| {
+            matches!(
+                destination.kind,
+                TrackerDestinationKind::SharePoint | TrackerDestinationKind::SharePointFlow
+            )
+        }) {
             settings.destination = None;
         }
     })?;
@@ -242,6 +244,7 @@ fn normalize_local_destination(value: String, existing: bool) -> Result<TrackerD
         },
         value: value.to_string(),
         local_path: None,
+        writer_package_path: None,
     })
 }
 
@@ -279,6 +282,27 @@ async fn save_tracker_destination(
                 kind: TrackerDestinationKind::SharePoint,
                 value,
                 local_path,
+                writer_package_path: None,
+            }
+        }
+        TrackerDestinationKind::SharePointFlow => {
+            if source_mode != SourceMode::PowerAutomateFolder {
+                return Err(AppError::Message(
+                    "The Power Automate writer is available with the Power Automate inbox source."
+                        .into(),
+                ));
+            }
+            let value = sharepoint::normalize_url(&destination.value)?;
+            let _ = sharepoint::workbook_name(&value)?;
+            let bridge_folder = current.bridge_folder.as_deref().ok_or_else(|| {
+                AppError::Message("Configure the Power Automate inbox folder first.".into())
+            })?;
+            let prepared = tracker_writer::prepare(&state.config_dir, bridge_folder, &value)?;
+            TrackerDestination {
+                kind: TrackerDestinationKind::SharePointFlow,
+                value,
+                local_path: None,
+                writer_package_path: Some(prepared.package_path),
             }
         }
     };
@@ -286,7 +310,9 @@ async fn save_tracker_destination(
     diagnostics::info(
         "settings",
         match &destination.kind {
-            TrackerDestinationKind::SharePoint => "Saved SharePoint tracker destination",
+            TrackerDestinationKind::SharePoint | TrackerDestinationKind::SharePointFlow => {
+                "Saved SharePoint tracker destination"
+            }
             _ => "Saved local tracker destination",
         },
     );
@@ -317,6 +343,37 @@ fn complete_scheduled_launch(app: tauri::AppHandle, needs_attention: bool) -> Re
         app.exit(0);
     }
     Ok(())
+}
+
+#[tauri::command]
+fn show_tracker_writer_package(state: tauri::State<'_, AppState>) -> Result<()> {
+    let destination = state
+        .read_settings()?
+        .destination
+        .filter(|destination| destination.kind == TrackerDestinationKind::SharePointFlow)
+        .ok_or_else(|| AppError::Message("Configure the SharePoint cloud writer first.".into()))?;
+    let package = destination
+        .writer_package_path
+        .ok_or_else(|| AppError::Message("The tracker writer ZIP has not been prepared.".into()))?;
+    let path = Path::new(&package);
+    if !path.is_file() {
+        return Err(AppError::Message(
+            "The tracker writer ZIP is missing. Save the tracker setup again to recreate it."
+                .into(),
+        ));
+    }
+    open::that(path.parent().unwrap_or(path)).map_err(|error| {
+        AppError::Message(format!(
+            "Windows could not show the tracker writer ZIP: {error}"
+        ))
+    })
+}
+
+#[tauri::command]
+fn open_power_automate_portal() -> Result<()> {
+    open::that("https://make.powerautomate.com/").map_err(|error| {
+        AppError::Message(format!("Windows could not open Power Automate: {error}"))
+    })
 }
 
 #[tauri::command]
@@ -584,6 +641,18 @@ async fn export_configured_tracker(
                     .await?
             }
         }
+        TrackerDestinationKind::SharePointFlow => {
+            let bridge_folder = settings.bridge_folder.as_deref().ok_or_else(|| {
+                AppError::Message("Configure the Power Automate inbox folder first.".into())
+            })?;
+            tracker_writer::queue(
+                bridge_folder,
+                &destination.value,
+                &date,
+                &saved,
+                &interactions,
+            )?
+        }
     };
     diagnostics::info(
         "export",
@@ -601,7 +670,10 @@ fn open_tracker_destination(state: tauri::State<'_, AppState>) -> Result<()> {
         .read_settings()?
         .destination
         .ok_or_else(|| AppError::Message("Configure the tracker destination first.".into()))?;
-    let target = if destination.kind == TrackerDestinationKind::SharePoint {
+    let target = if matches!(
+        destination.kind,
+        TrackerDestinationKind::SharePoint | TrackerDestinationKind::SharePointFlow
+    ) {
         destination.value
     } else {
         let value = destination
@@ -623,6 +695,7 @@ fn open_tracker_destination(state: tauri::State<'_, AppState>) -> Result<()> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let scheduled_launch = std::env::args().any(|arg| arg == "--atlas-daily-run");
+    let startup_launch = std::env::args().any(|arg| arg == "--atlas-startup");
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             let scheduled = args.iter().any(|arg| arg == "--atlas-daily-run");
@@ -654,7 +727,7 @@ pub fn run() {
                 }
             }
             app.manage(state);
-            if scheduled_launch {
+            if scheduled_launch || startup_launch {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.hide();
                 }
@@ -676,6 +749,8 @@ pub fn run() {
             save_tracker_destination,
             log_frontend_error,
             open_tracker_destination,
+            show_tracker_writer_package,
+            open_power_automate_portal,
             complete_scheduled_launch,
             request_bridge_date,
             extract_interactions,

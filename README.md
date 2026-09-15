@@ -50,9 +50,13 @@ After profile setup, choose one destination:
 
 The destination, daily time, and automatic-run preference are stored in local settings. In Graph mode, a SharePoint link is resolved and updated through Microsoft Graph. In Power Automate Inbox mode, Atlas uses the local OneDrive-synced copy of the linked workbook, preserving `.xlsm` macros while the OneDrive client publishes the update. The user must already have edit access.
 
+Power Automate Inbox mode has an additional **SharePoint cloud flow** destination. Atlas personalizes a separate `AtlasTrackerWriter_1_0_0_0.zip`, places its Office Script in the current user's synchronized OneDrive, and queues dated payloads under `AtlasBridge/tracker-outbox`. The user imports this second solution once and maps OneDrive, SharePoint, and Excel Online (Business); it is independent of the first `AtlasBridge` evidence solution.
+
 For a workbook shared from another person’s OneDrive, the owner must share the **containing folder** with edit permission. Open **Shared → Shared with you**, select that folder, choose **Add shortcut to My files**, wait until it appears below `OneDrive - Circana` in File Explorer, then select the exact synced `.xlsm` or `.xlsx` in Atlas. OneDrive supports this shortcut operation for folders rather than individual shared files, so a file-only share must first be moved into a shared folder.
 
 Power Automate Inbox mode creates `AtlasBridge/inbox/scheduled`, `AtlasBridge/inbox/teams`, `AtlasBridge/inbox/requested`, and `AtlasBridge/requests`. Choosing an older workday writes `requests/selected-date.txt`; solution 1.9 checks that request every five minutes, exports that date, and Atlas waits for the synchronized result. Existing flat inbox JSON remains readable.
+
+When daily automation is enabled, Atlas registers both an `ONLOGON` background task and the selected daily task for the current Windows account. The background instance stays hidden and receives the daily trigger through Atlas's single-instance channel, so users do not need to open the interface each afternoon.
 
 ## Local development
 

@@ -9,7 +9,7 @@ Atlas creates Circana interaction trackers from real Microsoft 365 activity.
 3. Sign in with the Circana account in Microsoft's page and associate that account's Outlook, Teams and OneDrive connections during import. The single solution activates the scheduled Outlook flow and the per-message Teams capture flow.
 4. Enter your Corp ID, name, Area, Team Lead, and Circana Manager.
 5. Configure the tracker once: select an existing `.xlsx` / `.xlsm`, create a new `.xlsx`, or paste a SharePoint/OneDrive workbook link.
-6. Keep the daily automatic tracker enabled and choose its time (17:30 by default). Windows launches Atlas with the signed-in user's limited privileges, saves every finished meeting and inferred work task, then opens the app only when fewer than three activities need attention.
+6. Keep the daily automatic tracker enabled and choose its time (17:30 by default). Windows starts Atlas hidden when the user signs in and triggers the daily run with that user's limited privileges. Administrator rights are not required. Atlas opens only when fewer than three activities need attention.
 
 Atlas uses Microsoft WebView2 for its interface. WebView2 is normally already installed on supported Windows 10 and Windows 11 systems; if Windows reports that it is missing, install the Evergreen WebView2 Runtime from Microsoft.
 
@@ -20,6 +20,8 @@ The portable folder already contains Atlas Local AI: a CPU-only Ollama runtime a
 The Entra app must be a public desktop client with a `http://localhost` loopback redirect and delegated `User.Read`, `Calendars.Read`, `Mail.Read`, and `Chat.Read` permissions. Add `Files.ReadWrite` when using a SharePoint tracker. Do not create or enter a client secret.
 
 For SharePoint, paste the full link that opens the workbook. In Power Automate Inbox mode, the owner must share the containing folder with edit permission. Open **Shared → Shared with you**, select the folder, choose **Add shortcut to My files**, wait for it below `OneDrive - Circana` in File Explorer, and select the exact synced workbook in Atlas. The shortcut command applies to folders, not individual files. In Graph mode Atlas updates the remote workbook directly. Both paths preserve `.xlsm` macros and workbook structure.
+
+Power Automate Inbox mode also offers **SharePoint cloud flow**. Paste the Excel Online link and save the selected daily time. Atlas creates a personalized second solution ZIP and places `Atlas Write Tracker.osts` in the synchronized `Documents/Office Scripts` folder. Import the ZIP once in **Power Automate → Solutions → Import solution**, map OneDrive for Business, SharePoint, and Excel Online (Business), and complete the import. Atlas keeps dated JSON history in `AtlasBridge/tracker-outbox/<date>` and the active flow publishes the current package without replacing the workbook.
 
 To rebuild a past day, choose it under **Workday** and press **Import selected day**. Atlas requests the date through the synced `AtlasBridge/requests` folder, waits for solution 1.9 to export it, and imports the result automatically. Scheduled, Teams-event, and requested JSON packages remain separated by source folders.
 

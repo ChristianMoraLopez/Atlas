@@ -4,6 +4,7 @@ use std::{path::PathBuf, process::Command};
 
 pub const DEFAULT_DAILY_TIME: &str = "17:30";
 const TASK_NAME: &str = "Atlas Daily Tracker";
+const STARTUP_TASK_NAME: &str = "Atlas Background Startup";
 
 pub fn normalize_time(value: &str) -> Result<String> {
     let parsed = NaiveTime::parse_from_str(value.trim(), "%H:%M").map_err(|_| {
@@ -53,8 +54,15 @@ fn run_schtasks(arguments: &[String], deleting: bool) -> Result<()> {
 #[cfg(windows)]
 pub fn configure(enabled: bool, time: &str) -> Result<()> {
     if !enabled {
-        return run_schtasks(
+        run_schtasks(
             &["/Delete", "/TN", TASK_NAME, "/F"]
+                .into_iter()
+                .map(str::to_string)
+                .collect::<Vec<_>>(),
+            true,
+        )?;
+        return run_schtasks(
+            &["/Delete", "/TN", STARTUP_TASK_NAME, "/F"]
                 .into_iter()
                 .map(str::to_string)
                 .collect::<Vec<_>>(),
@@ -77,6 +85,23 @@ pub fn configure(enabled: bool, time: &str) -> Result<()> {
             TASK_NAME.into(),
             "/TR".into(),
             action,
+            "/RL".into(),
+            "LIMITED".into(),
+            "/IT".into(),
+            "/F".into(),
+        ],
+        false,
+    )?;
+    let startup_action = format!("\"{}\" --atlas-startup", executable.display());
+    run_schtasks(
+        &[
+            "/Create".into(),
+            "/SC".into(),
+            "ONLOGON".into(),
+            "/TN".into(),
+            STARTUP_TASK_NAME.into(),
+            "/TR".into(),
+            startup_action,
             "/RL".into(),
             "LIMITED".into(),
             "/IT".into(),
