@@ -1,5 +1,7 @@
 param([string] $SolutionPath = (Join-Path $PSScriptRoot 'AtlasTrackerWriter_1_0_0_0.zip'))
 $ErrorActionPreference='Stop'; Add-Type -AssemblyName System.IO.Compression.FileSystem
+$script=(Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'office-script/Atlas Write Tracker.osts') | ConvertFrom-Json)
+if($script.body -notmatch 'timezoneOffsetMinutes' -or $script.body -notmatch 'offsetMinutes / 1440'){throw 'Office Script must preserve the Atlas local timezone in Excel serial dates.'}
 $zip=[IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $SolutionPath))
 try {
   $names=@($zip.Entries | ForEach-Object FullName); foreach($name in @('solution.xml','customizations.xml','[Content_Types].xml','Workflows/AtlasWriteDailyTracker-4d6c39b7-cac8-4d19-a12e-95af49503b7f.json')) { if($names -notcontains $name){throw "Missing $name"} }
