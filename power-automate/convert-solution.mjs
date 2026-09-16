@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 
 const root = dirname(fileURLToPath(import.meta.url));
-const version = '1.11.0.0';
+const version = '1.12.0.0';
 const scheduled = {
   id: '8e5c1f84-dcbb-4a2c-9d2f-62e9c38105d2',
   name: 'Atlas - Export evidence to OneDrive',
@@ -55,15 +55,23 @@ a.Read_Atlas_requested_date = {
     parameters: { path: '/AtlasBridge/requests/selected-date.txt', inferContentType: true },
     authentication: "@parameters('$authentication')",
   },
+  runAfter: { Initialize_RequestedDate: ['Succeeded'] },
+};
+a.Initialize_RequestedDate = {
+  type: 'InitializeVariable',
+  inputs: { variables: [{ name: 'RequestedDate', type: 'string', value: '' }] },
   runAfter: { AtlasInstallationId: ['Succeeded'] },
 };
 a.RequestedDate = {
-  type: 'Compose',
-  inputs: "@trim(base64ToString(coalesce(outputs('Read_Atlas_requested_date')?['body']?['$content'],'')))",
-  runAfter: { Read_Atlas_requested_date: ['Succeeded', 'Failed', 'Skipped', 'TimedOut'] },
+  type: 'SetVariable',
+  inputs: {
+    name: 'RequestedDate',
+    value: "@trim(base64ToString(body('Read_Atlas_requested_date')))",
+  },
+  runAfter: { Read_Atlas_requested_date: ['Succeeded'] },
 };
-a.TargetDate.inputs = "@if(empty(outputs('RequestedDate')),formatDateTime(convertTimeZone(utcNow(),'UTC','SA Pacific Standard Time'),'yyyy-MM-dd'),outputs('RequestedDate'))";
-a.TargetDate.runAfter = { RequestedDate: ['Succeeded'] };
+a.TargetDate.inputs = "@if(empty(variables('RequestedDate')),formatDateTime(convertTimeZone(utcNow(),'UTC','SA Pacific Standard Time'),'yyyy-MM-dd'),variables('RequestedDate'))";
+a.TargetDate.runAfter = { RequestedDate: ['Succeeded', 'Failed', 'Skipped', 'TimedOut'] };
 const calendar = a.Calendar_evidence.actions;
 calendar.Get_calendar_view_of_events_V3.inputs.parameters.calendarId = "@first(body('Get_calendars_V2')?['value'])?['id']";
 const mail = a.Mail_evidence.actions;
@@ -164,7 +172,7 @@ a.Compose_Atlas_bundle.inputs = {
 };
 a.Compose_Atlas_bundle.runAfter = Object.fromEntries(['Calendar_evidence', 'Mail_evidence', 'Teams_evidence'].map(scope => [scope, terminalStates]));
 a.Create_Atlas_evidence_file.inputs.parameters.name = "@concat('atlas-evidence-',outputs('AtlasInstallationId'),'-',outputs('TargetDate'),'-',formatDateTime(utcNow(),'yyyyMMddTHHmmssZ'),'.json')";
-a.Create_Atlas_evidence_file.inputs.parameters.folderPath = "@if(empty(outputs('RequestedDate')),'/AtlasBridge/inbox/scheduled','/AtlasBridge/inbox/requested')";
+a.Create_Atlas_evidence_file.inputs.parameters.folderPath = "@if(empty(variables('RequestedDate')),'/AtlasBridge/inbox/scheduled','/AtlasBridge/inbox/requested')";
 
 const eventDefinition = {
   '$schema': 'https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#',

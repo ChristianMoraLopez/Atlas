@@ -59,10 +59,13 @@
       "actions": {
         "TargetDate": {
           "type": "Compose",
-          "inputs": "@if(empty(outputs('RequestedDate')),formatDateTime(convertTimeZone(utcNow(),'UTC','SA Pacific Standard Time'),'yyyy-MM-dd'),outputs('RequestedDate'))",
+          "inputs": "@if(empty(variables('RequestedDate')),formatDateTime(convertTimeZone(utcNow(),'UTC','SA Pacific Standard Time'),'yyyy-MM-dd'),variables('RequestedDate'))",
           "runAfter": {
             "RequestedDate": [
-              "Succeeded"
+              "Succeeded",
+              "Failed",
+              "Skipped",
+              "TimedOut"
             ]
           }
         },
@@ -554,7 +557,7 @@
               "operationId": "CreateFile"
             },
             "parameters": {
-              "folderPath": "@if(empty(outputs('RequestedDate')),'/AtlasBridge/inbox/scheduled','/AtlasBridge/inbox/requested')",
+              "folderPath": "@if(empty(variables('RequestedDate')),'/AtlasBridge/inbox/scheduled','/AtlasBridge/inbox/requested')",
               "name": "@concat('atlas-evidence-',outputs('AtlasInstallationId'),'-',outputs('TargetDate'),'-',formatDateTime(utcNow(),'yyyyMMddTHHmmssZ'),'.json')",
               "body": "@string(outputs('Compose_Atlas_bundle'))"
             },
@@ -586,20 +589,37 @@
             "authentication": "@parameters('$authentication')"
           },
           "runAfter": {
+            "Initialize_RequestedDate": [
+              "Succeeded"
+            ]
+          }
+        },
+        "Initialize_RequestedDate": {
+          "type": "InitializeVariable",
+          "inputs": {
+            "variables": [
+              {
+                "name": "RequestedDate",
+                "type": "string",
+                "value": ""
+              }
+            ]
+          },
+          "runAfter": {
             "AtlasInstallationId": [
               "Succeeded"
             ]
           }
         },
         "RequestedDate": {
-          "type": "Compose",
-          "inputs": "@trim(base64ToString(coalesce(outputs('Read_Atlas_requested_date')?['body']?['$content'],'')))",
+          "type": "SetVariable",
+          "inputs": {
+            "name": "RequestedDate",
+            "value": "@trim(base64ToString(body('Read_Atlas_requested_date')))"
+          },
           "runAfter": {
             "Read_Atlas_requested_date": [
-              "Succeeded",
-              "Failed",
-              "Skipped",
-              "TimedOut"
+              "Succeeded"
             ]
           }
         },

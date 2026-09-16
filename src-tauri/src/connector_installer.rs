@@ -24,7 +24,7 @@ const TEAMS_EVENT_WORKFLOW: &str =
 const WORKFLOWS: [&str; 2] = [SCHEDULED_WORKFLOW, TEAMS_EVENT_WORKFLOW];
 const MAX_FILE: u64 = 25 * 1024 * 1024;
 const PORTAL: &str = "https://make.powerautomate.com/";
-const SOLUTION_VERSION: &str = "1.11.0.0";
+const SOLUTION_VERSION: &str = "1.12.0.0";
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -953,18 +953,23 @@ mod tests {
             actions["Read_Atlas_requested_date"]["inputs"]["host"]["operationId"],
             "GetFileContentByPath"
         );
+        assert_eq!(actions["RequestedDate"]["type"], "SetVariable");
         assert_eq!(
             actions["RequestedDate"]["runAfter"]["Read_Atlas_requested_date"],
-            json!(["Succeeded", "Failed", "Skipped", "TimedOut"])
+            json!(["Succeeded"])
         );
-        assert!(actions["RequestedDate"]["inputs"]
-            .as_str()
-            .unwrap()
-            .contains("coalesce"));
+        assert_eq!(
+            actions["RequestedDate"]["inputs"]["value"],
+            "@trim(base64ToString(body('Read_Atlas_requested_date')))"
+        );
+        assert_eq!(
+            actions["Initialize_RequestedDate"]["inputs"]["variables"][0]["value"],
+            ""
+        );
         assert!(actions["TargetDate"]["inputs"]
             .as_str()
             .unwrap()
-            .contains("RequestedDate"));
+            .contains("variables('RequestedDate')"));
         let event_flow = flow_from(bytes, TEAMS_EVENT_WORKFLOW);
         let event_actions = &event_flow["properties"]["definition"]["actions"];
         assert_eq!(
