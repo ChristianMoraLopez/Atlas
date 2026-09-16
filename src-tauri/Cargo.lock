@@ -236,7 +236,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-tracker"
-version = "0.2.20"
+version = "0.2.21"
 dependencies = [
  "base64 0.22.1",
  "chrono",

@@ -11,6 +11,7 @@ Atlas is a Tauri v2 Windows desktop application that builds the Circana Interact
 - Signs each teammate in through Microsoft Authorization Code + PKCE in the system browser.
 - Stores the refresh token in size-safe chunks in Windows Credential Manager and keeps short-lived access tokens only in memory.
 - Opens with a skippable Atlas SVG animation and honors Windows reduced-motion preferences.
+- Uses the same Atlas orbit and ledger mark for delayed, contextual loading states during AI startup, Microsoft 365 verification, evidence interpretation, flow generation, and tracker writes.
 - Extracts real meetings for any selected workday and excludes cancelled events, meal/tracker blocks, focus blocks, reminders, and to-do calendar entries.
 - Normalizes only the first MMNI/SparkTriage meeting to 09:00–09:30 in the chosen local timezone.
 - Preselects every finished meeting and each separate work task inferred from mail or Teams. Assigned and in-progress work is included; reminders, invitations, automatic notices, and inbox activity without a concrete task are excluded.

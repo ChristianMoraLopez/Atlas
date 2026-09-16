@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ConnectorInstaller from "./ConnectorInstaller";
 import AtlasIntro from "./AtlasIntro";
+import AtlasLoader from "./AtlasLoader";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { openPath, openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
@@ -26,10 +27,9 @@ function ErrorBanner({ message, onClose }: { message: string; onClose?: () => vo
 }
 
 function LoadingScreen() {
-  return <main className="grid min-h-screen place-items-center"><div className="text-center">
-    <div className="mx-auto mb-5 grid h-14 w-14 place-items-center rounded-2xl bg-pine text-white shadow-panel"><Loader2 className="h-6 w-6 animate-spin" /></div>
-    <p className="text-sm font-bold text-ink/60">Preparing your tracker…</p>
-  </div></main>;
+  return <main className="min-h-screen" aria-busy="true">
+    <AtlasLoader show message="Preparing your workspace" detail="Starting Atlas Local AI and loading your tracker settings." mode="screen" delay={0} />
+  </main>;
 }
 
 function Brand() {
@@ -40,7 +40,7 @@ function Brand() {
 }
 
 function LoginScreen({ onSignIn, onEditMicrosoft, busy, error }: { onSignIn: () => void; onEditMicrosoft: () => void; busy: boolean; error: string }) {
-  return <main className="mx-auto flex min-h-screen max-w-6xl items-center px-10 py-12">
+  return <main className="mx-auto flex min-h-screen max-w-6xl items-center px-10 py-12" aria-busy={busy}>
     <section className="grid w-full grid-cols-[1.05fr_.95fr] overflow-hidden rounded-[2rem] bg-[#081c1a] shadow-panel">
       <div className="relative overflow-hidden p-14 text-white">
         <div className="absolute -right-32 -top-32 h-96 w-96 rounded-full border border-white/10" />
@@ -66,6 +66,7 @@ function LoginScreen({ onSignIn, onEditMicrosoft, busy, error }: { onSignIn: () 
         <p className="mt-5 text-center text-[11px] leading-5 text-ink/40">Your refresh token is stored by Windows Credential Manager and is never written to a project file.</p>
       </div>
     </section>
+    <AtlasLoader show={busy} message="Connecting your Microsoft account" detail="Complete any sign-in or company verification shown by Microsoft." />
   </main>;
 }
 
@@ -79,7 +80,7 @@ function ProfileForm({ initial, onSave, title = "Set up your profile", cancel }:
     if (!profile.loginId.trim() || !profile.fullName.trim()) return setError("Login ID and full name are required.");
     setBusy(true); try { await onSave(profile); } catch (e) { setError(String(e)); } finally { setBusy(false); }
   };
-  return <form onSubmit={submit} className="card w-full max-w-2xl p-8">
+  return <form onSubmit={submit} className="card w-full max-w-2xl p-8" aria-busy={busy}>
     <div className="flex items-start justify-between"><div><p className="text-xs font-bold uppercase tracking-[.18em] text-pine">Personal defaults</p><h2 className="mt-2 font-display text-3xl">{title}</h2><p className="mt-2 text-sm text-ink/50">Used only in fields Atlas is allowed to write.</p></div>{cancel && <button type="button" className="rounded-lg p-2 hover:bg-cream" onClick={cancel}><X /></button>}</div>
     <div className="mt-8 grid grid-cols-2 gap-5">
       <label><span className="label">Corp ID / Login ID *</span><input className="field" value={profile.loginId} onChange={e => update("loginId", e.target.value)} /></label>
@@ -90,6 +91,7 @@ function ProfileForm({ initial, onSave, title = "Set up your profile", cancel }:
     </div>
     {error && <div className="mt-5"><ErrorBanner message={error} /></div>}
     <div className="mt-7 flex justify-end gap-3">{cancel && <button type="button" className="btn-secondary" onClick={cancel}>Cancel</button>}<button className="btn-primary" disabled={busy}>{busy && <Loader2 className="h-4 w-4 animate-spin" />}Save profile</button></div>
+    <AtlasLoader show={busy} message="Saving your Atlas profile" detail="Applying the defaults used in your tracker rows." />
   </form>;
 }
 
@@ -131,7 +133,7 @@ function DestinationSetupScreen({ initial, initialAutoSync, initialAutoSyncTime,
     { kind: "share_point", title: "Synced SharePoint", detail: bridgeMode ? "Use the OneDrive-synced copy" : "Update the online .xlsx or .xlsm directly", icon: <Cloud className="h-5 w-5" /> },
     ...(bridgeMode ? [{ kind: "share_point_flow" as TrackerDestinationKind, title: "SharePoint cloud flow", detail: "Create the second import ZIP", icon: <RefreshCw className="h-5 w-5" /> }] : []),
   ];
-  return <main className="mx-auto min-h-screen max-w-6xl px-10 py-10">
+  return <main className="mx-auto min-h-screen max-w-6xl px-10 py-10" aria-busy={busy}>
     <header className="flex items-center justify-between"><Brand />{onCancel && <button className="btn-secondary" onClick={onCancel}>Cancel</button>}</header>
     <form onSubmit={submit} className="card mx-auto mt-10 max-w-4xl p-9">
       <p className="text-xs font-bold uppercase tracking-[.18em] text-pine">One-time tracker setup</p>
@@ -143,6 +145,11 @@ function DestinationSetupScreen({ initial, initialAutoSync, initialAutoSyncTime,
       {error && <div className="mt-5"><ErrorBanner message={error} /></div>}
       <div className="mt-7 flex justify-end"><button className="btn-primary" disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}Save tracker setup</button></div>
     </form>
+    <AtlasLoader
+      show={busy}
+      message={kind === "share_point_flow" ? "Preparing your SharePoint flow" : "Saving your tracker destination"}
+      detail={kind === "share_point_flow" ? "Personalizing the writer solution and its Office Script." : "Checking the workbook and scheduling the daily run."}
+    />
   </main>;
 }
 
@@ -237,9 +244,10 @@ function SuccessModal({ result, onClose }: { result: ExportResult; onClose: () =
 
 function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestination }: { status: AppStatus; refreshStatus: () => Promise<void>; signOut: () => Promise<void>; editMicrosoft: () => void; editDestination: () => void }) {
   const profile = status.profile!; const destination = status.destination!; const bridgeMode = status.sourceMode === "power_automate_folder"; const [date, setDate] = useState(localDate()); const [includeEmail, setIncludeEmail] = useState(true); const [includeTeams, setIncludeTeams] = useState(true); const [items, setItems] = useState<Interaction[]>([]); const [warnings, setWarnings] = useState<string[]>([]); const [busy, setBusy] = useState(false); const busyRef = useRef(false); const [error, setError] = useState(""); const [syncNotice, setSyncNotice] = useState(""); const [manual, setManual] = useState(false); const [editingProfile, setEditingProfile] = useState(false); const [success, setSuccess] = useState<ExportResult>();
+  const [workStatus, setWorkStatus] = useState<{ message: string; detail: string }>();
   const counts = useMemo(() => ({ all: items.length, selected: items.filter(i => i.selected).length, review: items.filter(i => !i.reviewed).length }), [items]);
-  const startWork = () => { if (busyRef.current) return false; busyRef.current = true; setBusy(true); setError(""); setSyncNotice(""); return true; };
-  const endWork = () => { busyRef.current = false; setBusy(false); };
+  const startWork = (message: string, detail: string) => { if (busyRef.current) return false; busyRef.current = true; setWorkStatus({ message, detail }); setBusy(true); setError(""); setSyncNotice(""); return true; };
+  const endWork = () => { busyRef.current = false; setBusy(false); setWorkStatus(undefined); };
   const completionWarning = (values: Interaction[]) => {
     const count = values.filter(item => item.selected).length;
     return count < 3 ? `Atlas encontró y guardará ${count} ${count === 1 ? "actividad" : "actividades"}. Añade ${3 - count} ${3 - count === 1 ? "tarea real" : "tareas reales"} para llegar al mínimo diario de 3.` : "";
@@ -261,16 +269,16 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
     }
     throw new Error(`Power Automate no entregó ${targetDate} después de 6 minutos. Confirma que el flujo Atlas actualizado esté activo. Último resultado: ${lastError}`);
   };
-  const extract = async () => { if (!startWork()) return; setWarnings([]); try { const result = await loadEvidence(date, includeEmail, includeTeams); setItems(result.interactions); const warning = completionWarning(result.interactions); setWarnings(warning ? [...result.warnings, warning] : result.warnings); setSyncNotice(bridgeMode ? `Evidencia de ${date} importada y organizada por fuente.` : ""); } catch (e) { setError(String(e)); } finally { endWork(); } };
+  const extract = async () => { if (!startWork(bridgeMode ? `Importing evidence for ${date}` : `Interpreting your workday for ${date}`, bridgeMode ? "Waiting for Power Automate and OneDrive, then separating meetings and work tasks." : "Atlas Local AI is reviewing meetings, mail, and Teams evidence on this computer.")) return; setWarnings([]); try { const result = await loadEvidence(date, includeEmail, includeTeams); setItems(result.interactions); const warning = completionWarning(result.interactions); setWarnings(warning ? [...result.warnings, warning] : result.warnings); setSyncNotice(bridgeMode ? `Evidencia de ${date} importada y organizada por fuente.` : ""); } catch (e) { setError(String(e)); } finally { endWork(); } };
   const changeTeams = (enabled: boolean) => setIncludeTeams(enabled);
   const saveSelected = async () => {
     const selectedItems = items.filter(i => i.selected);
     if (selectedItems.length === 0) return setError("Select at least one real interaction to save.");
-    if (!startWork()) return;
+    if (!startWork("Writing selected activities", "Updating the tracker without overwriting unrelated rows or existing work.")) return;
     try { setSuccess(await api.export(date, profile, items)); const warning = completionWarning(items); if (warning) setWarnings(old => [...old.filter(value => !value.startsWith("Atlas encontró y guardará")), warning]); await refreshStatus(); } catch (e) { setError(String(e)); } finally { endWork(); }
   };
   const syncCalendar = async (automatic = false, scheduled = false, background = false) => {
-    if (!startWork()) return;
+    if (!startWork(automatic ? "Running your daily Atlas update" : "Importing today’s work", "Collecting today’s evidence, interpreting work tasks, and updating the tracker.")) return;
     const today = localDate(); setDate(today); setWarnings([]);
     try {
       const result = await loadEvidence(today, true, true);
@@ -293,6 +301,12 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
       if (scheduled || background) await api.completeScheduled(true).catch(() => undefined);
     } finally { endWork(); }
   };
+  const recheckLocalAi = async () => {
+    if (!startWork("Checking Atlas Local AI", "Confirming that the bundled service and interpretation model are ready.")) return;
+    try { await refreshStatus(); }
+    catch (failure) { setError(String(failure)); }
+    finally { endWork(); }
+  };
   const saveProfile = async (p: UserProfile) => { await api.saveProfile(p); setEditingProfile(false); await refreshStatus(); };
   useEffect(() => {
     let disposed = false;
@@ -303,7 +317,7 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
     const first = status.autoSync && status.scheduledLaunch ? window.setTimeout(() => { void syncCalendar(true, true); }, 900) : undefined;
     return () => { disposed = true; unlisten?.(); unlistenBackground?.(); if (first) window.clearTimeout(first); };
   }, []);
-  return <div className="min-h-screen">
+  return <div className="min-h-screen" aria-busy={busy}>
     <header className="sticky top-0 z-30 border-b border-white/70 bg-cream/80 px-8 py-4 backdrop-blur-xl"><div className="mx-auto flex max-w-[1540px] items-center justify-between"><Brand /><div className="flex items-center gap-2"><div className="mr-3 max-w-xs text-right"><p className="text-xs font-bold">{bridgeMode ? "Power Automate Inbox" : status.account?.displayName}</p><p className="truncate text-[10px] text-ink/40">{bridgeMode ? status.bridgeFolder : status.account?.email}</p></div><button title="Tracker destination" className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={editDestination}><FileSpreadsheet className="h-4 w-4" /></button><button title="Open failure log" className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={() => openPath(status.logPath)}><FileText className="h-4 w-4" /></button><button title="Data source" className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={editMicrosoft}>{bridgeMode ? <Inbox className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}</button><button title="Profile settings" className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={() => setEditingProfile(true)}><Settings className="h-4 w-4" /></button>{!bridgeMode && <button title="Sign out" className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-red-50 hover:text-red-600" onClick={signOut}><LogOut className="h-4 w-4" /></button>}</div></div></header>
     <main className="mx-auto max-w-[1540px] px-8 py-8">
       <div className="grid grid-cols-[minmax(0,1fr)_290px] gap-6">
@@ -311,7 +325,7 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
           <div className="mb-7 flex items-end justify-between"><div><p className="text-xs font-bold uppercase tracking-[.18em] text-pine">Daily workspace</p><h1 className="mt-2 font-display text-4xl">Record your daily work.</h1><p className="mt-2 text-sm text-ink/50">Meetings and concrete work tasks become separate tracker rows.</p></div><div className="flex items-center gap-2"><span className="chip bg-white text-ink/55"><Inbox className="h-3 w-3" />{counts.all} found</span><span className="chip bg-mint text-pine"><Check className="h-3 w-3" />{counts.selected} selected</span>{counts.review > 0 && <span className="chip bg-[#fff0df] text-[#9a5a1e]">{counts.review} to review</span>}</div></div>
           <div className="card p-5"><div className="grid grid-cols-[220px_1fr_1fr_auto] items-end gap-4"><label><span className="label">Workday</span><input type="date" max={localDate()} className="field" value={date} disabled={busy} onChange={e => { setDate(e.target.value); setItems([]); setSyncNotice(""); }} /></label><Toggle checked={includeEmail} onChange={setIncludeEmail} label="Infer from mail" detail="Work tasks, without inbox noise" icon={<Mail className="h-4 w-4" />} /><Toggle checked={includeTeams} onChange={changeTeams} label="Infer from Teams" detail="Separate task for each activity" icon={<Bot className="h-4 w-4" />} /><button className="btn-primary h-[46px] px-5" disabled={busy || ((includeEmail || includeTeams) && (!status.ollamaRunning || !status.ollamaModelAvailable))} onClick={extract}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}{bridgeMode ? "Import selected day" : "Extract selected day"}</button></div>
             {status.ollamaRunning && status.ollamaModelAvailable && <div className="mt-4 flex items-center gap-3 rounded-xl border border-pine/15 bg-mint/55 px-4 py-3 text-xs text-pine"><Bot className="h-5 w-5" /><span><b>Atlas Local AI is ready.</b> Mail and Teams evidence stay on this computer and are interpreted by <code>{status.ollamaModel}</code>.</span></div>}
-            {(!status.ollamaRunning || !status.ollamaModelAvailable) && <div className="mt-4 flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-800"><Bot className="h-5 w-5" /><span className="flex-1"><b>Bundled Local AI could not start.</b> {status.localAiError ?? "Extract the complete Atlas portable ZIP again."}</span><button className="font-bold underline" onClick={refreshStatus}>Recheck</button></div>}
+            {(!status.ollamaRunning || !status.ollamaModelAvailable) && <div className="mt-4 flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-800"><Bot className="h-5 w-5" /><span className="flex-1"><b>Bundled Local AI could not start.</b> {status.localAiError ?? "Extract the complete Atlas portable ZIP again."}</span><button className="font-bold underline" onClick={() => void recheckLocalAi()}>Recheck</button></div>}
           </div>
           {error && <div className="mt-5"><ErrorBanner message={error} onClose={() => setError("")} /></div>}{syncNotice && <div className="mt-5 flex items-center gap-3 rounded-xl border border-pine/15 bg-mint/55 px-4 py-3 text-sm text-pine"><Check className="h-4 w-4" />{syncNotice}</div>}{warnings.map((w, i) => <div className="mt-3" key={i}><ErrorBanner message={w} /></div>)}
           <div className="mt-6 flex items-center justify-between"><div><h2 className="font-display text-2xl">Preview</h2><p className="mt-1 text-xs text-ink/45">Atlas selects finished meetings and concrete work tasks, including tasks still in progress. Reminders and automatic notices stay out.</p></div><button className="btn-secondary" onClick={() => setManual(true)}><Plus className="h-4 w-4" />Añadir tarea manual</button></div>
@@ -323,6 +337,7 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
     {manual && <ManualModal date={date} onClose={() => setManual(false)} onAdd={item => { setItems(old => [...old, item]); setManual(false); }} />}
     {editingProfile && <div className="fixed inset-0 z-50 grid place-items-center bg-[#081c1a]/45 p-8 backdrop-blur-sm"><ProfileForm initial={profile} title="Profile settings" onSave={saveProfile} cancel={() => setEditingProfile(false)} /></div>}
     {success && <SuccessModal result={success} onClose={() => setSuccess(undefined)} />}
+    <AtlasLoader show={busy} message={workStatus?.message ?? "Atlas is working"} detail={workStatus?.detail} />
   </div>;
 }
 

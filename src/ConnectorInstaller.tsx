@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
-import { Check, ExternalLink, FolderOpen, Loader2, RotateCcw, ShieldCheck, X } from 'lucide-react';
+import { Check, ExternalLink, FolderOpen, RotateCcw, ShieldCheck, X } from 'lucide-react';
+import AtlasLoader from './AtlasLoader';
 
 type Phase = 'checking_requirements' | 'waiting_sign_in' | 'finding_environment' | 'finding_connections' | 'importing_solution' | 'activating_flow' | 'verifying_file' | 'completed' | 'blocked_by_policy';
 interface Session { phase: Phase; installationId: string; folder?: string; calendarName: string; environmentId?: string; diagnostic: string; lastCheckedAt?: string; lastCheckedFile?: string }
@@ -54,6 +55,7 @@ export default function ConnectorInstaller({ onClose, onUseFolder }: { onClose?:
   const [syncAccount, setSyncAccount] = useState(false);
   const [report, setReport] = useState('');
   const [busy, setBusy] = useState(false);
+  const [busyLabel, setBusyLabel] = useState('Preparando el conector');
   const [error, setError] = useState('');
   const [resetConfirm, setResetConfirm] = useState(false);
   const busyRef = useRef(false);
@@ -69,18 +71,30 @@ export default function ConnectorInstaller({ onClose, onUseFolder }: { onClose?:
     }).catch(() => setError('No se pudo cargar el asistente. Cierra y vuelve a abrirlo.'));
     return () => { mounted.current = false; };
   }, []);
-  const run = async (operation: () => Promise<void>) => {
+  const run = async (operation: () => Promise<void>, label = 'Procesando la configuración') => {
     if (busyRef.current) return;
-    busyRef.current = true; setBusy(true); setError('');
+    busyRef.current = true; setBusyLabel(label); setBusy(true); setError('');
     try { await operation(); }
     catch (failure) { if (mounted.current) setError(localError(failure)); }
     finally { busyRef.current = false; if (mounted.current) setBusy(false); }
+  };
+  const actionLabels: Record<string, string> = {
+    prepare: 'Preparando la solución AtlasBridge',
+    confirm_sign_in: 'Guardando la confirmación de Microsoft',
+    confirm_environment: 'Actualizando la configuración anterior',
+    confirm_connections: 'Preparando la importación del conector',
+    confirm_import: 'Confirmando la solución importada',
+    confirm_active: 'Iniciando la comprobación del flujo',
+    verify: 'Comprobando calendario, correo y Teams',
+    report: 'Interpretando el diagnóstico de Microsoft',
+    retry: 'Reanudando la configuración',
+    reset: 'Preparando una configuración nueva',
   };
   const act = (action: Record<string, unknown>) => run(async () => {
     const next = await invoke<Snapshot>('connector_installer_action', { action });
     if (mounted.current) setSnapshot(next);
     if (action.kind === 'prepare') await invoke('connector_installer_open_portal');
-  });
+  }, actionLabels[String(action.kind)] ?? 'Procesando la configuración');
   useEffect(() => {
     if (phase !== 'verifying_file') return;
     const poll = () => { void act({ kind: 'verify' }); };
@@ -89,12 +103,12 @@ export default function ConnectorInstaller({ onClose, onUseFolder }: { onClose?:
     // Only start/stop on a phase change; the ref prevents overlapping reads.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
-  const portal = () => run(async () => { await invoke('connector_installer_open_portal'); });
+  const portal = () => run(async () => { await invoke('connector_installer_open_portal'); }, 'Abriendo el portal de Microsoft');
   const chooseRoot = () => run(async () => {
     const folder = await open({ directory: true, multiple: false, title: 'Selecciona la raíz de tu OneDrive corporativo (no inbox)' });
     if (typeof folder === 'string') { setRoot(folder); setSyncAccount(false); }
-  });
-  return <main className="mx-auto min-h-screen max-w-6xl px-10 py-8">
+  }, 'Abriendo tu OneDrive corporativo');
+  return <main className="mx-auto min-h-screen max-w-6xl px-10 py-8" aria-busy={busy || !snapshot}>
     <header className="flex items-center justify-between"><span className="chip bg-mint text-pine"><ShieldCheck className="h-4 w-4" />Sin instalaciones de sistema</span>{onClose && <button className="btn-secondary" onClick={onClose} disabled={busy}><X className="h-4 w-4" />Cerrar y conservar progreso</button>}</header>
     <h1 className="mt-7 font-display text-4xl">Instalar conector de Microsoft 365</h1>
     <p className="mt-3 max-w-4xl text-sm leading-6 text-ink/65">Inicia sesión con tu cuenta Circana en el portal oficial, vincula tus conexiones e importa el paquete una sola vez. El flujo se entrega activo y se ejecuta cada cinco minutos; no necesitas abrir el diseñador ni copiar identificadores.</p>
@@ -120,10 +134,10 @@ export default function ConnectorInstaller({ onClose, onUseFolder }: { onClose?:
         {phase === 'blocked_by_policy' && <div className="mt-5 space-y-4"><p className="text-sm">No hay cambios locales que concedan este requisito corporativo. Conserva el modo local. Reanuda únicamente si el portal ya permite continuar.</p><button className="btn-secondary" disabled={busy} onClick={() => void act({ kind: 'retry' })}>Volver al paso pendiente</button></div>}
         {!['completed', 'blocked_by_policy'].includes(phase) && <details className="mt-7 border-t border-ink/10 pt-4"><summary className="cursor-pointer text-sm font-bold">Microsoft muestra un error o falta un requisito</summary><p className="mt-3 text-xs text-ink/55">Introduce solo el código o una frase sin datos personales. Se analiza en memoria y se descarta; no se guarda ni se registra el texto.</p><textarea className="field mt-3" maxLength={4096} value={report} onChange={e => setReport(e.target.value)} placeholder="Ejemplo: prvImportCustomizations, AADSTS53003, DLP" /><div className="mt-3 flex flex-wrap gap-2">{[['environment maker', 'Falta Environment Maker'], ['dataverse_required', 'No hay Dataverse'], ['outlook_access', 'Outlook bloqueado'], ['teams_access', 'Teams bloqueado'], ['onedrive_access', 'OneDrive bloqueado'], ['license_required', 'Microsoft pide licencia']].map(([code, label]) => <button key={code} disabled={busy} className="btn-secondary text-xs" onClick={() => void act({ kind: 'report', message: code })}>{label}</button>)}</div><button className="btn-secondary mt-3" disabled={busy || !report.trim()} onClick={() => { const message = report; setReport(''); void act({ kind: 'report', message }); }}>Interpretar diagnóstico</button></details>}
         {error && <p role="alert" className="mt-5 rounded-xl bg-red-50 p-4 text-sm text-red-800">{error}</p>}
-        {busy && <p role="status" className="mt-4 flex gap-2 text-sm text-pine"><Loader2 className="h-4 w-4 animate-spin" />Procesando…</p>}
         {phase !== 'checking_requirements' && <div className="mt-7 flex flex-wrap items-center gap-3 border-t border-ink/10 pt-4"><button className="btn-secondary" disabled={busy} onClick={portal}><ExternalLink className="h-4 w-4" />Volver a Microsoft</button><button className="text-xs font-bold text-pine underline" disabled={busy} onClick={() => setResetConfirm(!resetConfirm)}>Preparar otra configuración</button>{resetConfirm && <div className="w-full rounded-xl bg-cream p-4 text-sm">Esto reinicia solo el asistente y su identificador de verificación. El flujo existente seguirá en Microsoft; actualiza AtlasBridge con el nuevo ZIP para evitar duplicados.<button className="btn-secondary mt-3 block" disabled={busy} onClick={() => { setResetConfirm(false); setOwnConnections(false); void act({ kind: 'reset' }); }}>Reiniciar asistente</button></div>}</div>}
       </section>
     </div>
+    <AtlasLoader show={(!snapshot && !error) || busy} message={!snapshot ? 'Cargando el asistente de Microsoft 365' : busyLabel} detail={!snapshot ? 'Recuperando el progreso guardado y comprobando los recursos locales.' : 'Atlas conservará tu progreso si Microsoft necesita más tiempo.'} mode={!snapshot ? 'screen' : 'overlay'} delay={!snapshot ? 0 : 180} />
   </main>;
 }
 
