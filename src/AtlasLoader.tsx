@@ -36,8 +36,6 @@ export default function AtlasLoader({
     aria-busy="true"
     aria-label={message}
   >
-    <div className="atlas-loader__glow atlas-loader__glow--mint" aria-hidden="true" />
-    <div className="atlas-loader__glow atlas-loader__glow--coral" aria-hidden="true" />
     <div className="atlas-loader__card">
       <svg className="atlas-loader__mark" viewBox="0 0 120 120" aria-hidden="true">
         <circle className="atlas-loader__orbit-base" cx="60" cy="60" r="48" />
@@ -49,10 +47,10 @@ export default function AtlasLoader({
         <circle className="atlas-loader__node atlas-loader__node--three" cx="93" cy="91" r="3.5" />
       </svg>
       <div className="atlas-loader__copy">
-        <p className="atlas-loader__eyebrow">ATLAS · WORK IN MOTION</p>
+        <p className="atlas-loader__eyebrow">ATLAS</p>
         <p className="atlas-loader__message">{message}</p>
         {detail && <p className="atlas-loader__detail">{detail}</p>}
-        <div className="atlas-loader__progress" aria-hidden="true"><span /><span /><span /></div>
+        <div className="atlas-loader__progress" aria-hidden="true"><span /></div>
       </div>
     </div>
   </div>;

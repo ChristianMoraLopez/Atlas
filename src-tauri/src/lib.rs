@@ -16,13 +16,64 @@ mod tracker_writer;
 use crate::{
     error::{AppError, Result},
     models::{
-        AppStatus, ExportResult, ExtractionResult, Interaction, SourceKind, SourceMode,
-        TrackerDestination, TrackerDestinationKind, UserProfile,
+        AppStatus, AutomationMode, ExportResult, ExtractionResult, Interaction, SourceKind,
+        SourceMode, TrackerDestination, TrackerDestinationKind, UserProfile,
     },
     state::AppState,
 };
 use std::{collections::HashSet, path::Path};
 use tauri::{Emitter, Manager};
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CachedDayPreview {
+    source_mode: SourceMode,
+    result: ExtractionResult,
+    #[serde(default)]
+    verified_sources: Vec<Interaction>,
+}
+
+fn day_preview_path(state: &AppState, date: &str) -> std::path::PathBuf {
+    state
+        .config_dir
+        .join("days")
+        .join(date)
+        .join("preview.json")
+}
+
+fn cache_day_preview(
+    state: &AppState,
+    date: &str,
+    source_mode: SourceMode,
+    result: &ExtractionResult,
+) -> Result<()> {
+    let path = day_preview_path(state, date);
+    let verified_sources = result
+        .interactions
+        .iter()
+        .filter(|item| item.source_kind != SourceKind::Manual)
+        .cloned()
+        .collect();
+    write_day_preview(
+        &path,
+        &CachedDayPreview {
+            source_mode,
+            result: result.clone(),
+            verified_sources,
+        },
+    )
+}
+
+fn write_day_preview(path: &Path, cached: &CachedDayPreview) -> Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| AppError::Message("Atlas could not prepare the day cache path".into()))?;
+    std::fs::create_dir_all(parent)?;
+    let temporary = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+    std::fs::write(&temporary, serde_json::to_vec_pretty(cached)?)?;
+    std::fs::rename(temporary, path)?;
+    Ok(())
+}
 
 async fn build_status(state: &AppState) -> Result<AppStatus> {
     let settings = state.read_settings()?;
@@ -67,7 +118,8 @@ async fn build_status(state: &AppState) -> Result<AppStatus> {
         destination: settings.destination,
         auto_sync: settings.auto_sync,
         auto_sync_time: settings.auto_sync_time,
-        scheduled_launch: std::env::args().any(|arg| arg == "--atlas-daily-run"),
+        automation_mode: settings.automation_mode,
+        scheduled_launch: state.background_launch,
         log_path: diagnostics::path(),
     })
 }
@@ -254,6 +306,7 @@ async fn save_tracker_destination(
     destination: TrackerDestination,
     auto_sync: bool,
     auto_sync_time: String,
+    automation_mode: AutomationMode,
 ) -> Result<AppStatus> {
     let current = state.read_settings()?;
     let source_mode = current.source_mode;
@@ -320,6 +373,7 @@ async fn save_tracker_destination(
         settings.destination = Some(destination);
         settings.auto_sync = auto_sync;
         settings.auto_sync_time = auto_sync_time;
+        settings.automation_mode = automation_mode;
     })?;
     build_status(&state).await
 }
@@ -330,8 +384,23 @@ fn log_frontend_error(context: String, message: String) {
 }
 
 #[tauri::command]
-fn complete_scheduled_launch(app: tauri::AppHandle, needs_attention: bool) -> Result<()> {
-    if needs_attention {
+fn complete_scheduled_launch(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    run_key: String,
+    successful: bool,
+    needs_attention: bool,
+) -> Result<()> {
+    use std::sync::atomic::Ordering;
+
+    if successful {
+        automation::complete(&state.config_dir, &run_key)?;
+        state.automation_pending.store(false, Ordering::SeqCst);
+    }
+    if !state.background_launch || state.foreground_requested.load(Ordering::SeqCst) {
+        return Ok(());
+    }
+    if needs_attention || !successful {
         let window = app
             .get_webview_window("main")
             .ok_or_else(|| AppError::Message("Atlas main window is unavailable.".into()))?;
@@ -399,6 +468,7 @@ async fn extract_interactions(
     timezone: String,
 ) -> Result<ExtractionResult> {
     let settings = state.read_settings()?;
+    let source_mode = settings.source_mode;
     if settings.profile.is_none() {
         return Err(AppError::Message(
             "Complete your profile before extracting interactions.".into(),
@@ -407,9 +477,6 @@ async fn extract_interactions(
     let mut result = match settings.source_mode {
         SourceMode::MicrosoftGraph => {
             let token = auth::access_token(&state).await?;
-            if include_email || include_teams {
-                state.local_ai.ensure_ready(&state.http).await?;
-            }
             graph::extract(
                 &state,
                 &token,
@@ -447,7 +514,110 @@ async fn extract_interactions(
             cache.insert(item.source_id.clone(), item.clone());
         }
     }
+    drop(cache);
+    cache_day_preview(&state, &date, source_mode, &result)?;
     Ok(result)
+}
+
+#[tauri::command]
+fn load_cached_day(
+    state: tauri::State<'_, AppState>,
+    date: String,
+) -> Result<Option<ExtractionResult>> {
+    chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d")
+        .map_err(|_| AppError::Message("Choose a valid cached workday.".into()))?;
+    let path = day_preview_path(&state, &date);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let cached: CachedDayPreview = match std::fs::read(&path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+    {
+        Some(value) => value,
+        None => {
+            diagnostics::error(
+                "cache/day",
+                &format!("Ignored an invalid saved preview at {}", path.display()),
+            );
+            return Ok(None);
+        }
+    };
+    if cached.source_mode != state.read_settings()?.source_mode {
+        return Ok(None);
+    }
+    let mut verified = state
+        .verified_sources
+        .lock()
+        .map_err(|_| AppError::Message("Provenance cache lock was poisoned".into()))?;
+    verified.clear();
+    let trusted = if cached.verified_sources.is_empty() {
+        &cached.result.interactions
+    } else {
+        &cached.verified_sources
+    };
+    for item in trusted
+        .iter()
+        .filter(|item| item.source_kind != SourceKind::Manual)
+    {
+        verified.insert(item.source_id.clone(), item.clone());
+    }
+    diagnostics::info(
+        "cache/day",
+        &format!("Restored the saved Atlas preview for {date}"),
+    );
+    Ok(Some(cached.result))
+}
+
+#[tauri::command]
+fn save_day_preview(
+    state: tauri::State<'_, AppState>,
+    date: String,
+    interactions: Vec<Interaction>,
+    warnings: Vec<String>,
+) -> Result<()> {
+    chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d")
+        .map_err(|_| AppError::Message("Choose a valid workday to save the preview.".into()))?;
+    let path = day_preview_path(&state, &date);
+    let current_source_mode = state.read_settings()?.source_mode;
+    let mut cached: CachedDayPreview = std::fs::read(&path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_else(|| CachedDayPreview {
+            source_mode: current_source_mode,
+            result: ExtractionResult {
+                interactions: Vec::new(),
+                warnings: Vec::new(),
+            },
+            verified_sources: Vec::new(),
+        });
+    if cached.source_mode != current_source_mode {
+        return Err(AppError::Message(
+            "The saved preview belongs to a different evidence source.".into(),
+        ));
+    }
+    for item in interactions
+        .iter()
+        .filter(|item| item.source_kind != SourceKind::Manual)
+    {
+        let trusted = cached
+            .verified_sources
+            .iter()
+            .find(|value| value.source_id == item.source_id)
+            .ok_or_else(|| {
+                AppError::Message("Atlas refused to cache an unverified interaction.".into())
+            })?;
+        if trusted.source_kind != item.source_kind {
+            return Err(AppError::Message(
+                "Atlas refused to cache an interaction with altered provenance.".into(),
+            ));
+        }
+    }
+    cached.result = ExtractionResult {
+        interactions,
+        warnings,
+    };
+    write_day_preview(&path, &cached)
 }
 
 fn select_daily_tracker_rows(interactions: &mut [Interaction]) {
@@ -703,6 +873,11 @@ pub fn run() {
             if scheduled {
                 let _ = app.emit("atlas-daily-run", ());
             } else if !startup {
+                if let Some(state) = app.try_state::<AppState>() {
+                    state
+                        .foreground_requested
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                }
                 let Some(window) = app.get_webview_window("main") else {
                     return;
                 };
@@ -719,7 +894,8 @@ pub fn run() {
                 .map_err(|e| Box::<dyn std::error::Error>::from(e))?;
             diagnostics::init(&config_dir).map_err(|e| Box::<dyn std::error::Error>::from(e))?;
             diagnostics::install_panic_hook();
-            let state = AppState::new(config_dir.clone())?;
+            let background_launch = scheduled_launch || startup_launch;
+            let state = AppState::new(config_dir.clone(), background_launch)?;
             if let Ok(settings) = state.read_settings() {
                 if settings.auto_sync
                     && settings.destination.is_some()
@@ -740,8 +916,9 @@ pub fn run() {
             diagnostics::info(
                 "startup",
                 &format!(
-                    "Atlas v{} application state loaded",
-                    env!("CARGO_PKG_VERSION")
+                    "Atlas v{} application state loaded (background_launch={background_launch}, executable={})",
+                    env!("CARGO_PKG_VERSION"),
+                    std::env::current_exe().map(|path| path.display().to_string()).unwrap_or_else(|_| "unknown".into())
                 ),
             );
             Ok(())
@@ -765,6 +942,8 @@ pub fn run() {
             complete_scheduled_launch,
             request_bridge_date,
             extract_interactions,
+            load_cached_day,
+            save_day_preview,
             export_configured_tracker
         ])
         .build(tauri::generate_context!())

@@ -41,6 +41,14 @@ pub enum TrackerDestinationKind {
     SharePointFlow,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AutomationMode {
+    #[default]
+    StartupPreviousWorkday,
+    DailyTime,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct TrackerDestination {
@@ -79,6 +87,7 @@ pub struct AppStatus {
     pub destination: Option<TrackerDestination>,
     pub auto_sync: bool,
     pub auto_sync_time: String,
+    pub automation_mode: AutomationMode,
     pub scheduled_launch: bool,
     pub log_path: String,
 }
@@ -100,6 +109,8 @@ pub struct Settings {
     pub auto_sync: bool,
     #[serde(default = "default_auto_sync_time")]
     pub auto_sync_time: String,
+    #[serde(default)]
+    pub automation_mode: AutomationMode,
 }
 
 fn default_auto_sync() -> bool {
@@ -121,8 +132,17 @@ impl Default for Settings {
             destination: None,
             auto_sync: default_auto_sync(),
             auto_sync_time: default_auto_sync_time(),
+            automation_mode: AutomationMode::default(),
         }
     }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationRequest {
+    pub date: String,
+    pub run_key: String,
+    pub reason: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -159,7 +179,7 @@ pub struct Interaction {
     pub evidence_label: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExtractionResult {
     pub interactions: Vec<Interaction>,

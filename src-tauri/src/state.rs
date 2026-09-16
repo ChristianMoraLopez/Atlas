@@ -8,7 +8,7 @@ use std::{
     collections::HashMap,
     fs,
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{atomic::AtomicBool, Arc, Mutex},
     time::Duration,
 };
 
@@ -22,10 +22,13 @@ pub struct AppState {
     pub local_ai: ManagedRuntime,
     pub connector_installer: Arc<crate::connector_installer::Installer>,
     pub config_dir: PathBuf,
+    pub automation_pending: AtomicBool,
+    pub background_launch: bool,
+    pub foreground_requested: AtomicBool,
 }
 
 impl AppState {
-    pub fn new(config_dir: PathBuf) -> Result<Self> {
+    pub fn new(config_dir: PathBuf, background_launch: bool) -> Result<Self> {
         fs::create_dir_all(&config_dir)
             .context("Unable to create the application settings directory")?;
         let settings_path = config_dir.join("settings.json");
@@ -73,11 +76,17 @@ impl AppState {
             settings: Mutex::new(settings),
             verified_sources: Mutex::new(HashMap::new()),
             cached_access_token: Mutex::new(None),
-            local_ai: ManagedRuntime::discover(config_dir.join("logs").join("local-ai.log")),
+            local_ai: ManagedRuntime::discover(
+                config_dir.join("logs").join("local-ai.log"),
+                config_dir.join("interpretations"),
+            ),
             connector_installer: Arc::new(crate::connector_installer::Installer::new(
                 config_dir.join("connector-installer"),
             )),
             config_dir,
+            automation_pending: AtomicBool::new(false),
+            background_launch,
+            foreground_requested: AtomicBool::new(false),
         })
     }
 

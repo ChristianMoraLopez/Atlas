@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AppStatus, ExportResult, ExtractionResult, Interaction, TrackerDestination, UserProfile } from "./types";
+import type { AppStatus, AutomationMode, ExportResult, ExtractionResult, Interaction, TrackerDestination, UserProfile } from "./types";
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   try {
@@ -16,18 +16,21 @@ export const api = {
   signIn: () => call<AppStatus>("sign_in"),
   signOut: () => call<void>("sign_out"),
   saveProfile: (profile: UserProfile) => call<void>("save_profile", { profile }),
-  saveDestination: (destination: TrackerDestination, autoSync: boolean, autoSyncTime: string) =>
-    call<AppStatus>("save_tracker_destination", { destination, autoSync, autoSyncTime }),
+  saveDestination: (destination: TrackerDestination, autoSync: boolean, autoSyncTime: string, automationMode: AutomationMode) =>
+    call<AppStatus>("save_tracker_destination", { destination, autoSync, autoSyncTime, automationMode }),
   extract: (date: string, includeEmail: boolean, includeTeams: boolean, timezone: string) =>
     call<ExtractionResult>("extract_interactions", { date, includeEmail, includeTeams, timezone }),
+  loadCachedDay: (date: string) => call<ExtractionResult | null>("load_cached_day", { date }),
+  saveDayPreview: (date: string, interactions: Interaction[], warnings: string[]) =>
+    call<void>("save_day_preview", { date, interactions, warnings }),
   requestBridgeDate: (date: string) => call<void>("request_bridge_date", { date }),
   export: (date: string, profile: UserProfile, interactions: Interaction[]) =>
     call<ExportResult>("export_configured_tracker", { date, profile, interactions }),
   openTracker: () => call<void>("open_tracker_destination"),
   showWriterPackage: () => call<void>("show_tracker_writer_package"),
   openPowerAutomate: () => call<void>("open_power_automate_portal"),
-  completeScheduled: (needsAttention: boolean) =>
-    call<void>("complete_scheduled_launch", { needsAttention }),
+  completeScheduled: (runKey: string, successful: boolean, needsAttention: boolean) =>
+    call<void>("complete_scheduled_launch", { runKey, successful, needsAttention }),
   logError: (context: string, message: string) => invoke<void>("log_frontend_error", { context, message })
 };
 

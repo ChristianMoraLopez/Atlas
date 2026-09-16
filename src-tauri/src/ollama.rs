@@ -5,9 +5,10 @@ use crate::{
 use chrono::{DateTime, Utc};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
-    fs::OpenOptions,
+    fs::{self, OpenOptions},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::Mutex,
@@ -31,17 +32,19 @@ const MAX_AI_EVIDENCE_CHARS: usize = 4_200;
 const MAX_AI_TEXT_CHARS: usize = 700;
 const MAX_AI_INTERACTIONS: usize = 8;
 const MAX_AI_OUTPUT_TOKENS: u32 = 512;
+const INTERPRETATION_CACHE_VERSION: &str = "atlas-task-inference-v1";
 
 pub struct ManagedRuntime {
     root: PathBuf,
     log_path: PathBuf,
+    cache_dir: PathBuf,
     child: Mutex<Option<Child>>,
     port: Mutex<Option<u16>>,
     startup: tokio::sync::Mutex<()>,
 }
 
 impl ManagedRuntime {
-    pub fn discover(log_path: PathBuf) -> Self {
+    pub fn discover(log_path: PathBuf, cache_dir: PathBuf) -> Self {
         #[cfg(debug_assertions)]
         let configured_root = std::env::var_os("ATLAS_AI_ROOT").map(PathBuf::from);
         #[cfg(not(debug_assertions))]
@@ -57,6 +60,7 @@ impl ManagedRuntime {
         Self {
             root,
             log_path,
+            cache_dir,
             child: Mutex::new(None),
             port: Mutex::new(None),
             startup: tokio::sync::Mutex::new(()),
@@ -250,18 +254,44 @@ impl ManagedRuntime {
         source_label: &str,
         actor: &str,
     ) -> Result<Vec<SuggestedInteraction>> {
-        self.ensure_ready(client).await?;
-        let port = self
-            .port
-            .lock()
-            .map_err(|_| AppError::Message("Local AI port lock was poisoned".into()))?
-            .ok_or_else(|| AppError::Message("Local AI did not select a port".into()))?;
         let batches = evidence_batches(evidence);
         let mut seen = HashSet::new();
         let mut result = Vec::new();
         for batch in batches {
-            for suggestion in summarize_at(client, model, &batch, source_label, actor, port).await?
+            let bounded = bounded_evidence(&batch);
+            let (cache_path, evidence_hash) =
+                self.interpretation_cache_path(model, &bounded, source_label, actor);
+            let suggestions = if let Some(cached) =
+                self.read_interpretation_cache(&cache_path, model, &evidence_hash, &bounded)?
             {
+                diagnostics::info(
+                    "local-ai/cache",
+                    &format!(
+                        "Reused {} saved {} task interpretations",
+                        cached.len(),
+                        source_label
+                    ),
+                );
+                cached
+            } else {
+                self.ensure_ready(client).await?;
+                let port = self
+                    .port
+                    .lock()
+                    .map_err(|_| AppError::Message("Local AI port lock was poisoned".into()))?
+                    .ok_or_else(|| AppError::Message("Local AI did not select a port".into()))?;
+                let suggestions =
+                    summarize_at(client, model, &bounded, source_label, actor, port).await?;
+                self.write_interpretation_cache(
+                    &cache_path,
+                    model,
+                    source_label,
+                    &evidence_hash,
+                    &suggestions,
+                )?;
+                suggestions
+            };
+            for suggestion in suggestions {
                 let key = format!(
                     "{}|{}",
                     suggestion.source_ids.join("|"),
@@ -273,6 +303,108 @@ impl ManagedRuntime {
             }
         }
         Ok(result)
+    }
+
+    fn interpretation_cache_path(
+        &self,
+        model: &str,
+        evidence: &[ChatEvidence],
+        source_label: &str,
+        actor: &str,
+    ) -> (PathBuf, String) {
+        let mut hasher = Sha256::new();
+        hasher.update(INTERPRETATION_CACHE_VERSION.as_bytes());
+        hasher.update(model.as_bytes());
+        hasher.update(source_label.as_bytes());
+        hasher.update(actor.as_bytes());
+        for item in evidence {
+            hasher.update(item.id.as_bytes());
+            hasher.update(item.author.as_bytes());
+            hasher.update(item.created.to_rfc3339().as_bytes());
+            hasher.update(item.text.as_bytes());
+        }
+        let hash = hex::encode(hasher.finalize());
+        let day = evidence
+            .first()
+            .map(|item| item.created.format("%Y-%m-%d").to_string())
+            .unwrap_or_else(|| "empty".into());
+        let source = source_label
+            .chars()
+            .map(|value| {
+                if value.is_ascii_alphanumeric() {
+                    value.to_ascii_lowercase()
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>();
+        (
+            self.cache_dir
+                .join(day)
+                .join(source)
+                .join(format!("{hash}.json")),
+            hash,
+        )
+    }
+
+    fn read_interpretation_cache(
+        &self,
+        path: &Path,
+        model: &str,
+        evidence_hash: &str,
+        evidence: &[ChatEvidence],
+    ) -> Result<Option<Vec<SuggestedInteraction>>> {
+        if !path.is_file() {
+            return Ok(None);
+        }
+        let cached: CachedInterpretation = match fs::read(path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        {
+            Some(value) => value,
+            None => return Ok(None),
+        };
+        let valid_ids = evidence
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect::<HashSet<_>>();
+        let valid = cached.version == INTERPRETATION_CACHE_VERSION
+            && cached.model == model
+            && cached.evidence_hash == evidence_hash
+            && cached.suggestions.iter().all(|value| {
+                value
+                    .source_ids
+                    .iter()
+                    .all(|id| valid_ids.contains(id.as_str()))
+            });
+        Ok(valid.then_some(cached.suggestions))
+    }
+
+    fn write_interpretation_cache(
+        &self,
+        path: &Path,
+        model: &str,
+        source: &str,
+        evidence_hash: &str,
+        suggestions: &[SuggestedInteraction],
+    ) -> Result<()> {
+        let parent = path.parent().ok_or_else(|| {
+            AppError::Message("Atlas could not prepare the interpretation cache path".into())
+        })?;
+        fs::create_dir_all(parent).context("Unable to create the interpretation cache")?;
+        let cached = CachedInterpretation {
+            version: INTERPRETATION_CACHE_VERSION.into(),
+            model: model.into(),
+            source: source.into(),
+            evidence_hash: evidence_hash.into(),
+            created_at: Utc::now(),
+            suggestions: suggestions.to_vec(),
+        };
+        let temporary = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+        fs::write(&temporary, serde_json::to_vec_pretty(&cached)?)
+            .context("Unable to save the interpretation cache")?;
+        fs::rename(&temporary, path).context("Unable to commit the interpretation cache")?;
+        Ok(())
     }
 
     pub fn stop(&self) {
@@ -358,7 +490,7 @@ pub struct ChatEvidence {
     pub text: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SuggestedInteraction {
     pub source_ids: Vec<String>,
     pub start: DateTime<Utc>,
@@ -366,6 +498,17 @@ pub struct SuggestedInteraction {
     pub summary: String,
     pub participants: Vec<String>,
     pub resolved: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CachedInterpretation {
+    version: String,
+    model: String,
+    source: String,
+    evidence_hash: String,
+    created_at: DateTime<Utc>,
+    suggestions: Vec<SuggestedInteraction>,
 }
 
 #[derive(Deserialize)]
@@ -790,6 +933,7 @@ mod tests {
         let runtime = ManagedRuntime {
             root: PathBuf::from(r"C:\Atlas\AtlasAI"),
             log_path: PathBuf::from(r"C:\logs\local-ai.log"),
+            cache_dir: PathBuf::from(r"C:\logs\interpretations"),
             child: Mutex::new(None),
             port: Mutex::new(None),
             startup: tokio::sync::Mutex::new(()),
@@ -799,6 +943,53 @@ mod tests {
             PathBuf::from(r"C:\Atlas\AtlasAI\ollama.exe")
         );
         assert_eq!(runtime.models(), PathBuf::from(r"C:\Atlas\AtlasAI\models"));
+    }
+
+    #[test]
+    fn interpretations_are_cached_by_exact_evidence() {
+        let directory = tempfile::tempdir().unwrap();
+        let runtime = ManagedRuntime {
+            root: directory.path().join("AtlasAI"),
+            log_path: directory.path().join("local-ai.log"),
+            cache_dir: directory.path().join("interpretations"),
+            child: Mutex::new(None),
+            port: Mutex::new(None),
+            startup: tokio::sync::Mutex::new(()),
+        };
+        let evidence = vec![ChatEvidence {
+            id: "message-1".into(),
+            author: "Christian Mora".into(),
+            created: DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
+            text: "Prepared the tracker update".into(),
+        }];
+        let (path, hash) =
+            runtime.interpretation_cache_path(BUNDLED_MODEL, &evidence, "Teams", "Christian Mora");
+        let suggestions = vec![SuggestedInteraction {
+            source_ids: vec!["message-1".into()],
+            start: evidence[0].created,
+            end: evidence[0].created,
+            summary: "Prepared the tracker update".into(),
+            participants: Vec::new(),
+            resolved: true,
+        }];
+        runtime
+            .write_interpretation_cache(&path, BUNDLED_MODEL, "Teams", &hash, &suggestions)
+            .unwrap();
+        assert_eq!(
+            runtime
+                .read_interpretation_cache(&path, BUNDLED_MODEL, &hash, &evidence)
+                .unwrap()
+                .unwrap()
+                .len(),
+            1
+        );
+        let changed = vec![ChatEvidence {
+            text: "Different evidence".into(),
+            ..evidence[0].clone()
+        }];
+        let (changed_path, _) =
+            runtime.interpretation_cache_path(BUNDLED_MODEL, &changed, "Teams", "Christian Mora");
+        assert_ne!(path, changed_path);
     }
 
     #[test]

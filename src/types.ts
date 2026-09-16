@@ -16,6 +16,7 @@ export interface AccountInfo {
 export type SourceMode = "microsoft_graph" | "power_automate_folder";
 
 export type TrackerDestinationKind = "local_existing" | "local_new" | "share_point" | "share_point_flow";
+export type AutomationMode = "startup_previous_workday" | "daily_time";
 
 export interface TrackerDestination {
   kind: TrackerDestinationKind;
@@ -38,6 +39,7 @@ export interface AppStatus {
   destination?: TrackerDestination;
   autoSync: boolean;
   autoSyncTime: string;
+  automationMode: AutomationMode;
   scheduledLaunch: boolean;
   logPath: string;
 }
@@ -76,4 +78,10 @@ export interface ExportResult {
   updated: number;
   skipped: number;
   queued: boolean;
+}
+
+export interface AutomationRequest {
+  date: string;
+  runKey: string;
+  reason: string;
 }

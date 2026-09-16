@@ -2,7 +2,7 @@
 
 For tenants that block the Atlas Entra application, Atlas includes a portal-assisted Power Automate solution installer. It prepares `AtlasBridge/inbox`, opens Microsoft's official portal, records user-confirmed setup stages, and completes only after a correlated evidence file passes the bundled schema. It does not copy browser cookies, automate credentials/MFA, call private portal endpoints, or distribute PAC. See [`power-automate/INSTALLER.md`](power-automate/INSTALLER.md).
 
-Atlas is a Tauri v2 Windows desktop application that builds the Circana Interactions Tracker from a user's own Microsoft 365 calendar, mail, and Teams evidence. It remembers one local Excel or SharePoint destination and runs the daily tracker automatically at a configurable time, initially 17:30. It writes every real activity it found and opens the interface for attention when the day contains fewer than three. The portable package includes and manages its own local Ollama runtime and model for local interpretation.
+Atlas is a Tauri v2 Windows desktop application that builds the Circana Interactions Tracker from a user's own Microsoft 365 calendar, mail, and Teams evidence. It remembers one local Excel or SharePoint destination. By default it starts hidden with Windows and processes the previous business day; the user can instead choose a daily time for the current day. It writes every real activity it found and opens the interface only for a failure or when the day contains fewer than three. The portable package includes and manages its own local Ollama runtime and model for local interpretation.
 
 > **Atlas never invents interactions on its own.** Every exported row is a finished meeting, a concrete work task inferred from real Microsoft 365 evidence, or a factual manual entry. A task may be assigned, in progress, or resolved. Atlas saves partial days and alerts the user when fewer than three activities were found.
 
@@ -11,14 +11,15 @@ Atlas is a Tauri v2 Windows desktop application that builds the Circana Interact
 - Signs each teammate in through Microsoft Authorization Code + PKCE in the system browser.
 - Stores the refresh token in size-safe chunks in Windows Credential Manager and keeps short-lived access tokens only in memory.
 - Opens with a skippable Atlas SVG animation and honors Windows reduced-motion preferences.
-- Uses the same Atlas orbit and ledger mark for delayed, contextual loading states during AI startup, Microsoft 365 verification, evidence interpretation, flow generation, and tracker writes.
+- Uses a restrained Atlas orbit and ledger loading state during AI startup, Microsoft 365 verification, evidence interpretation, flow generation, and tracker writes.
 - Extracts real meetings for any selected workday and excludes cancelled events, meal/tracker blocks, focus blocks, reminders, and to-do calendar entries.
 - Normalizes only the first MMNI/SparkTriage meeting to 09:00–09:30 in the chosen local timezone.
 - Preselects every finished meeting and each separate work task inferred from mail or Teams. Assigned and in-progress work is included; reminders, invitations, automatic notices, and inbox activity without a concrete task are excluded.
 - Interprets mail and Teams evidence with bundled Local AI in both Graph and Power Automate modes. Every suggestion stays linked to its real source evidence, distinct tasks can come from the same email or conversation, tracker summaries are written in English, and CPU inference is split into bounded six-item batches so cold automatic runs stay within the local request deadline.
 - Lets the user edit review fields and add a genuinely manual interaction through a blank form.
 - Configures a new tracker, an existing `.xlsx` / `.xlsm`, or a SharePoint/OneDrive workbook link once and reuses it.
-- Registers Atlas in the current user's Windows startup and runs its internal daily timer at 17:30 by default, without administrator rights. If the computer starts after the chosen time, Atlas catches up once for that day.
+- Registers Atlas in the current user's Windows startup without administrator rights. The default hidden run processes the previous business day after sign-in; an optional timed mode stays hidden and processes the current day at the selected time.
+- Stores dated previews under `%APPDATA%\com.capgemini.atlas-tracker\days` and content-addressed Local AI interpretations under `%APPDATA%\com.capgemini.atlas-tracker\interpretations`. Closing Atlas no longer discards reviewed rows, manual additions, or unchanged AI results.
 - Downloads SharePoint workbooks through Microsoft Graph, patches them locally, and uploads with an `If-Match` conflict guard so a newer remote edit is never overwritten.
 - Uses a hidden `_source_id` to update previously exported Graph rows without creating duplicates.
 - Never writes CSA Name, Capgemini Team Lead, Circana Manager, MTTR, Resolution time, or IR Time. Existing files are patched at the Office-package XML level so formulas, VBA, and unrelated worksheets remain intact.
@@ -57,7 +58,9 @@ For a workbook shared from another person’s OneDrive, the owner must share the
 
 Power Automate Inbox mode creates `AtlasBridge/inbox/scheduled`, `AtlasBridge/inbox/teams`, `AtlasBridge/inbox/requested`, and `AtlasBridge/requests`. Choosing an older workday writes `requests/selected-date.txt`; solution 1.11 checks that request every five minutes, exports that date, and Atlas waits for the synchronized result. Existing flat inbox JSON remains readable. Setup completes only after the current personalized scheduled collector confirms healthy calendar, mail, and Teams sources; a Teams-only event file or evidence from an older installation cannot validate an upgrade.
 
-When daily automation is enabled, Atlas registers its hidden startup command under the current user's Windows `Run` key and keeps an internal once-per-day marker. This avoids Task Scheduler policies that deny standard corporate accounts, catches up after the configured time, and does not require users to open the interface each afternoon.
+When automation is enabled, Atlas registers its hidden startup command under the current user's Windows `Run` key and keeps an internal successful-run marker. In the recommended mode it waits briefly for OneDrive and the WebView after sign-in, processes the previous business day, writes the tracker, and exits when no attention is needed. In timed mode it stays hidden until the selected time and catches up if Windows started later. A day is marked complete only after the tracker write succeeds.
+
+Atlas remains portable: installation and administrator rights are not required. Extract the complete ZIP to a stable folder and run `Atlas.exe` once to save the setup and current executable path in the user startup key. If the extracted folder is moved, run `Atlas.exe` once from the new location so Atlas updates that path.
 
 ## Local development
 

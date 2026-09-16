@@ -12,7 +12,7 @@ import {
   ShieldCheck, Sparkles, Trash2, UserRound, X
 } from "lucide-react";
 import { api, fromLocalInput, localDate, toLocalInput } from "./lib";
-import type { AppStatus, ExportResult, ExtractionResult, Interaction, TrackerDestination, TrackerDestinationKind, UserProfile } from "./types";
+import type { AppStatus, AutomationMode, AutomationRequest, ExportResult, ExtractionResult, Interaction, TrackerDestination, TrackerDestinationKind, UserProfile } from "./types";
 
 const emptyProfile: UserProfile = {
   loginId: "", fullName: "", area: "Manufacturing", teamLead: "", circanaManager: ""
@@ -100,12 +100,13 @@ function SetupScreen({ status, onSaved }: { status: AppStatus; onSaved: (p: User
   return <main className="min-h-screen px-10 py-8"><header className="mx-auto flex max-w-6xl items-center justify-between"><Brand /><span className="chip bg-mint text-pine"><Check className="h-3 w-3" /> {sourceLabel}</span></header><div className="mx-auto grid min-h-[calc(100vh-6rem)] max-w-6xl place-items-center"><ProfileForm onSave={onSaved} /></div></main>;
 }
 
-function DestinationSetupScreen({ initial, initialAutoSync, initialAutoSyncTime, bridgeMode, onSave, onCancel }: { initial?: TrackerDestination; initialAutoSync: boolean; initialAutoSyncTime: string; bridgeMode: boolean; onSave: (destination: TrackerDestination, autoSync: boolean, autoSyncTime: string) => Promise<void>; onCancel?: () => void }) {
+function DestinationSetupScreen({ initial, initialAutoSync, initialAutoSyncTime, initialAutomationMode, bridgeMode, onSave, onCancel }: { initial?: TrackerDestination; initialAutoSync: boolean; initialAutoSyncTime: string; initialAutomationMode: AutomationMode; bridgeMode: boolean; onSave: (destination: TrackerDestination, autoSync: boolean, autoSyncTime: string, automationMode: AutomationMode) => Promise<void>; onCancel?: () => void }) {
   const [kind, setKind] = useState<TrackerDestinationKind>(initial?.kind ?? "local_existing");
   const [value, setValue] = useState(initial?.value ?? "");
   const [localPath, setLocalPath] = useState(initial?.localPath ?? "");
   const [autoSync, setAutoSync] = useState(initialAutoSync);
   const [autoSyncTime, setAutoSyncTime] = useState(initialAutoSyncTime || "17:30");
+  const [automationMode, setAutomationMode] = useState<AutomationMode>(initialAutomationMode);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const changeKind = (next: TrackerDestinationKind) => { setKind(next); setValue(next === initial?.kind ? initial.value : ""); setLocalPath(next === initial?.kind ? initial.localPath ?? "" : ""); setError(""); };
@@ -123,7 +124,7 @@ function DestinationSetupScreen({ initial, initialAutoSync, initialAutoSyncTime,
     event.preventDefault(); setError("");
     if (!value.trim()) return setError(kind === "share_point" || kind === "share_point_flow" ? "Paste the SharePoint workbook link." : "Choose an Excel workbook.");
     setBusy(true);
-    try { await onSave({ kind, value: value.trim(), localPath: kind === "share_point" && localPath ? localPath : undefined }, autoSync, autoSyncTime); }
+    try { await onSave({ kind, value: value.trim(), localPath: kind === "share_point" && localPath ? localPath : undefined }, autoSync, autoSyncTime, automationMode); }
     catch (failure) { setError(String(failure)); }
     finally { setBusy(false); }
   };
@@ -141,7 +142,7 @@ function DestinationSetupScreen({ initial, initialAutoSync, initialAutoSyncTime,
       <p className="mt-3 max-w-2xl text-sm leading-6 text-ink/50">Choose a local workbook, a synchronized SharePoint copy, or the optional second cloud flow. Atlas keeps this destination for manual and automatic runs.</p>
       <div className={`mt-8 grid gap-3 ${options.length === 4 ? "grid-cols-4" : "grid-cols-3"}`}>{options.map(option => <button type="button" key={option.kind} onClick={() => changeKind(option.kind)} className={`rounded-2xl border p-4 text-left ${kind === option.kind ? "border-pine/35 bg-mint/55" : "border-ink/10 bg-white"}`}><span className={`grid h-10 w-10 place-items-center rounded-xl ${kind === option.kind ? "bg-pine text-white" : "bg-cream text-ink/45"}`}>{option.icon}</span><b className="mt-4 block text-sm">{option.title}</b><span className="mt-1 block text-[11px] leading-5 text-ink/45">{option.detail}</span></button>)}</div>
       <div className="mt-7">{kind === "share_point" || kind === "share_point_flow" ? <div><label><span className="label">SharePoint or OneDrive workbook link</span><textarea className="field min-h-24 resize-none font-mono text-xs" value={value} onChange={event => setValue(event.target.value)} placeholder="https://tenant-my.sharepoint.com/:x:/r/.../Tracker.xlsm?web=1" /></label>{kind === "share_point_flow" ? <div className="mt-4 rounded-2xl border border-pine/15 bg-mint/25 p-5"><p className="text-sm font-bold">Second Power Automate solution</p><p className="mt-2 text-xs leading-5 text-ink/55">Saving creates a personalized <code>AtlasTrackerWriter</code> ZIP and places the required Office Script in your synchronized OneDrive. Import that ZIP once and map OneDrive, SharePoint, and Excel with your Circana account.</p><p className="mt-2 text-[11px] leading-5 text-ink/45">The tenant must allow Office Scripts. Atlas queues one JSON package at the chosen daily time; the flow retries safely using each row’s hidden source ID.</p></div> : bridgeMode ? <div className="mt-4 rounded-2xl border border-pine/15 bg-mint/25 p-5"><div className="flex flex-wrap gap-3"><button type="button" className="btn-secondary" disabled={!value.trim()} onClick={() => void openUrl(value.trim())}><ExternalLink className="h-4 w-4" />Abrir enlace</button><button type="button" className="btn-primary" onClick={chooseSyncedCopy}><FolderOpen className="h-4 w-4" />{localPath ? "Cambiar copia sincronizada" : "Seleccionar copia sincronizada"}</button></div>{localPath && <p className="mt-3 break-all rounded-xl bg-white/70 p-3 text-xs text-ink/55">{localPath}</p>}<ol className="mt-4 list-decimal space-y-2 pl-5 text-xs leading-5 text-ink/60"><li>El propietario comparte la carpeta del tracker contigo y permite editar.</li><li>En OneDrive, selecciona la carpeta y pulsa <b>Agregar acceso directo a Mis archivos</b>.</li><li>Espera a que aparezca bajo <b>OneDrive – Circana</b> y elige el archivo exacto aquí.</li></ol></div> : <span className="mt-2 block text-[11px] leading-5 text-ink/45">Saving opens Microsoft once for delegated file consent.</span>}</div> : <div><button type="button" className="btn-secondary" onClick={chooseLocal}><FolderOpen className="h-4 w-4" />{value ? "Change workbook" : "Choose workbook"}</button>{value && <p className="mt-3 break-all rounded-xl bg-cream p-3 text-xs text-ink/55">{value}</p>}</div>}</div>
-      <div className="mt-7 flex items-start gap-4 rounded-2xl border border-pine/15 bg-mint/35 p-4"><input type="checkbox" checked={autoSync} onChange={event => setAutoSync(event.target.checked)} className="mt-1 h-4 w-4 accent-pine" /><span className="flex-1"><b className="block text-sm">Daily automatic tracker</b><span className="mt-1 block text-xs leading-5 text-ink/50">Atlas starts hidden when you sign in to Windows and runs under your user account at this time. It writes every real activity found and opens only when fewer than three need attention.</span></span><label className="w-28"><span className="label">Run at</span><input type="time" className="field" value={autoSyncTime} disabled={!autoSync} onChange={event => setAutoSyncTime(event.target.value)} /></label></div>
+      <div className="mt-7 rounded-2xl border border-pine/15 bg-mint/35 p-4"><label className="flex items-start gap-4"><input type="checkbox" checked={autoSync} onChange={event => setAutoSync(event.target.checked)} className="mt-1 h-4 w-4 accent-pine" /><span><b className="block text-sm">Automatic tracker</b><span className="mt-1 block text-xs leading-5 text-ink/50">Runs under your Windows account without opening the main window. Atlas appears only when the run fails or fewer than three activities need attention.</span></span></label>{autoSync && <div className="mt-4 grid grid-cols-2 gap-3"><button type="button" onClick={() => setAutomationMode("startup_previous_workday")} className={`rounded-xl border p-4 text-left ${automationMode === "startup_previous_workday" ? "border-pine/35 bg-white" : "border-ink/10 bg-white/45"}`}><b className="block text-sm">When Windows starts</b><span className="mt-1 block text-[11px] leading-5 text-ink/50">Recommended. Process the previous business day after sign-in.</span></button><button type="button" onClick={() => setAutomationMode("daily_time")} className={`rounded-xl border p-4 text-left ${automationMode === "daily_time" ? "border-pine/35 bg-white" : "border-ink/10 bg-white/45"}`}><b className="block text-sm">At a chosen time</b><span className="mt-1 block text-[11px] leading-5 text-ink/50">Keep Atlas hidden and process the current day at the time below.</span></button></div>}{autoSync && automationMode === "daily_time" && <label className="mt-4 block w-36"><span className="label">Run at</span><input type="time" className="field" value={autoSyncTime} onChange={event => setAutoSyncTime(event.target.value)} /></label>}</div>
       {error && <div className="mt-5"><ErrorBanner message={error} /></div>}
       <div className="mt-7 flex justify-end"><button className="btn-primary" disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}Save tracker setup</button></div>
     </form>
@@ -224,14 +225,14 @@ function ManualModal({ date, onClose, onAdd }: { date: string; onClose: () => vo
   </form></div>;
 }
 
-function ExportPanel({ destination, autoSync, autoSyncTime, bridgeMode, items, busy, onSave, onSync, onEdit }: { destination: TrackerDestination; autoSync: boolean; autoSyncTime: string; bridgeMode: boolean; items: Interaction[]; busy: boolean; onSave: () => void; onSync: () => void; onEdit: () => void }) {
+function ExportPanel({ destination, autoSync, autoSyncTime, automationMode, bridgeMode, items, busy, onSave, onSync, onEdit }: { destination: TrackerDestination; autoSync: boolean; autoSyncTime: string; automationMode: AutomationMode; bridgeMode: boolean; items: Interaction[]; busy: boolean; onSave: () => void; onSync: () => void; onEdit: () => void }) {
   const isRemote = destination.kind === "share_point" || destination.kind === "share_point_flow";
   const writerFlow = destination.kind === "share_point_flow";
   return <aside className="card h-fit p-5"><div className="flex items-start justify-between"><div><p className="text-xs font-bold uppercase tracking-[.16em] text-pine">Tracker</p><h3 className="mt-2 font-display text-2xl">Configured once</h3></div><span className={`grid h-9 w-9 place-items-center rounded-xl ${isRemote ? "bg-[#e7f0ff] text-[#315f9e]" : "bg-mint text-pine"}`}>{isRemote ? <Cloud className="h-4 w-4" /> : <FileSpreadsheet className="h-4 w-4" />}</span></div>
     <p className="mt-3 text-xs leading-5 text-ink/45">Only selected, verified rows are written. Existing macros, formulas, and other worksheets are preserved.</p>
     <p className="mt-4 line-clamp-4 break-all rounded-xl bg-cream p-3 text-[10px] leading-4 text-ink/55">{destination.value}</p>
     {writerFlow && <div className="mt-3 rounded-xl border border-pine/15 bg-mint/35 p-3"><b className="text-xs">Import connector 2 once</b><p className="mt-1 text-[10px] leading-4 text-ink/50">Map OneDrive, SharePoint and Excel connections, then leave the flow active.</p><div className="mt-3 flex gap-2"><button className="btn-secondary flex-1 px-3 py-2 text-[10px]" onClick={() => void api.showWriterPackage().catch(failure => window.alert(String(failure)))}><FolderOpen className="h-3 w-3" />Show ZIP</button><button className="btn-secondary flex-1 px-3 py-2 text-[10px]" onClick={() => void api.openPowerAutomate().catch(failure => window.alert(String(failure)))}><ExternalLink className="h-3 w-3" />Import</button></div></div>}
-    <div className="mt-3 flex items-center justify-between"><span className={`chip ${autoSync ? "bg-mint text-pine" : "bg-cream text-ink/50"}`}>{autoSync ? `Daily · ${autoSyncTime}` : "Daily run off"}</span><button className="text-[11px] font-bold text-pine hover:underline" onClick={onEdit}>Change setup</button></div>
+    <div className="mt-3 flex items-center justify-between"><span className={`chip ${autoSync ? "bg-mint text-pine" : "bg-cream text-ink/50"}`}>{autoSync ? (automationMode === "startup_previous_workday" ? "Windows start · previous day" : `Daily · ${autoSyncTime}`) : "Automatic run off"}</span><button className="text-[11px] font-bold text-pine hover:underline" onClick={onEdit}>Change setup</button></div>
     <button className="btn-primary mt-5 w-full" onClick={onSync} disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}{bridgeMode ? "Import today’s inbox" : "Sync today’s calendar"}</button>
     <button className="btn-secondary mt-2 w-full" onClick={onSave} disabled={busy || !items.some(item => item.selected)}><Save className="h-4 w-4" />Save selected preview</button>
   </aside>;
@@ -252,6 +253,25 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
     const count = values.filter(item => item.selected).length;
     return count < 3 ? `Atlas encontró y guardará ${count} ${count === 1 ? "actividad" : "actividades"}. Añade ${3 - count} ${3 - count === 1 ? "tarea real" : "tareas reales"} para llegar al mínimo diario de 3.` : "";
   };
+  useEffect(() => {
+    let disposed = false;
+    void api.loadCachedDay(date).then(result => {
+      if (disposed || !result || busyRef.current) return;
+      setItems(result.interactions);
+      const warning = completionWarning(result.interactions);
+      setWarnings(warning ? [...result.warnings, warning] : result.warnings);
+      setSyncNotice(`Restored the saved Atlas preview for ${date}.`);
+    }).catch(failure => void api.logError("load-cached-day", String(failure)));
+    return () => { disposed = true; };
+  }, [date]);
+  useEffect(() => {
+    if (items.length === 0 || busyRef.current) return;
+    const timer = window.setTimeout(() => {
+      const sourceWarnings = warnings.filter(value => !value.startsWith("Atlas encontró y guardará"));
+      void api.saveDayPreview(date, items, sourceWarnings).catch(failure => void api.logError("save-day-preview", String(failure)));
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [date, items, warnings]);
   const loadEvidence = async (targetDate: string, email: boolean, teams: boolean): Promise<ExtractionResult> => {
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     if (!bridgeMode) return api.extract(targetDate, email, teams, timezone);
@@ -277,28 +297,27 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
     if (!startWork("Writing selected activities", "Updating the tracker without overwriting unrelated rows or existing work.")) return;
     try { setSuccess(await api.export(date, profile, items)); const warning = completionWarning(items); if (warning) setWarnings(old => [...old.filter(value => !value.startsWith("Atlas encontró y guardará")), warning]); await refreshStatus(); } catch (e) { setError(String(e)); } finally { endWork(); }
   };
-  const syncCalendar = async (automatic = false, scheduled = false, background = false) => {
+  const syncCalendar = async (automatic = false, request?: AutomationRequest) => {
     if (!startWork(automatic ? "Running your daily Atlas update" : "Importing today’s work", "Collecting today’s evidence, interpreting work tasks, and updating the tracker.")) return;
-    const today = localDate(); setDate(today); setWarnings([]);
+    const targetDate = request?.date ?? localDate(); setDate(targetDate); setWarnings([]);
     try {
-      const result = await loadEvidence(today, true, true);
+      const result = await loadEvidence(targetDate, true, true);
       setItems(result.interactions);
       const warning = completionWarning(result.interactions);
       setWarnings(warning ? [...result.warnings, warning] : result.warnings);
       const selectedCount = result.interactions.filter(item => item.selected).length;
       if (selectedCount > 0) {
-        const saved = await api.export(today, profile, result.interactions);
+        const saved = await api.export(targetDate, profile, result.interactions);
         if (automatic) setSyncNotice(saved.queued ? `Automatic daily run queued ${saved.inserted} rows for SharePoint.${warning ? ` ${warning}` : ""}` : `Automatic daily run complete: ${saved.inserted} added, ${saved.updated} refreshed.${warning ? ` ${warning}` : ""}`);
         else setSuccess(saved);
         await refreshStatus();
       } else {
         setSyncNotice("Atlas no encontró reuniones ni tareas de trabajo para guardar. Añádelas manualmente si realizaste trabajo que no aparece en Microsoft 365.");
       }
-      if (scheduled) await api.completeScheduled(selectedCount < 3);
-      else if (background && selectedCount < 3) await api.completeScheduled(true);
+      if (request) await api.completeScheduled(request.runKey, true, selectedCount < 3);
     } catch (e) {
       setError(`${automatic ? "Automatic daily run failed: " : ""}${String(e)}`);
-      if (scheduled || background) await api.completeScheduled(true).catch(() => undefined);
+      if (request) await api.completeScheduled(request.runKey, false, true).catch(() => undefined);
     } finally { endWork(); }
   };
   const recheckLocalAi = async () => {
@@ -310,12 +329,9 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
   const saveProfile = async (p: UserProfile) => { await api.saveProfile(p); setEditingProfile(false); await refreshStatus(); };
   useEffect(() => {
     let disposed = false;
-    let unlisten: (() => void) | undefined;
     let unlistenBackground: (() => void) | undefined;
-    void listen("atlas-daily-run", () => { if (status.autoSync) void syncCalendar(true, true); else void api.completeScheduled(true); }).then(stop => { if (disposed) stop(); else unlisten = stop; });
-    void listen("atlas-background-daily-run", () => { void syncCalendar(true, false, true); }).then(stop => { if (disposed) stop(); else unlistenBackground = stop; });
-    const first = status.autoSync && status.scheduledLaunch ? window.setTimeout(() => { void syncCalendar(true, true); }, 900) : undefined;
-    return () => { disposed = true; unlisten?.(); unlistenBackground?.(); if (first) window.clearTimeout(first); };
+    void listen<AutomationRequest>("atlas-background-daily-run", event => { void syncCalendar(true, event.payload); }).then(stop => { if (disposed) stop(); else unlistenBackground = stop; });
+    return () => { disposed = true; unlistenBackground?.(); };
   }, []);
   return <div className="min-h-screen" aria-busy={busy}>
     <header className="sticky top-0 z-30 border-b border-white/70 bg-cream/80 px-8 py-4 backdrop-blur-xl"><div className="mx-auto flex max-w-[1540px] items-center justify-between"><Brand /><div className="flex items-center gap-2"><div className="mr-3 max-w-xs text-right"><p className="text-xs font-bold">{bridgeMode ? "Power Automate Inbox" : status.account?.displayName}</p><p className="truncate text-[10px] text-ink/40">{bridgeMode ? status.bridgeFolder : status.account?.email}</p></div><button title="Tracker destination" className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={editDestination}><FileSpreadsheet className="h-4 w-4" /></button><button title="Open failure log" className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={() => openPath(status.logPath)}><FileText className="h-4 w-4" /></button><button title="Data source" className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={editMicrosoft}>{bridgeMode ? <Inbox className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}</button><button title="Profile settings" className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={() => setEditingProfile(true)}><Settings className="h-4 w-4" /></button>{!bridgeMode && <button title="Sign out" className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-red-50 hover:text-red-600" onClick={signOut}><LogOut className="h-4 w-4" /></button>}</div></div></header>
@@ -331,7 +347,7 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
           <div className="mt-6 flex items-center justify-between"><div><h2 className="font-display text-2xl">Preview</h2><p className="mt-1 text-xs text-ink/45">Atlas selects finished meetings and concrete work tasks, including tasks still in progress. Reminders and automatic notices stay out.</p></div><button className="btn-secondary" onClick={() => setManual(true)}><Plus className="h-4 w-4" />Añadir tarea manual</button></div>
           <div className="mt-4">{items.length ? <InteractionTable items={items} setItems={setItems} /> : <div className="card grid min-h-64 place-items-center p-10 text-center"><div><div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-mint text-pine"><CalendarDays /></div><h3 className="mt-4 font-display text-xl">Choose a day and {bridgeMode ? "import" : "extract"}</h3><p className="mt-2 max-w-sm text-xs leading-5 text-ink/45">Atlas shows only interactions backed by your calendar, selected mail, chat evidence, or details you type manually.</p></div></div>}</div>
         </section>
-        <div className="space-y-5"><ExportPanel destination={destination} autoSync={status.autoSync} autoSyncTime={status.autoSyncTime} bridgeMode={bridgeMode} items={items} busy={busy} onSave={saveSelected} onSync={() => void syncCalendar(false)} onEdit={editDestination} /><aside className="rounded-2xl bg-[#081c1a] p-5 text-white"><ShieldCheck className="h-5 w-5 text-[#8dd7c4]" /><h3 className="mt-4 font-display text-xl">Mínimo diario: 3</h3><p className="mt-2 text-xs leading-5 text-white/55">Atlas siempre guarda las actividades reales encontradas. Si hay menos de tres, abre la aplicación para que puedas añadir las que faltan.</p></aside></div>
+        <div className="space-y-5"><ExportPanel destination={destination} autoSync={status.autoSync} autoSyncTime={status.autoSyncTime} automationMode={status.automationMode} bridgeMode={bridgeMode} items={items} busy={busy} onSave={saveSelected} onSync={() => void syncCalendar(false)} onEdit={editDestination} /><aside className="rounded-2xl bg-[#081c1a] p-5 text-white"><ShieldCheck className="h-5 w-5 text-[#8dd7c4]" /><h3 className="mt-4 font-display text-xl">Mínimo diario: 3</h3><p className="mt-2 text-xs leading-5 text-white/55">Atlas siempre guarda las actividades reales encontradas. Si hay menos de tres, abre la aplicación para que puedas añadir las que faltan.</p></aside></div>
       </div>
     </main>
     {manual && <ManualModal date={date} onClose={() => setManual(false)} onAdd={item => { setItems(old => [...old, item]); setManual(false); }} />}
@@ -345,18 +361,18 @@ function AtlasApp() {
   const [status, setStatus] = useState<AppStatus>(); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [installing, setInstalling] = useState(false); const [editingDestination, setEditingDestination] = useState(false);
   const refresh = async () => { setStatus(await api.status()); };
   useEffect(() => { refresh().catch(e => setError(String(e))); }, []);
-  useEffect(() => { if (status?.scheduledLaunch && (!status.configured || !status.signedIn || !status.profile || !status.destination || !status.autoSync)) void api.completeScheduled(true); }, [status]);
+  useEffect(() => { if (status?.scheduledLaunch && (!status.configured || !status.signedIn || !status.profile || !status.destination || !status.autoSync)) void api.completeScheduled("", false, true); }, [status]);
   useEffect(() => { const onError = (event: ErrorEvent) => { void api.logError("window", event.message); }; const onRejection = (event: PromiseRejectionEvent) => { void api.logError("promise", String(event.reason)); }; window.addEventListener("error", onError); window.addEventListener("unhandledrejection", onRejection); return () => { window.removeEventListener("error", onError); window.removeEventListener("unhandledrejection", onRejection); }; }, []);
   const signIn = async () => { setBusy(true); setError(""); try { setStatus(await api.signIn()); } catch (e) { setError(String(e)); } finally { setBusy(false); } };
   const signOut = async () => { await api.signOut(); await refresh(); };
   const saveProfile = async (p: UserProfile) => { await api.saveProfile(p); await refresh(); };
   const usePowerAutomate = async (folder: string) => { setStatus(await api.savePowerAutomateFolder(folder)); setInstalling(false); };
-  const saveDestination = async (destination: TrackerDestination, autoSync: boolean, autoSyncTime: string) => { setStatus(await api.saveDestination(destination, autoSync, autoSyncTime)); setEditingDestination(false); };
+  const saveDestination = async (destination: TrackerDestination, autoSync: boolean, autoSyncTime: string, automationMode: AutomationMode) => { setStatus(await api.saveDestination(destination, autoSync, autoSyncTime, automationMode)); setEditingDestination(false); };
   if (!status) return error ? <main className="grid min-h-screen place-items-center p-10"><ErrorBanner message={error} /></main> : <LoadingScreen />;
   if (!status.configured || installing) return <ConnectorInstaller onClose={status.configured ? () => setInstalling(false) : undefined} onUseFolder={usePowerAutomate} />;
   if (!status.signedIn) return <LoginScreen onSignIn={signIn} onEditMicrosoft={() => setInstalling(true)} busy={busy} error={error} />;
   if (!status.profile) return <SetupScreen status={status} onSaved={saveProfile} />;
-  if (!status.destination || editingDestination) return <DestinationSetupScreen initial={status.destination} initialAutoSync={status.autoSync} initialAutoSyncTime={status.autoSyncTime} bridgeMode={status.sourceMode === "power_automate_folder"} onSave={saveDestination} onCancel={status.destination ? () => setEditingDestination(false) : undefined} />;
+  if (!status.destination || editingDestination) return <DestinationSetupScreen initial={status.destination} initialAutoSync={status.autoSync} initialAutoSyncTime={status.autoSyncTime} initialAutomationMode={status.automationMode} bridgeMode={status.sourceMode === "power_automate_folder"} onSave={saveDestination} onCancel={status.destination ? () => setEditingDestination(false) : undefined} />;
   return <Workspace status={status} refreshStatus={refresh} signOut={signOut} editMicrosoft={() => setInstalling(true)} editDestination={() => setEditingDestination(true)} />;
 }
 

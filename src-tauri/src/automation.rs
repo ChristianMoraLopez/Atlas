@@ -1,10 +1,11 @@
 use crate::{
     diagnostics,
     error::{AppError, Result},
+    models::{AutomationMode, AutomationRequest},
     state::AppState,
 };
-use chrono::{Local, NaiveTime};
-use std::{fs, path::PathBuf, process::Command, time::Duration};
+use chrono::{Datelike, Days, Local, NaiveDate, NaiveTime, Weekday};
+use std::{fs, path::PathBuf, process::Command, sync::atomic::Ordering, time::Duration};
 use tauri::{Emitter, Manager};
 
 pub const DEFAULT_DAILY_TIME: &str = "17:30";
@@ -22,6 +23,35 @@ pub fn normalize_time(value: &str) -> Result<String> {
 
 fn daily_run_due(now: NaiveTime, scheduled: NaiveTime, last_run: &str, today: &str) -> bool {
     now >= scheduled && last_run.trim() != today
+}
+
+fn previous_workday(mut date: NaiveDate) -> NaiveDate {
+    date = date.checked_sub_days(Days::new(1)).unwrap_or(date);
+    while matches!(date.weekday(), Weekday::Sat | Weekday::Sun) {
+        date = date.checked_sub_days(Days::new(1)).unwrap_or(date);
+    }
+    date
+}
+
+fn marker_path(config_dir: &std::path::Path) -> PathBuf {
+    config_dir.join("last-automatic-run.txt")
+}
+
+pub fn complete(config_dir: &std::path::Path, run_key: &str) -> Result<()> {
+    let run_key = run_key.trim();
+    if run_key.is_empty() {
+        return Ok(());
+    }
+    fs::write(marker_path(config_dir), run_key).map_err(|error| {
+        AppError::Message(format!(
+            "Atlas completed the tracker but could not save its automatic-run marker: {error}"
+        ))
+    })?;
+    diagnostics::info(
+        "automation/complete",
+        &format!("Automatic tracker completed successfully for {run_key}"),
+    );
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -77,6 +107,14 @@ fn configure_startup(enabled: bool) -> Result<()> {
             AppError::Message(format!("Windows startup could not be configured: {error}"))
         })?;
     if output.status.success() || !enabled {
+        diagnostics::info(
+            "automation/startup",
+            if enabled {
+                "Registered portable Atlas under the current user's Windows startup"
+            } else {
+                "Removed Atlas from the current user's Windows startup"
+            },
+        );
         return Ok(());
     }
     let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -105,38 +143,82 @@ pub fn configure(_enabled: bool, time: &str) -> Result<()> {
 
 pub fn start_background_scheduler(app: tauri::AppHandle, config_dir: PathBuf) {
     tauri::async_runtime::spawn(async move {
-        let marker = config_dir.join("last-automatic-run.txt");
+        // Give OneDrive and the WebView time to initialize after Windows sign-in.
+        tokio::time::sleep(Duration::from_secs(30)).await;
         loop {
-            tokio::time::sleep(Duration::from_secs(20)).await;
             let Some(state) = app.try_state::<AppState>() else {
+                tokio::time::sleep(Duration::from_secs(20)).await;
                 continue;
             };
             let Ok(settings) = state.read_settings() else {
+                tokio::time::sleep(Duration::from_secs(20)).await;
                 continue;
             };
             if !settings.auto_sync || settings.destination.is_none() || settings.profile.is_none() {
+                tokio::time::sleep(Duration::from_secs(20)).await;
                 continue;
             }
-            let Ok(time) = NaiveTime::parse_from_str(&settings.auto_sync_time, "%H:%M") else {
-                continue;
-            };
             let now = Local::now();
             let today = now.format("%Y-%m-%d").to_string();
-            let last_run = fs::read_to_string(&marker).unwrap_or_default();
-            if !daily_run_due(now.time(), time, &last_run, &today) {
-                continue;
-            }
-            if let Err(error) = fs::write(&marker, &today) {
-                diagnostics::error("automation/marker", &error.to_string());
+            let last_run = fs::read_to_string(marker_path(&config_dir)).unwrap_or_default();
+            let request = match settings.automation_mode {
+                AutomationMode::StartupPreviousWorkday => {
+                    if !state.background_launch {
+                        return;
+                    }
+                    let date = previous_workday(now.date_naive())
+                        .format("%Y-%m-%d")
+                        .to_string();
+                    if last_run.trim() == date {
+                        diagnostics::info(
+                            "automation/run",
+                            &format!("Previous workday {date} was already completed; exiting"),
+                        );
+                        app.exit(0);
+                        return;
+                    }
+                    AutomationRequest {
+                        date: date.clone(),
+                        run_key: date,
+                        reason: "windows_startup".into(),
+                    }
+                }
+                AutomationMode::DailyTime => {
+                    let Ok(time) = NaiveTime::parse_from_str(&settings.auto_sync_time, "%H:%M")
+                    else {
+                        tokio::time::sleep(Duration::from_secs(20)).await;
+                        continue;
+                    };
+                    if !daily_run_due(now.time(), time, &last_run, &today) {
+                        tokio::time::sleep(Duration::from_secs(20)).await;
+                        continue;
+                    }
+                    AutomationRequest {
+                        date: today.clone(),
+                        run_key: today,
+                        reason: "daily_time".into(),
+                    }
+                }
+            };
+            if state.automation_pending.swap(true, Ordering::SeqCst) {
+                tokio::time::sleep(Duration::from_secs(20)).await;
                 continue;
             }
             diagnostics::info(
                 "automation/run",
-                &format!("Starting background daily tracker for {today}"),
+                &format!(
+                    "Starting hidden {} tracker for {}",
+                    request.reason, request.date
+                ),
             );
-            if let Err(error) = app.emit("atlas-background-daily-run", ()) {
+            if let Err(error) = app.emit("atlas-background-daily-run", request) {
+                state.automation_pending.store(false, Ordering::SeqCst);
                 diagnostics::error("automation/emit", &error.to_string());
             }
+            if settings.automation_mode == AutomationMode::StartupPreviousWorkday {
+                return;
+            }
+            tokio::time::sleep(Duration::from_secs(20)).await;
         }
     });
 }
@@ -170,5 +252,17 @@ mod tests {
             "2026-09-15\n",
             "2026-09-15"
         ));
+    }
+
+    #[test]
+    fn startup_uses_the_previous_business_day() {
+        assert_eq!(
+            previous_workday(NaiveDate::from_ymd_opt(2026, 9, 16).unwrap()),
+            NaiveDate::from_ymd_opt(2026, 9, 15).unwrap()
+        );
+        assert_eq!(
+            previous_workday(NaiveDate::from_ymd_opt(2026, 9, 14).unwrap()),
+            NaiveDate::from_ymd_opt(2026, 9, 11).unwrap()
+        );
     }
 }
