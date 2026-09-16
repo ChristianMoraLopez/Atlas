@@ -21,12 +21,16 @@ const LAST_OLLAMA_PORT: u16 = 11445;
 const MODEL_BLOB: &str =
     "models/blobs/sha256-183715c435899236895da3869489cc30ac241476b4971a20285b1a462818a5b4";
 const MODEL_BLOB_SIZE: u64 = 986_048_512;
-const MAX_AI_EVIDENCE_ITEMS: usize = 12;
+// The bundled CPU model can exceed the request deadline when twelve long
+// messages and a large structured response are evaluated together. Six-item
+// batches keep cold runs bounded on the corporate PC while the day-wide
+// sampler still covers up to 48 evidence items.
+const MAX_AI_EVIDENCE_ITEMS: usize = 6;
 const MAX_AI_TOTAL_EVIDENCE_ITEMS: usize = 48;
-const MAX_AI_EVIDENCE_CHARS: usize = 8_000;
+const MAX_AI_EVIDENCE_CHARS: usize = 4_200;
 const MAX_AI_TEXT_CHARS: usize = 700;
-const MAX_AI_INTERACTIONS: usize = 12;
-const MAX_AI_OUTPUT_TOKENS: u32 = 768;
+const MAX_AI_INTERACTIONS: usize = 8;
+const MAX_AI_OUTPUT_TOKENS: u32 = 512;
 
 pub struct ManagedRuntime {
     root: PathBuf,
@@ -808,13 +812,15 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let batches = evidence_batches(&evidence);
-        assert_eq!(batches.len(), 4);
-        assert!(batches.iter().all(|batch| batch.len() <= 12));
+        assert_eq!(batches.len(), 8);
+        assert!(batches.iter().all(|batch| batch.len() <= 6));
         assert_eq!(batches.first().unwrap().first().unwrap().id, "0");
         assert_eq!(batches.last().unwrap().last().unwrap().id, "99");
         for batch in batches {
             let bounded = bounded_evidence(&batch);
-            assert!(bounded.iter().map(|item| item.text.len()).sum::<usize>() <= 8_000);
+            assert!(
+                bounded.iter().map(|item| item.text.len()).sum::<usize>() <= MAX_AI_EVIDENCE_CHARS
+            );
         }
     }
 

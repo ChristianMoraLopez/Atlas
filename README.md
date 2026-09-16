@@ -14,7 +14,7 @@ Atlas is a Tauri v2 Windows desktop application that builds the Circana Interact
 - Extracts real meetings for any selected workday and excludes cancelled events, meal/tracker blocks, focus blocks, reminders, and to-do calendar entries.
 - Normalizes only the first MMNI/SparkTriage meeting to 09:00–09:30 in the chosen local timezone.
 - Preselects every finished meeting and each separate work task inferred from mail or Teams. Assigned and in-progress work is included; reminders, invitations, automatic notices, and inbox activity without a concrete task are excluded.
-- Interprets mail and Teams evidence with bundled Local AI in both Graph and Power Automate modes. Every suggestion stays linked to its real source evidence, distinct tasks can come from the same email or conversation, and tracker summaries are written in English.
+- Interprets mail and Teams evidence with bundled Local AI in both Graph and Power Automate modes. Every suggestion stays linked to its real source evidence, distinct tasks can come from the same email or conversation, tracker summaries are written in English, and CPU inference is split into bounded six-item batches so cold automatic runs stay within the local request deadline.
 - Lets the user edit review fields and add a genuinely manual interaction through a blank form.
 - Configures a new tracker, an existing `.xlsx` / `.xlsm`, or a SharePoint/OneDrive workbook link once and reuses it.
 - Registers Atlas in the current user's Windows startup and runs its internal daily timer at 17:30 by default, without administrator rights. If the computer starts after the chosen time, Atlas catches up once for that day.
