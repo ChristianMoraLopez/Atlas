@@ -8,11 +8,17 @@ use chrono::{Datelike, Days, Local, NaiveDate, NaiveTime, Weekday};
 use std::{fs, path::PathBuf, process::Command, sync::atomic::Ordering, time::Duration};
 use tauri::{Emitter, Manager};
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 pub const DEFAULT_DAILY_TIME: &str = "17:30";
 const TASK_NAME: &str = "Atlas Daily Tracker";
 const STARTUP_TASK_NAME: &str = "Atlas Background Startup";
 const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 const RUN_VALUE: &str = "Atlas Background Startup";
+const STARTUP_LINK: &str = "Atlas Background Startup.lnk";
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 pub fn normalize_time(value: &str) -> Result<String> {
     let parsed = NaiveTime::parse_from_str(value.trim(), "%H:%M").map_err(|_| {
@@ -78,7 +84,7 @@ fn reg_path() -> PathBuf {
 }
 
 #[cfg(windows)]
-fn configure_startup(enabled: bool) -> Result<()> {
+fn configure_run_key(enabled: bool) -> Result<()> {
     let mut arguments = vec![
         if enabled { "ADD" } else { "DELETE" }.to_string(),
         RUN_KEY.to_string(),
@@ -108,11 +114,11 @@ fn configure_startup(enabled: bool) -> Result<()> {
         })?;
     if output.status.success() || !enabled {
         diagnostics::info(
-            "automation/startup",
+            "automation/startup-registry",
             if enabled {
-                "Registered portable Atlas under the current user's Windows startup"
+                "Registered portable Atlas in the current user's Windows Run key"
             } else {
-                "Removed Atlas from the current user's Windows startup"
+                "Removed Atlas from the current user's Windows Run key"
             },
         );
         return Ok(());
@@ -126,6 +132,105 @@ fn configure_startup(enabled: bool) -> Result<()> {
 }
 
 #[cfg(windows)]
+fn startup_link_path() -> Result<PathBuf> {
+    let app_data = std::env::var_os("APPDATA").ok_or_else(|| {
+        AppError::Message("Windows did not provide the current user's AppData folder.".into())
+    })?;
+    Ok(PathBuf::from(app_data)
+        .join("Microsoft")
+        .join("Windows")
+        .join("Start Menu")
+        .join("Programs")
+        .join("Startup")
+        .join(STARTUP_LINK))
+}
+
+#[cfg(windows)]
+fn powershell_path() -> PathBuf {
+    std::env::var_os("SystemRoot")
+        .map(PathBuf::from)
+        .map(|root| {
+            root.join("System32")
+                .join("WindowsPowerShell")
+                .join("v1.0")
+                .join("powershell.exe")
+        })
+        .unwrap_or_else(|| PathBuf::from("powershell.exe"))
+}
+
+#[cfg(windows)]
+fn configure_startup_shortcut(enabled: bool) -> Result<()> {
+    let link = startup_link_path()?;
+    if !enabled {
+        match fs::remove_file(&link) {
+            Ok(()) => diagnostics::info(
+                "automation/startup-shortcut",
+                &format!("Removed Atlas startup shortcut at {}", link.display()),
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(AppError::Message(format!(
+                    "Windows could not remove the Atlas startup shortcut: {error}"
+                )))
+            }
+        }
+        return Ok(());
+    }
+
+    let executable = std::env::current_exe().map_err(|error| {
+        AppError::Message(format!("Atlas could not locate its executable: {error}"))
+    })?;
+    let working_directory = executable.parent().ok_or_else(|| {
+        AppError::Message("Atlas could not determine its portable folder.".into())
+    })?;
+    let parent = link.parent().ok_or_else(|| {
+        AppError::Message("Atlas could not determine the Windows Startup folder.".into())
+    })?;
+    fs::create_dir_all(parent)?;
+
+    // Values travel through environment variables so paths containing quotes,
+    // spaces, or PowerShell metacharacters are never interpreted as script text.
+    let script = "$shell = New-Object -ComObject WScript.Shell; $shortcut = $shell.CreateShortcut($env:ATLAS_STARTUP_LINK); $shortcut.TargetPath = $env:ATLAS_STARTUP_EXE; $shortcut.Arguments = '--atlas-startup'; $shortcut.WorkingDirectory = $env:ATLAS_STARTUP_WORKDIR; $shortcut.WindowStyle = 7; $shortcut.Description = 'Atlas background tracker'; $shortcut.Save()";
+    let output = Command::new(powershell_path())
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ])
+        .env("ATLAS_STARTUP_LINK", &link)
+        .env("ATLAS_STARTUP_EXE", &executable)
+        .env("ATLAS_STARTUP_WORKDIR", working_directory)
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|error| {
+            AppError::Message(format!(
+                "Windows could not create the Atlas startup shortcut: {error}"
+            ))
+        })?;
+    if !output.status.success() || !link.is_file() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(AppError::Message(format!(
+            "Windows did not create the Atlas startup shortcut{}{}",
+            if detail.is_empty() { "." } else { ": " },
+            detail
+        )));
+    }
+    diagnostics::info(
+        "automation/startup-shortcut",
+        &format!(
+            "Created Atlas startup shortcut at {} for {} --atlas-startup",
+            link.display(),
+            executable.display()
+        ),
+    );
+    Ok(())
+}
+
+#[cfg(windows)]
 pub fn configure(enabled: bool, time: &str) -> Result<()> {
     normalize_time(time)?;
     // Older releases used Task Scheduler, which many managed PCs block for
@@ -133,7 +238,21 @@ pub fn configure(enabled: bool, time: &str) -> Result<()> {
     // user's Run key plus Atlas's own daily timer instead.
     remove_legacy_task(TASK_NAME);
     remove_legacy_task(STARTUP_TASK_NAME);
-    configure_startup(enabled)
+    let registry = configure_run_key(enabled);
+    let shortcut = configure_startup_shortcut(enabled);
+    match (registry, shortcut) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Ok(()), Err(error)) | (Err(error), Ok(())) => {
+            diagnostics::error(
+                "automation/startup-fallback",
+                &format!("One Windows startup method failed; the fallback is active: {error}"),
+            );
+            Ok(())
+        }
+        (Err(registry_error), Err(shortcut_error)) => Err(AppError::Message(format!(
+            "Windows could not register Atlas at startup. Run key: {registry_error} Startup folder: {shortcut_error}"
+        ))),
+    }
 }
 
 #[cfg(not(windows))]
@@ -143,8 +262,10 @@ pub fn configure(_enabled: bool, time: &str) -> Result<()> {
 
 pub fn start_background_scheduler(app: tauri::AppHandle, config_dir: PathBuf) {
     tauri::async_runtime::spawn(async move {
-        // Give OneDrive and the WebView time to initialize after Windows sign-in.
-        tokio::time::sleep(Duration::from_secs(30)).await;
+        // Give OneDrive time to initialize after Windows sign-in. The event is
+        // emitted only after the WebView confirms its listener is attached.
+        tokio::time::sleep(Duration::from_secs(20)).await;
+        let wait_started = std::time::Instant::now();
         loop {
             let Some(state) = app.try_state::<AppState>() else {
                 tokio::time::sleep(Duration::from_secs(20)).await;
@@ -200,6 +321,21 @@ pub fn start_background_scheduler(app: tauri::AppHandle, config_dir: PathBuf) {
                     }
                 }
             };
+            if !state.frontend_ready.load(Ordering::SeqCst) {
+                if state.background_launch && wait_started.elapsed() >= Duration::from_secs(120) {
+                    diagnostics::error(
+                        "automation/frontend",
+                        "The hidden interface did not become ready within 120 seconds; opening Atlas for attention",
+                    );
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                    return;
+                }
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                continue;
+            }
             if state.automation_pending.swap(true, Ordering::SeqCst) {
                 tokio::time::sleep(Duration::from_secs(20)).await;
                 continue;

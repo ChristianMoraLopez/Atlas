@@ -384,6 +384,17 @@ fn log_frontend_error(context: String, message: String) {
 }
 
 #[tauri::command]
+fn background_frontend_ready(state: tauri::State<'_, AppState>) {
+    state
+        .frontend_ready
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    diagnostics::info(
+        "automation/frontend",
+        "The background event listener is ready",
+    );
+}
+
+#[tauri::command]
 fn complete_scheduled_launch(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
@@ -916,8 +927,9 @@ pub fn run() {
             diagnostics::info(
                 "startup",
                 &format!(
-                    "Atlas v{} application state loaded (background_launch={background_launch}, executable={})",
+                    "Atlas v{} application state loaded (launch_mode={}, background_launch={background_launch}, executable={})",
                     env!("CARGO_PKG_VERSION"),
+                    if startup_launch { "windows_startup" } else if scheduled_launch { "legacy_daily" } else { "interactive" },
                     std::env::current_exe().map(|path| path.display().to_string()).unwrap_or_else(|_| "unknown".into())
                 ),
             );
@@ -936,6 +948,7 @@ pub fn run() {
             save_profile,
             save_tracker_destination,
             log_frontend_error,
+            background_frontend_ready,
             open_tracker_destination,
             show_tracker_writer_package,
             open_power_automate_portal,

@@ -23,6 +23,7 @@ pub struct AppState {
     pub connector_installer: Arc<crate::connector_installer::Installer>,
     pub config_dir: PathBuf,
     pub automation_pending: AtomicBool,
+    pub frontend_ready: AtomicBool,
     pub background_launch: bool,
     pub foreground_requested: AtomicBool,
 }
@@ -85,6 +86,7 @@ impl AppState {
             )),
             config_dir,
             automation_pending: AtomicBool::new(false),
+            frontend_ready: AtomicBool::new(false),
             background_launch,
             foreground_requested: AtomicBool::new(false),
         })

@@ -31,6 +31,7 @@ export const api = {
   openPowerAutomate: () => call<void>("open_power_automate_portal"),
   completeScheduled: (runKey: string, successful: boolean, needsAttention: boolean) =>
     call<void>("complete_scheduled_launch", { runKey, successful, needsAttention }),
+  backgroundReady: () => call<void>("background_frontend_ready"),
   logError: (context: string, message: string) => invoke<void>("log_frontend_error", { context, message })
 };
 

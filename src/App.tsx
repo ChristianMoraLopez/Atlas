@@ -330,7 +330,15 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
   useEffect(() => {
     let disposed = false;
     let unlistenBackground: (() => void) | undefined;
-    void listen<AutomationRequest>("atlas-background-daily-run", event => { void syncCalendar(true, event.payload); }).then(stop => { if (disposed) stop(); else unlistenBackground = stop; });
+    void listen<AutomationRequest>("atlas-background-daily-run", event => { void syncCalendar(true, event.payload); })
+      .then(stop => {
+        if (disposed) stop();
+        else {
+          unlistenBackground = stop;
+          void api.backgroundReady().catch(error => api.logError("background-ready", String(error)));
+        }
+      })
+      .catch(error => api.logError("background-listener", String(error)));
     return () => { disposed = true; unlistenBackground?.(); };
   }, []);
   return <div className="min-h-screen" aria-busy={busy}>
