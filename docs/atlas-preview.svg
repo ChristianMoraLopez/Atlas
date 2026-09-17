@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
+  <title id="title">Atlas animated product preview</title>
+  <desc id="desc">An animated mockup of the Atlas interaction tracker reviewing Microsoft 365 evidence and exporting a tracker.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#071b19"/>
+      <stop offset="1" stop-color="#123936"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity=".98"/>
+      <stop offset="1" stop-color="#edf4ef" stop-opacity=".98"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="18" stdDeviation="20" flood-color="#00110f" flood-opacity=".28"/>
+    </filter>
+    <style>
+      .small{font:600 16px Arial,sans-serif;letter-spacing:.08em;text-transform:uppercase}
+      .body{font:500 18px Arial,sans-serif}
+      .title{font:700 34px Georgia,serif}
+      .fade{animation:fade 7s ease-in-out infinite}
+      .slide{animation:slide 7s ease-in-out infinite}
+      .pulse{animation:pulse 2s ease-in-out infinite}
+      .orbit{transform-box:fill-box;transform-origin:center;animation:spin 8s linear infinite}
+      @keyframes fade{0%,12%{opacity:0}22%,76%{opacity:1}88%,100%{opacity:0}}
+      @keyframes slide{0%,14%{transform:translateY(16px);opacity:0}24%,76%{transform:translateY(0);opacity:1}88%,100%{transform:translateY(-12px);opacity:0}}
+      @keyframes pulse{50%{opacity:.42;transform:scale(1.04)}}
+      @keyframes spin{to{transform:rotate(360deg)}}
+      @media(prefers-reduced-motion:reduce){.fade,.slide,.pulse,.orbit{animation:none}}
+    </style>
+  </defs>
+  <rect width="1200" height="720" rx="32" fill="url(#bg)"/>
+  <circle cx="1040" cy="90" r="230" fill="#8dd7c4" opacity=".08"/>
+  <circle cx="80" cy="680" r="210" fill="#e89969" opacity=".08"/>
+  <g filter="url(#shadow)">
+    <rect x="90" y="74" width="1020" height="572" rx="24" fill="url(#panel)"/>
+    <rect x="90" y="74" width="1020" height="70" rx="24" fill="#f8fbf8"/>
+    <circle cx="125" cy="109" r="8" fill="#e89969"/><circle cx="151" cy="109" r="8" fill="#e6c66a"/><circle cx="177" cy="109" r="8" fill="#8dd7c4"/>
+    <rect x="220" y="96" width="130" height="26" rx="13" fill="#dcebe5"/>
+    <text x="238" y="115" class="small" fill="#24534b">ATLAS</text>
+    <rect x="90" y="144" width="238" height="502" fill="#eaf3ee"/>
+    <text x="130" y="208" class="title" fill="#123936">Atlas</text>
+    <text x="130" y="239" class="small" fill="#6a817a">INTERACTION TRACKER</text>
+    <rect x="124" y="286" width="170" height="48" rx="14" fill="#123936"/>
+    <circle cx="148" cy="310" r="7" fill="#8dd7c4"/><text x="169" y="316" class="body" fill="#fff">Review day</text>
+    <text x="130" y="390" class="body" fill="#56716a">Evidence</text><text x="130" y="435" class="body" fill="#56716a">Tracker</text><text x="130" y="480" class="body" fill="#56716a">Settings</text>
+    <text x="380" y="198" class="small" fill="#7a9189">WORKDAY · 16 SEP 2026</text>
+    <text x="380" y="245" class="title" fill="#123936">Review real activity</text>
+    <text x="380" y="278" class="body" fill="#6a817a">Meetings, mail and Teams evidence in one calm workspace.</text>
+    <g class="slide">
+      <rect x="380" y="326" width="680" height="76" rx="16" fill="#fff" stroke="#d4e4dc"/>
+      <circle cx="420" cy="364" r="18" fill="#d9eee7"/><path d="M412 364h16M420 356v16" stroke="#24776a" stroke-width="3" stroke-linecap="round"/>
+      <text x="458" y="356" class="body" fill="#123936">Customer alignment meeting</text><text x="458" y="380" class="small" fill="#799189">CALENDAR · 09:00 — 09:30</text>
+      <rect x="970" y="346" width="62" height="34" rx="17" fill="#d9eee7"/><text x="985" y="369" class="small" fill="#24776a">READY</text>
+    </g>
+    <g class="slide" style="animation-delay:.8s">
+      <rect x="380" y="420" width="680" height="76" rx="16" fill="#fff" stroke="#d4e4dc"/>
+      <circle cx="420" cy="458" r="18" fill="#f8e6d8"/><path d="M411 458h18M420 449v18" stroke="#ba6846" stroke-width="3" stroke-linecap="round"/>
+      <text x="458" y="450" class="body" fill="#123936">Follow up on tracker validation</text><text x="458" y="474" class="small" fill="#799189">LOCAL AI · MAIL EVIDENCE</text>
+      <rect x="970" y="440" width="62" height="34" rx="17" fill="#f8e6d8"/><text x="982" y="463" class="small" fill="#ba6846">REVIEW</text>
+    </g>
+    <g class="fade">
+      <rect x="380" y="530" width="680" height="58" rx="16" fill="#123936"/>
+      <text x="410" y="566" class="body" fill="#fff">✓  Evidence linked · ready to export</text><text x="874" y="566" class="small" fill="#8dd7c4">EXCEL</text>
+    </g>
+  </g>
+  <g class="orbit" transform="translate(1010 610)"><circle r="28" fill="none" stroke="#8dd7c4" stroke-width="2" stroke-dasharray="3 6"/><circle cy="-28" r="5" fill="#e89969"/></g>
+  <circle class="pulse" cx="1010" cy="610" r="8" fill="#8dd7c4"/>
+</svg>
