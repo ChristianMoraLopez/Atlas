@@ -8,6 +8,7 @@ use crate::{
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::{
     fs,
     io::{Cursor, Read, Write},
@@ -443,7 +444,270 @@ fn prepare_inbox(root: &Path) -> Result<PathBuf> {
     Ok(folder)
 }
 
+// Identity of one logical AtlasBridge installation. The same persistent
+// installation id always derives the same solution unique name, connection
+// reference logical names and workflow ids, so Power Platform imports a new
+// Atlas version as an update of that installation instead of colliding with
+// components owned by another user of the same environment.
+const CONNECTION_REFERENCES: [&str; 3] = [
+    "atlas_office365",
+    "atlas_teams",
+    "atlas_onedriveforbusiness",
+];
+const SCHEDULED_WORKFLOW_ID: &str = "8e5c1f84-dcbb-4a2c-9d2f-62e9c38105d2";
+const TEAMS_EVENT_WORKFLOW_ID: &str = "7f7115e8-b821-4bb9-9b4e-5c7a5448610e";
+const WORKFLOW_IDS: [&str; 2] = [SCHEDULED_WORKFLOW_ID, TEAMS_EVENT_WORKFLOW_ID];
+
+#[derive(Debug, PartialEq)]
+struct InstanceIdentity {
+    key: String,
+    unique_name: String,
+    display_name: String,
+    connection_references: [String; 3],
+    workflows: [(String, String); 2],
+}
+
+/// Deterministic Power Platform-safe key derived from the persistent
+/// installation id: lowercase ASCII letters, digits and underscores only.
+fn instance_key(installation_id: &str) -> Result<String> {
+    let key: String = installation_id
+        .chars()
+        .flat_map(char::to_lowercase)
+        .filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '_')
+        .take(32)
+        .collect();
+    if key.is_empty() {
+        return Err(fail("invalid_installation_id"));
+    }
+    Ok(key)
+}
+
+/// Deterministic workflow id: SHA-256 of installation id + original workflow
+/// id, encoded as an RFC 4122 version-5 style UUID. Never random per run.
+fn instance_workflow_id(installation_id: &str, original_workflow_id: &str) -> String {
+    let digest = Sha256::digest(
+        format!("atlasbridge/workflow/v1:{installation_id}:{original_workflow_id}").as_bytes(),
+    );
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    bytes[6] = (bytes[6] & 0x0f) | 0x50;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    uuid::Uuid::from_bytes(bytes).to_string()
+}
+
+fn instance_identity(installation_id: &str) -> Result<InstanceIdentity> {
+    let key = instance_key(installation_id)?;
+    Ok(InstanceIdentity {
+        unique_name: format!("AtlasBridge_{key}"),
+        display_name: format!("Atlas Bridge [{key}]"),
+        connection_references: CONNECTION_REFERENCES.map(|name| format!("{name}_{key}")),
+        workflows: WORKFLOW_IDS.map(|id| (id.to_string(), instance_workflow_id(installation_id, id))),
+        key,
+    })
+}
+
+fn replace_required(content: String, from: &str, to: &str) -> Result<String> {
+    if !content.contains(from) {
+        return Err(fail("invalid_bundled_solution"));
+    }
+    Ok(content.replace(from, to))
+}
+
+fn personalize_solution_manifest(bytes: &[u8], identity: &InstanceIdentity) -> Result<Vec<u8>> {
+    let mut xml =
+        String::from_utf8(bytes.to_vec()).map_err(|_| fail("invalid_bundled_solution"))?;
+    xml = replace_required(
+        xml,
+        "<UniqueName>AtlasBridge</UniqueName>",
+        &format!("<UniqueName>{}</UniqueName>", identity.unique_name),
+    )?;
+    xml = replace_required(
+        xml,
+        "<LocalizedName description=\"AtlasBridge\" languagecode=\"1033\" />",
+        &format!(
+            "<LocalizedName description=\"{}\" languagecode=\"1033\" />",
+            identity.display_name
+        ),
+    )?;
+    for (original, derived) in &identity.workflows {
+        xml = replace_required(xml, &format!("{{{original}}}"), &format!("{{{derived}}}"))?;
+    }
+    Ok(xml.into_bytes())
+}
+
+fn personalize_customizations(bytes: &[u8], identity: &InstanceIdentity) -> Result<Vec<u8>> {
+    let mut xml =
+        String::from_utf8(bytes.to_vec()).map_err(|_| fail("invalid_bundled_solution"))?;
+    for (original, derived) in &identity.workflows {
+        xml = replace_required(xml, &format!("{{{original}}}"), &format!("{{{derived}}}"))?;
+        xml = replace_required(xml, original, derived)?;
+    }
+    for (position, original) in CONNECTION_REFERENCES.iter().enumerate() {
+        xml = replace_required(
+            xml,
+            &format!("connectionreferencelogicalname=\"{original}\""),
+            &format!(
+                "connectionreferencelogicalname=\"{}\"",
+                identity.connection_references[position]
+            ),
+        )?;
+    }
+    Ok(xml.into_bytes())
+}
+
+fn personalize_flow(
+    bytes: &[u8],
+    identity: &InstanceIdentity,
+    installation_id: &str,
+) -> Result<Vec<u8>> {
+    let mut flow: Value =
+        serde_json::from_slice(bytes).map_err(|_| fail("invalid_bundled_solution"))?;
+    let actions = &mut flow["properties"]["definition"]["actions"];
+    actions["AtlasInstallationId"]["inputs"] = Value::String(installation_id.to_string());
+    // The keys (shared_office365, shared_teams, shared_onedriveforbusiness)
+    // identify the standard connectors and must stay intact. Only the logical
+    // name of the connection reference becomes installation-specific.
+    let references = flow["properties"]["connectionReferences"]
+        .as_object_mut()
+        .ok_or_else(|| fail("invalid_bundled_solution"))?;
+    for reference in references.values_mut() {
+        let logical = reference["connection"]["connectionReferenceLogicalName"]
+            .as_str()
+            .ok_or_else(|| fail("invalid_bundled_solution"))?
+            .to_string();
+        let position = CONNECTION_REFERENCES
+            .iter()
+            .position(|name| *name == logical)
+            .ok_or_else(|| fail("invalid_bundled_solution"))?;
+        reference["connection"]["connectionReferenceLogicalName"] =
+            Value::String(identity.connection_references[position].clone());
+    }
+    Ok(serde_json::to_vec_pretty(&flow)?)
+}
+
+fn instance_workflow_file_name(template_name: &str, identity: &InstanceIdentity) -> String {
+    let mut name = template_name.to_string();
+    for (original, derived) in &identity.workflows {
+        name = name.replace(original.as_str(), derived.as_str());
+    }
+    name
+}
+
+fn ensure_well_formed_xml(content: &[u8]) -> Result<()> {
+    let mut reader = quick_xml::Reader::from_reader(content);
+    let mut buffer = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buffer) {
+            Ok(quick_xml::events::Event::Eof) => return Ok(()),
+            Ok(_) => buffer.clear(),
+            Err(_) => return Err(fail("package_generation_failed")),
+        }
+    }
+}
+
+fn read_package_entry(package: &[u8], name: &str) -> Result<Vec<u8>> {
+    let mut zip =
+        ZipArchive::new(Cursor::new(package)).map_err(|_| fail("package_generation_failed"))?;
+    let mut entry = zip
+        .by_name(name)
+        .map_err(|_| fail("package_generation_failed"))?;
+    let mut bytes = Vec::new();
+    entry
+        .read_to_end(&mut bytes)
+        .map_err(|_| fail("package_generation_failed"))?;
+    Ok(bytes)
+}
+
+/// Verifies the generated package carries exactly this installation's
+/// identities and none of the template's global identities.
+fn validate_instance_package(
+    package: &[u8],
+    identity: &InstanceIdentity,
+    installation_id: &str,
+) -> Result<()> {
+    let solution = read_package_entry(package, "solution.xml")?;
+    let customizations = read_package_entry(package, "customizations.xml")?;
+    ensure_well_formed_xml(&solution)?;
+    ensure_well_formed_xml(&customizations)?;
+    let solution = String::from_utf8(solution).map_err(|_| fail("package_generation_failed"))?;
+    let customizations =
+        String::from_utf8(customizations).map_err(|_| fail("package_generation_failed"))?;
+    if !solution.contains(&format!("<UniqueName>{}</UniqueName>", identity.unique_name))
+        || solution.contains("<UniqueName>AtlasBridge</UniqueName>")
+    {
+        return Err(fail("package_generation_failed"));
+    }
+    for (original, derived) in &identity.workflows {
+        if solution.contains(original)
+            || customizations.contains(original)
+            || !customizations.contains(derived)
+        {
+            return Err(fail("package_generation_failed"));
+        }
+        let flow_bytes = read_package_entry(
+            package,
+            &instance_workflow_file_name_for(original, identity),
+        )?;
+        let flow: Value =
+            serde_json::from_slice(&flow_bytes).map_err(|_| fail("package_generation_failed"))?;
+        if flow["properties"]["definition"]["actions"]["AtlasInstallationId"]["inputs"]
+            != Value::String(installation_id.to_string())
+        {
+            return Err(fail("package_generation_failed"));
+        }
+        let references = flow["properties"]["connectionReferences"]
+            .as_object()
+            .ok_or_else(|| fail("package_generation_failed"))?;
+        if references.len() != CONNECTION_REFERENCES.len() {
+            return Err(fail("package_generation_failed"));
+        }
+        for (connector, reference) in references {
+            if !connector.starts_with("shared_") {
+                return Err(fail("package_generation_failed"));
+            }
+            let logical = reference["connection"]["connectionReferenceLogicalName"]
+                .as_str()
+                .ok_or_else(|| fail("package_generation_failed"))?;
+            if !identity.connection_references.contains(&logical.to_string()) {
+                return Err(fail("package_generation_failed"));
+            }
+        }
+    }
+    for (position, original) in CONNECTION_REFERENCES.iter().enumerate() {
+        // No unsuffixed template reference may remain as an active identity.
+        if customizations.contains(&format!("connectionreferencelogicalname=\"{original}\""))
+            || !customizations.contains(&format!(
+                "connectionreferencelogicalname=\"{}\"",
+                identity.connection_references[position]
+            ))
+        {
+            return Err(fail("package_generation_failed"));
+        }
+    }
+    // The standard Microsoft connector ids stay untouched.
+    for connector in [
+        "shared_office365",
+        "shared_teams",
+        "shared_onedriveforbusiness",
+    ] {
+        if !customizations.contains(connector) {
+            return Err(fail("package_generation_failed"));
+        }
+    }
+    Ok(())
+}
+
+fn instance_workflow_file_name_for(original_workflow_id: &str, identity: &InstanceIdentity) -> String {
+    let template = if original_workflow_id == SCHEDULED_WORKFLOW_ID {
+        SCHEDULED_WORKFLOW
+    } else {
+        TEAMS_EVENT_WORKFLOW
+    };
+    instance_workflow_file_name(template, identity)
+}
+
 fn personalized_solution(session: &Session) -> Result<Vec<u8>> {
+    let identity = instance_identity(&session.installation_id)?;
     let mut source =
         ZipArchive::new(Cursor::new(SOLUTION)).map_err(|_| fail("invalid_bundled_solution"))?;
     let mut output = ZipWriter::new(Cursor::new(Vec::new()));
@@ -457,18 +721,25 @@ fn personalized_solution(session: &Session) -> Result<Vec<u8>> {
         entry
             .read_to_end(&mut bytes)
             .map_err(|_| fail("invalid_bundled_solution"))?;
-        if WORKFLOWS.contains(&name.as_str()) {
-            let mut flow: Value =
-                serde_json::from_slice(&bytes).map_err(|_| fail("invalid_bundled_solution"))?;
-            let actions = &mut flow["properties"]["definition"]["actions"];
-            actions["AtlasInstallationId"]["inputs"] =
-                Value::String(session.installation_id.clone());
-            bytes = serde_json::to_vec_pretty(&flow)?;
-            changed += 1;
-        }
+        let out_name = match name.as_str() {
+            "solution.xml" => {
+                bytes = personalize_solution_manifest(&bytes, &identity)?;
+                name
+            }
+            "customizations.xml" => {
+                bytes = personalize_customizations(&bytes, &identity)?;
+                name
+            }
+            name if WORKFLOWS.contains(&name) => {
+                bytes = personalize_flow(&bytes, &identity, &session.installation_id)?;
+                changed += 1;
+                instance_workflow_file_name(name, &identity)
+            }
+            _ => name,
+        };
         output
             .start_file(
-                name,
+                out_name,
                 SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated),
             )
             .map_err(|_| fail("package_generation_failed"))?;
@@ -479,10 +750,12 @@ fn personalized_solution(session: &Session) -> Result<Vec<u8>> {
     if changed != WORKFLOWS.len() {
         return Err(fail("invalid_bundled_solution"));
     }
-    Ok(output
+    let package = output
         .finish()
         .map_err(|_| fail("package_generation_failed"))?
-        .into_inner())
+        .into_inner();
+    validate_instance_package(&package, &identity, &session.installation_id)?;
+    Ok(package)
 }
 
 #[derive(Debug, PartialEq)]
@@ -897,13 +1170,17 @@ mod tests {
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 
-    fn flow_from(bytes: Vec<u8>, workflow: &str) -> Value {
+    fn flow_from(bytes: Vec<u8>, workflow_prefix: &str) -> Value {
         let mut zip = ZipArchive::new(Cursor::new(bytes)).unwrap();
         assert!(zip.by_name("[Content_Types].xml").is_ok());
         assert!(zip.by_name("solution.xml").is_ok());
         assert!(zip.by_name("customizations.xml").is_ok());
+        let name = (0..zip.len())
+            .map(|index| zip.by_index(index).unwrap().name().to_string())
+            .find(|name| name.starts_with(workflow_prefix))
+            .unwrap();
         let mut flow = String::new();
-        zip.by_name(workflow)
+        zip.by_name(&name)
             .unwrap()
             .read_to_string(&mut flow)
             .unwrap();
@@ -924,8 +1201,9 @@ mod tests {
     #[test]
     fn package_preserves_connection_references_and_personalizes_installation() {
         let session = Session::default();
+        let key = instance_key(&session.installation_id).unwrap();
         let bytes = personalized_solution(&session).unwrap();
-        let flow = flow_from(bytes.clone(), SCHEDULED_WORKFLOW);
+        let flow = flow_from(bytes.clone(), "Workflows/AtlasExportEvidence-");
         let actions = &flow["properties"]["definition"]["actions"];
         assert!(actions.get("AtlasCalendarName").is_none());
         assert_eq!(
@@ -937,10 +1215,11 @@ mod tests {
             .unwrap();
         assert_eq!(refs.len(), 3);
         for reference in refs.values() {
-            assert!(reference["connection"]["connectionReferenceLogicalName"]
+            let logical = reference["connection"]["connectionReferenceLogicalName"]
                 .as_str()
-                .unwrap()
-                .starts_with("atlas_"));
+                .unwrap();
+            assert!(logical.starts_with("atlas_"));
+            assert!(logical.ends_with(&key));
             assert!(reference.get("connectionName").is_none());
             assert!(reference["connection"].get("id").is_none());
         }
@@ -970,7 +1249,7 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("variables('RequestedDate')"));
-        let event_flow = flow_from(bytes, TEAMS_EVENT_WORKFLOW);
+        let event_flow = flow_from(bytes, "Workflows/AtlasCaptureTeamsMessages-");
         let event_actions = &event_flow["properties"]["definition"]["actions"];
         assert_eq!(
             event_actions["AtlasInstallationId"]["inputs"],
@@ -1121,5 +1400,133 @@ mod tests {
         let incomplete = verify_inbox(&session);
         assert_eq!(incomplete.state, VerificationState::Invalid);
         assert_eq!(incomplete.diagnostic, "collector_sources_incomplete");
+    }
+
+    fn session_with_installation(installation_id: &str) -> Session {
+        Session {
+            installation_id: installation_id.to_string(),
+            ..Session::default()
+        }
+    }
+
+    fn package_entry_text(package: &[u8], name: &str) -> String {
+        String::from_utf8(read_package_entry(package, name).unwrap()).unwrap()
+    }
+
+    fn package_workflow_names(package: &[u8]) -> Vec<String> {
+        let mut zip = ZipArchive::new(Cursor::new(package)).unwrap();
+        (0..zip.len())
+            .map(|index| zip.by_index(index).unwrap().name().to_string())
+            .filter(|name| name.starts_with("Workflows/"))
+            .collect()
+    }
+
+    #[test]
+    fn instance_key_sanitizes_deterministically_for_power_platform_names() {
+        assert_eq!(instance_key("A84C-12F9-9282").unwrap(), "a84c12f99282");
+        assert_eq!(instance_key("user_test_a").unwrap(), "user_test_a");
+        assert_eq!(
+            instance_key("8E5C1F84-DCBB-4A2C-9D2F-62E9C38105D2").unwrap(),
+            "8e5c1f84dcbb4a2c9d2f62e9c38105d2"
+        );
+        assert!(instance_key("---").is_err());
+        assert!(instance_key("").is_err());
+    }
+
+    #[test]
+    fn separate_installations_get_independent_component_identities() {
+        let first = personalized_solution(&session_with_installation("user_test_a")).unwrap();
+        let second = personalized_solution(&session_with_installation("user_test_b")).unwrap();
+
+        let solution_a = package_entry_text(&first, "solution.xml");
+        let solution_b = package_entry_text(&second, "solution.xml");
+        assert!(solution_a.contains("<UniqueName>AtlasBridge_user_test_a</UniqueName>"));
+        assert!(solution_b.contains("<UniqueName>AtlasBridge_user_test_b</UniqueName>"));
+        assert!(solution_a.contains("Atlas Bridge [user_test_a]"));
+
+        let customizations_a = package_entry_text(&first, "customizations.xml");
+        let customizations_b = package_entry_text(&second, "customizations.xml");
+        for (name_a, name_b) in [
+            ("atlas_office365_user_test_a", "atlas_office365_user_test_b"),
+            ("atlas_teams_user_test_a", "atlas_teams_user_test_b"),
+            (
+                "atlas_onedriveforbusiness_user_test_a",
+                "atlas_onedriveforbusiness_user_test_b",
+            ),
+        ] {
+            assert!(customizations_a.contains(&format!(
+                "connectionreferencelogicalname=\"{name_a}\""
+            )));
+            assert!(!customizations_a.contains(name_b));
+            assert!(customizations_b.contains(&format!(
+                "connectionreferencelogicalname=\"{name_b}\""
+            )));
+            assert!(!customizations_b.contains(name_a));
+        }
+        // The standard Microsoft connector ids are never personalized.
+        for connector in [
+            "shared_office365",
+            "shared_teams",
+            "shared_onedriveforbusiness",
+        ] {
+            assert!(customizations_a.contains(connector));
+            assert!(customizations_b.contains(connector));
+        }
+
+        let workflows_a = package_workflow_names(&first);
+        let workflows_b = package_workflow_names(&second);
+        assert_eq!(workflows_a.len(), 2);
+        assert_eq!(workflows_b.len(), 2);
+        assert!(workflows_a.iter().all(|name| !workflows_b.contains(name)));
+        for original in WORKFLOW_IDS {
+            assert!(workflows_a.iter().all(|name| !name.contains(original)));
+            assert!(workflows_b.iter().all(|name| !name.contains(original)));
+        }
+
+        let flow_a = flow_from(first, "Workflows/AtlasExportEvidence-");
+        let flow_b = flow_from(second, "Workflows/AtlasExportEvidence-");
+        assert_eq!(
+            flow_a["properties"]["definition"]["actions"]["AtlasInstallationId"]["inputs"],
+            "user_test_a"
+        );
+        assert_eq!(
+            flow_b["properties"]["definition"]["actions"]["AtlasInstallationId"]["inputs"],
+            "user_test_b"
+        );
+    }
+
+    #[test]
+    fn same_installation_keeps_identity_across_runs_and_versions() {
+        let first = personalized_solution(&session_with_installation("user_test_a")).unwrap();
+        let second = personalized_solution(&session_with_installation("user_test_a")).unwrap();
+        // A new Atlas version changes <Version> only; the unique name, the
+        // connection references and the workflow ids stay identical so Power
+        // Platform updates the same solution instead of creating another one.
+        assert_eq!(
+            package_entry_text(&first, "solution.xml"),
+            package_entry_text(&second, "solution.xml")
+        );
+        assert_eq!(
+            package_entry_text(&first, "customizations.xml"),
+            package_entry_text(&second, "customizations.xml")
+        );
+        assert_eq!(package_workflow_names(&first), package_workflow_names(&second));
+        let solution = package_entry_text(&first, "solution.xml");
+        assert!(solution.contains("<UniqueName>AtlasBridge_user_test_a</UniqueName>"));
+        assert!(!solution.contains("AtlasBridge_user_test_a_1"));
+        assert!(solution.contains(&format!("<Version>{SOLUTION_VERSION}</Version>")));
+    }
+
+    #[test]
+    fn writes_demo_packages_for_manual_review() {
+        let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("tmp")
+            .join("atlasbridge-identity-demo");
+        fs::create_dir_all(&directory).unwrap();
+        for id in ["user_test_a", "user_test_b"] {
+            let package = personalized_solution(&session_with_installation(id)).unwrap();
+            fs::write(directory.join(format!("AtlasBridge_{id}.zip")), package).unwrap();
+        }
     }
 }

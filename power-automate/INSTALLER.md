@@ -10,7 +10,7 @@ Atlas instala el puente mediante la experiencia oficial de importación de soluc
 4. Atlas abre `https://make.powerautomate.com/` en el navegador predeterminado. Completa el inicio de sesión o MFA con la cuenta Circana si Microsoft lo solicita.
 5. Confirma que tienes conexiones propias de **Office 365 Outlook**, **Microsoft Teams** y **OneDrive for Business**. La cuenta de OneDrive debe ser la que sincroniza la carpeta elegida. La solución instala juntos el flujo programado y la captura de Teams por mensaje.
 6. En **Soluciones → Importar solución**, selecciona el archivo `AtlasBridge_1_0_0_0.zip` preparado por Atlas. Asocia cada referencia con tu conexión y confirma la importación. No copies identificadores de tenant, entorno o aplicación.
-7. La solución 1.12 se entrega activa y se ejecuta cada cinco minutos. Si ya existe `AtlasBridge`, importa como actualización de esa misma solución. Esta versión continúa con el día actual cuando `AtlasBridge/requests/selected-date.txt` todavía no existe o está vacío y acepta el cuerpo de texto devuelto por OneDrive sin intentar seleccionar una propiedad `$content`.
+7. La solución 1.12 se entrega activa y se ejecuta cada cinco minutos. Atlas personaliza el ZIP con el identificador persistente de tu instalación: la solución se llama `AtlasBridge_<id de instalación>`, con sus propias referencias de conexión y flujos. Si ya existe la solución `AtlasBridge_…` correspondiente al mismo identificador de instalación, la nueva versión se importa como actualización de esa misma solución; nunca crea una solución `_v2`/`_v3` adicional. Un identificador de instalación diferente representa otra instalación de Atlas (por ejemplo, otro usuario del mismo entorno empresarial) y utiliza una solución independiente, por lo que varios usuarios pueden coexistir sin errores de `WriteAccess` sobre las referencias de conexión de otra persona. Esta versión continúa con el día actual cuando `AtlasBridge/requests/selected-date.txt` todavía no existe o está vacío y acepta el cuerpo de texto devuelto por OneDrive sin intentar seleccionar una propiedad `$content`.
 8. Espera la ejecución programada y la sincronización de OneDrive. Marca `AtlasBridge` como **Siempre mantener en este dispositivo**. Atlas comprueba cada 15 segundos si aparece un JSON nuevo compatible con `atlas-evidence.schema.json`.
 9. Cuando el asistente muestre **Instalación completada**, pulsa **Usar este conector en Atlas**. Si no existe, Atlas crea `Tracker_Circana.xlsx` en la raíz de OneDrive elegida.
 
@@ -38,7 +38,17 @@ Si aparece uno de esos bloqueos, Atlas conserva el modo local y muestra el requi
 - El texto que el usuario pega para clasificar un error se procesa en memoria, se reduce a un código conocido y se descarta. No se guarda ni se escribe en logs.
 - El ZIP contiene referencias lógicas a tres conectores estándar y no incluye IDs de conexiones, creador, tenant, secretos ni tokens.
 - Atlas solo abre la página principal HTTPS documentada de Power Automate. No construye llamadas a endpoints internos ni automatiza clics, contraseñas, consentimiento o MFA.
-- Reintentar una comprobación no vuelve a importar. Antes de importar otra vez se debe revisar si `AtlasBridge` ya existe y actualizar esa misma solución para evitar duplicados.
+- Reintentar una comprobación no vuelve a importar. Antes de importar otra vez se debe revisar si ya existe la solución `AtlasBridge_<id de instalación>` de esta instalación y actualizar esa misma solución para evitar duplicados.
+
+## Identidad por instalación en un entorno compartido
+
+El ZIP base `AtlasBridge_1_0_0_0.zip` sigue siendo una plantilla genérica (`UniqueName: AtlasBridge`, referencias `atlas_office365`, `atlas_teams`, `atlas_onedriveforbusiness`). Al pulsar **Instalar conector de Microsoft 365**, Atlas lo personaliza en el PC con el identificador persistente de la instalación (`%APPDATA%\com.capgemini.atlas-tracker\connector-installer\session.json`):
+
+- `UniqueName` → `AtlasBridge_<id>` (el nombre visible es `Atlas Bridge [<id>]`).
+- Referencias de conexión → `atlas_office365_<id>`, `atlas_teams_<id>`, `atlas_onedriveforbusiness_<id>`. Los conectores estándar (`shared_office365`, `shared_teams`, `shared_onedriveforbusiness`) no se modifican.
+- Los GUID de los dos flujos se derivan de forma determinística (SHA-256 del identificador de instalación + GUID original), así que la misma instalación siempre produce los mismos GUID y una actualización de Atlas se importa como nueva **versión** de la misma solución, no como otra solución.
+
+En un entorno empresarial con varios usuarios existirá una solución `AtlasBridge_<id>` por instalación de Atlas. Esto es intencional: cada usuario es dueño de sus propias referencias de conexión y la importación nunca intenta modificar componentes de otra persona.
 
 ## Desarrollo y validación del artefacto
 

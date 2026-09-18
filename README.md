@@ -98,7 +98,7 @@ Create one Microsoft Entra app registration for the team:
 
 The public client ID is injected at build time through `CIRCANA_AZURE_CLIENT_ID`; end users do not enter client or tenant identifiers.
 
-For tenants that block the Atlas Entra application, use the [portal-assisted Power Automate installer](power-automate/INSTALLER.md). It opens Microsoft's official portal and records user-confirmed setup stages without copying cookies, automating credentials or calling private endpoints.
+For tenants that block the Atlas Entra application, use the [portal-assisted Power Automate installer](power-automate/INSTALLER.md). It personalizes the bundled base solution with the persistent installation id — each Atlas installation imports its own `AtlasBridge_<id>` solution with its own connection references and derived workflow ids, so several users can share one Power Platform environment and Atlas upgrades update the same solution instead of creating another. It opens Microsoft's official portal and records user-confirmed setup stages without copying cookies, automating credentials or calling private endpoints.
 
 ## 📊 Tracker destinations
 
