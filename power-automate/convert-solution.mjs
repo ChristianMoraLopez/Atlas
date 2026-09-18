@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 
 const root = dirname(fileURLToPath(import.meta.url));
-const version = '1.12.0.0';
+const version = '1.13.0.0';
 const scheduled = {
   id: '8e5c1f84-dcbb-4a2c-9d2f-62e9c38105d2',
   name: 'Atlas - Export evidence to OneDrive',
@@ -134,15 +134,17 @@ a.Teams_evidence.actions.Filter_recent_chats = {
   },
   runAfter: { List_chats: ['Succeeded'] },
 };
-teamsLoop.foreach = "@take(body('Filter_recent_chats'),12)";
+teamsLoop.foreach = "@take(body('Filter_recent_chats'),25)";
 teamsLoop.runAfter = { Filter_recent_chats: ['Succeeded'] };
-teamsLoop.actions.Pace_Teams_requests = { type: 'Wait', inputs: { interval: { count: 5, unit: 'Second' } }, runAfter: {} };
+// Fixed pacing was removed: the exponential retry policy absorbs Teams throttling.
+// Connector pagination keeps the full chat list instead of an arbitrary first page.
+a.Teams_evidence.actions.List_chats.runtimeConfiguration = { paginationPolicy: { minimumItemCount: 500 } };
 const teamsRequest = teamsLoop.actions.Get_messages_in_chat;
 teamsRequest.inputs.parameters['$filter'] = "@concat('lastModifiedDateTime gt ',outputs('StartUtc'),' and lastModifiedDateTime lt ',outputs('EndUtc'))";
 teamsRequest.inputs.parameters['$orderby'] = 'lastModifiedDateTime desc';
-teamsRequest.inputs.parameters['$top'] = 20;
+teamsRequest.inputs.parameters['$top'] = 40;
 teamsRequest.inputs.retryPolicy = { type: 'exponential', count: 4, interval: 'PT10S', minimumInterval: 'PT5S', maximumInterval: 'PT1M' };
-teamsRequest.runAfter = { Pace_Teams_requests: ['Succeeded'] };
+teamsRequest.runAfter = {};
 calendar.Set_CalendarSourceReady = { type: 'SetVariable', inputs: { name: 'CalendarSourceReady', value: true }, runAfter: { Set_CalendarEvidence: ['Succeeded'] } };
 a.Mail_evidence.actions.Set_MailSourceReady = { type: 'SetVariable', inputs: { name: 'MailSourceReady', value: true }, runAfter: { Set_MailEvidence: ['Succeeded'] } };
 a.Teams_evidence.actions.Set_TeamsSourceReady = { type: 'SetVariable', inputs: { name: 'TeamsSourceReady', value: true }, runAfter: { For_each_chat: ['Succeeded'] } };

@@ -52,7 +52,7 @@ try {
     [xml] $types = Read-Entry '[Content_Types].xml'
     if ($solution.ImportExportXml.SolutionManifest.UniqueName -ne 'AtlasBridge') { throw 'Unexpected solution identity.' }
     if ($solution.ImportExportXml.SolutionManifest.Managed -ne '0') { throw 'Expected unmanaged solution.' }
-    if ($solution.ImportExportXml.SolutionManifest.Version -ne '1.12.0.0') { throw 'Unexpected version.' }
+    if ($solution.ImportExportXml.SolutionManifest.Version -ne '1.13.0.0') { throw 'Unexpected version.' }
 
     $rootIds = @($solution.ImportExportXml.SolutionManifest.RootComponents.RootComponent | ForEach-Object id | Sort-Object)
     if (($rootIds -join ',') -ne ((@($scheduledId, $eventId) | Sort-Object) -join ',')) { throw 'Unexpected solution root components.' }
@@ -124,11 +124,11 @@ try {
     $recentChats = $actions.Teams_evidence.actions.Filter_recent_chats
     if ($recentChats.type -ne 'Query' -or $recentChats.inputs.from -ne "@body('List_chats')?['value']" -or $recentChats.inputs.where -notmatch 'lastUpdatedDateTime.+StartUtc') { throw 'Scheduled Teams fallback must filter chats updated today.' }
     $teamsLoop = $actions.Teams_evidence.actions.For_each_chat
-    if ($teamsLoop.foreach -ne "@take(body('Filter_recent_chats'),12)" -or -not $teamsLoop.runAfter.Filter_recent_chats) { throw 'Scheduled Teams fallback must stay within the reviewed recent-chat bound.' }
-    $teamsPace = $teamsLoop.actions.Pace_Teams_requests
-    if ($teamsPace.type -ne 'Wait' -or $teamsPace.inputs.interval.count -lt 5 -or $teamsPace.inputs.interval.count -gt 30 -or $teamsPace.inputs.interval.unit -ne 'Second') { throw 'Scheduled Teams wait must respect the 5-30 second Power Automate interval.' }
+    if ($teamsLoop.foreach -ne "@take(body('Filter_recent_chats'),25)" -or -not $teamsLoop.runAfter.Filter_recent_chats) { throw 'Scheduled Teams fallback must stay within the reviewed recent-chat bound.' }
+    if ($teamsLoop.actions.Pace_Teams_requests) { throw 'Fixed pacing was removed; the exponential retry policy absorbs throttling.' }
+    if ($actions.Teams_evidence.actions.List_chats.runtimeConfiguration.paginationPolicy.minimumItemCount -lt 100) { throw 'List chats must follow connector pagination so active chats are not lost in an arbitrary first page.' }
     $teamsRequest = $teamsLoop.actions.Get_messages_in_chat.inputs.parameters
-    if ($teamsRequest.'$top' -gt 20 -or $teamsRequest.'$filter' -notmatch 'lastModifiedDateTime.+StartUtc.+lastModifiedDateTime.+EndUtc' -or $teamsRequest.'$orderby' -ne 'lastModifiedDateTime desc') { throw 'Scheduled Teams query must use the bounded date filter.' }
+    if ($teamsRequest.'$top' -gt 50 -or $teamsRequest.'$filter' -notmatch 'lastModifiedDateTime.+StartUtc.+lastModifiedDateTime.+EndUtc' -or $teamsRequest.'$orderby' -ne 'lastModifiedDateTime desc') { throw 'Scheduled Teams query must use the bounded date filter.' }
     $teamsRetry = $teamsLoop.actions.Get_messages_in_chat.inputs.retryPolicy
     if ($teamsRetry.type -ne 'exponential' -or $teamsRetry.count -lt 4 -or $teamsRetry.minimumInterval -ne 'PT5S') { throw 'Scheduled Teams requests must retry transient failures.' }
     if ($actions.Create_Atlas_evidence_file.inputs.parameters.folderPath -notmatch '/AtlasBridge/inbox/scheduled' -or $actions.Create_Atlas_evidence_file.inputs.parameters.folderPath -notmatch '/AtlasBridge/inbox/requested' -or $actions.Create_Atlas_evidence_file.inputs.parameters.name -notmatch 'AtlasInstallationId') { throw 'Invalid scheduled cloud inbox output.' }

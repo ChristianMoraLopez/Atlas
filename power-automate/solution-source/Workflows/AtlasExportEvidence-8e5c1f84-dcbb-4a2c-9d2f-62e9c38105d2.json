@@ -380,11 +380,16 @@
                 },
                 "authentication": "@parameters('$authentication')"
               },
+              "runtimeConfiguration": {
+                "paginationPolicy": {
+                  "minimumItemCount": 500
+                }
+              },
               "runAfter": {}
             },
             "For_each_chat": {
               "type": "Foreach",
-              "foreach": "@take(body('Filter_recent_chats'),12)",
+              "foreach": "@take(body('Filter_recent_chats'),25)",
               "actions": {
                 "Get_messages_in_chat": {
                   "type": "OpenApiConnection",
@@ -398,7 +403,7 @@
                       "chatId": "@items('For_each_chat')?['id']",
                       "$filter": "@concat('lastModifiedDateTime gt ',outputs('StartUtc'),' and lastModifiedDateTime lt ',outputs('EndUtc'))",
                       "$orderby": "lastModifiedDateTime desc",
-                      "$top": 20
+                      "$top": 40
                     },
                     "authentication": "@parameters('$authentication')",
                     "retryPolicy": {
@@ -409,11 +414,7 @@
                       "maximumInterval": "PT1M"
                     }
                   },
-                  "runAfter": {
-                    "Pace_Teams_requests": [
-                      "Succeeded"
-                    ]
-                  }
+                  "runAfter": {}
                 },
                 "Filter_messages_to_target_day": {
                   "type": "Query",
@@ -458,16 +459,6 @@
                       "repetitions": 1
                     }
                   }
-                },
-                "Pace_Teams_requests": {
-                  "type": "Wait",
-                  "inputs": {
-                    "interval": {
-                      "count": 5,
-                      "unit": "Second"
-                    }
-                  },
-                  "runAfter": {}
                 }
               },
               "runAfter": {
