@@ -125,7 +125,7 @@ try {
     if ($recentChats.type -ne 'Query' -or $recentChats.inputs.from -ne "@body('List_chats')?['value']" -or $recentChats.inputs.where -notmatch 'lastUpdatedDateTime.+StartUtc') { throw 'Scheduled Teams fallback must filter chats updated today.' }
     $teamsLoop = $actions.Teams_evidence.actions.For_each_chat
     if ($teamsLoop.foreach -ne "@take(body('Filter_recent_chats'),25)" -or -not $teamsLoop.runAfter.Filter_recent_chats) { throw 'Scheduled Teams fallback must stay within the reviewed recent-chat bound.' }
-    if ($teamsLoop.actions.Pace_Teams_requests) { throw 'Fixed pacing was removed; the exponential retry policy absorbs throttling.' }
+    if (Get-OptionalProperty $teamsLoop.actions 'Pace_Teams_requests') { throw 'Fixed pacing was removed; the exponential retry policy absorbs throttling.' }
     if ($actions.Teams_evidence.actions.List_chats.runtimeConfiguration.paginationPolicy.minimumItemCount -lt 100) { throw 'List chats must follow connector pagination so active chats are not lost in an arbitrary first page.' }
     $teamsRequest = $teamsLoop.actions.Get_messages_in_chat.inputs.parameters
     if ($teamsRequest.'$top' -gt 50 -or $teamsRequest.'$filter' -notmatch 'lastModifiedDateTime.+StartUtc.+lastModifiedDateTime.+EndUtc' -or $teamsRequest.'$orderby' -ne 'lastModifiedDateTime desc') { throw 'Scheduled Teams query must use the bounded date filter.' }
