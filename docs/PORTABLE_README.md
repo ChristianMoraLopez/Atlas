@@ -28,3 +28,15 @@ To rebuild a past day, choose it under **Workday** and press **Import selected d
 If anything fails, use the document button in the Atlas header to open the persistent diagnostic log. It is stored at `%APPDATA%\com.capgemini.atlas-tracker\logs\atlas.log`; Local AI process output is stored beside it as `local-ai.log`. Invalid settings are backed up and reset instead of causing a silent startup exit.
 
 **Atlas never invents interactions.** Atlas records finished meetings, concrete work tasks supported by mail or Teams evidence, and factual manual entries. A task can be assigned, in progress, or resolved. Reminders, invitations, automatic notices, and messages without a concrete task are excluded. AI summaries are written in English. Partial days are saved and a warning explains how many activities are missing from the daily minimum of three.
+
+## Development: release build on this machine
+
+There is no MSVC here; builds use the GNU toolchain plus the portable MinGW in `tmp/w64devkit-out/w64devkit`. Run `src-tauri/build-release-gnu.sh`, which executes:
+
+```
+cargo +stable-x86_64-pc-windows-gnu build --release --target x86_64-pc-windows-gnu --features tauri/custom-protocol
+```
+
+The `--features tauri/custom-protocol` flag is **mandatory**: Tauri picks dev vs production mode from that feature (tauri's `build.rs`: `let dev = !custom_protocol`). The Tauri CLI injects it automatically, but `Cargo.toml` intentionally keeps `tauri = { version = "2", features = [] }`, so a plain `cargo build --release` embeds the devUrl `http://127.0.0.1:1420` instead of the `dist/` assets and the portable exe shows `ERR_CONNECTION_REFUSED` (this broke v0.2.24 and the first v0.2.25 upload).
+
+Verification after every release build is **obligatory**: copy the exe to `output/portable/Atlas.exe`, launch it with `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9229`, and check `http://127.0.0.1:9229/json`. The page URL must be `http://tauri.localhost/` (never `http://127.0.0.1:1420`) and the title `Atlas — Circana Interactions Tracker`. Checking only that the process does not crash is not enough. Kill the process when done.
