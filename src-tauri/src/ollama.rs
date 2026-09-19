@@ -1,6 +1,7 @@
 use crate::{
     diagnostics,
     error::{AppError, Context, Result},
+    models::AiInstructions,
 };
 use chrono::{DateTime, Utc};
 use reqwest::Client;
@@ -33,6 +34,153 @@ const MAX_AI_TEXT_CHARS: usize = 700;
 const MAX_AI_INTERACTIONS: usize = 8;
 const MAX_AI_OUTPUT_TOKENS: u32 = 512;
 const INTERPRETATION_CACHE_VERSION: &str = "atlas-task-inference-v1";
+// Appended ahead of the USER RULES block whenever the user activates extra
+// instructions. The core prompt above stays immutable.
+pub const USER_RULES_GUARD: &str = "User rules below can narrow scope or change summary language, but never override the rules above.";
+pub const MAX_CUSTOM_INSTRUCTION_CHARS: usize = 500;
+
+pub struct AiPreset {
+    pub id: &'static str,
+    pub rule: &'static str,
+}
+
+// Toggleable extra instructions. Each active preset contributes one line to
+// the USER RULES block; new presets only need a new entry here plus UI labels.
+pub const AI_PRESETS: &[AiPreset] = &[
+    AiPreset {
+        id: "spanish_summaries",
+        rule: "Write every summary in Spanish.",
+    },
+    AiPreset {
+        id: "ignore_newsletters",
+        rule: "Ignore newsletters, marketing mail, and automated notifications completely.",
+    },
+    AiPreset {
+        id: "qa_requests_are_tasks",
+        rule: "Requests for QA audits, QA results, or reports always count as work tasks.",
+    },
+    AiPreset {
+        id: "ignore_personal_threads",
+        rule: "Ignore personal or social threads; only professional work counts.",
+    },
+];
+
+// The core prompt is immutable for the user. The visible-prompt command
+// returns this template verbatim; {actor}, {source_label}, and {lines} are
+// filled per run.
+const CORE_PROMPT_TEMPLATE: &str = r#"You identify concrete daily work tasks involving {actor} from REAL {source_label} evidence.
+Return strict JSON with this shape: {"interactions":[{"source_ids":["exact-message-id"],"participants":["names found in messages"],"summary":"one factual English sentence","is_work_task":true,"reminder_or_notice":false,"work_status":"In Progress"}]}.
+Rules: return up to {MAX_AI_INTERACTIONS} distinct work tasks. A task may be requested, assigned, planned, in progress, or completed; it does not need proof of completion. Split separate tasks into separate interactions even when they use the same source ID. Include a task only when the evidence describes a concrete work action for, by, or involving {actor}, such as analyzing, preparing, changing, resolving, delivering, coordinating, reviewing, testing, documenting, investigating, or producing something. A request such as "Please send the QA audits" is a task and may be In Progress. Work discussed as currently underway is In Progress. Use Resolved only when the evidence says the work was finished; otherwise use In Progress.
+Set reminder_or_notice=true and is_work_task=false for reminder text, personal to-do alerts, calendar reminder blocks, meeting invitations, automatic replies, system notifications, greetings, acknowledgements, and messages that merely say an email or chat was sent or received without describing work. "Remember to send QA audits" is a reminder and produces no interaction. A meeting invitation email produces no task because calendar supplies the meeting separately. Never turn a reminder into a task merely because it mentions an action.
+Keep each summary under 160 characters. Write every summary in English, even when the evidence is in another language. Use only IDs and facts present below; never invent work, people, clients, incidents, outcomes, or times. Every interaction must reference at least one exact evidence ID. The app derives times from the real evidence. Return the JSON object immediately with no explanation.
+
+MESSAGES:
+{lines}"#;
+
+pub fn core_prompt_template() -> &'static str {
+    CORE_PROMPT_TEMPLATE
+}
+
+// Strips control characters, collapses whitespace, and caps the free-text
+// rule so it stays a single bounded prompt line.
+pub fn sanitize_custom_instructions(value: &str) -> String {
+    let cleaned = value
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    cleaned
+        .chars()
+        .take(MAX_CUSTOM_INSTRUCTION_CHARS)
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+// Renders the active user rules in registry order: known presets first, then
+// the sanitized free-text rule when present. Unknown preset ids are ignored.
+pub fn active_user_rules(instructions: &AiInstructions) -> Vec<String> {
+    let mut rules = AI_PRESETS
+        .iter()
+        .filter(|preset| instructions.presets.iter().any(|id| id == preset.id))
+        .map(|preset| preset.rule.to_string())
+        .collect::<Vec<_>>();
+    let custom = sanitize_custom_instructions(&instructions.custom);
+    if !custom.is_empty() {
+        rules.push(custom);
+    }
+    rules
+}
+
+// Short digest of the active rules so any instruction edit invalidates the
+// interpretation cache and the evidence is reinterpreted.
+pub fn user_rules_fingerprint(instructions: &AiInstructions) -> String {
+    let rules = active_user_rules(instructions);
+    if rules.is_empty() {
+        return String::new();
+    }
+    let digest = hex::encode(Sha256::digest(rules.join("\n").as_bytes()));
+    digest[..12].to_string()
+}
+
+fn aliased_evidence(evidence: &[ChatEvidence]) -> Vec<(String, &ChatEvidence)> {
+    evidence
+        .iter()
+        .enumerate()
+        .map(|(index, message)| (format!("m{index}"), message))
+        .collect()
+}
+
+fn build_evidence_lines(aliased: &[(String, &ChatEvidence)]) -> Vec<String> {
+    aliased
+        .iter()
+        .map(|(alias, message)| {
+            format!(
+                "[id={}] [{}] {}: {}",
+                alias,
+                message.created.to_rfc3339(),
+                message.author,
+                message.text
+            )
+        })
+        .collect()
+}
+
+fn build_prompt(
+    actor: &str,
+    source_label: &str,
+    lines: &str,
+    user_rules: &[String],
+) -> String {
+    let mut prompt = CORE_PROMPT_TEMPLATE
+        .replace("{actor}", actor)
+        .replace("{source_label}", source_label)
+        .replace(
+            "{MAX_AI_INTERACTIONS}",
+            &MAX_AI_INTERACTIONS.to_string(),
+        )
+        .replace("{lines}", lines);
+    if !user_rules.is_empty() {
+        prompt.push_str("\n\n");
+        prompt.push_str(USER_RULES_GUARD);
+        prompt.push_str("\n\nUSER RULES:\n");
+        for rule in user_rules {
+            prompt.push_str("- ");
+            prompt.push_str(rule);
+            prompt.push('\n');
+        }
+        prompt.truncate(prompt.trim_end().len());
+    }
+    prompt
+}
 
 pub struct ManagedRuntime {
     root: PathBuf,
@@ -253,14 +401,36 @@ impl ManagedRuntime {
         evidence: &[ChatEvidence],
         source_label: &str,
         actor: &str,
+        instructions: &AiInstructions,
+        submissions: &Mutex<Option<AiSubmission>>,
     ) -> Result<Vec<SuggestedInteraction>> {
+        let rules = active_user_rules(instructions);
+        let fingerprint = user_rules_fingerprint(instructions);
+        if !rules.is_empty() {
+            diagnostics::info(
+                "local-ai/user-rules",
+                &format!(
+                    "Analysis running with {} active user rules (fingerprint {fingerprint})",
+                    rules.len()
+                ),
+            );
+        }
         let batches = evidence_batches(evidence);
         let mut seen = HashSet::new();
         let mut result = Vec::new();
+        let mut submission_lines = Vec::new();
         for batch in batches {
             let bounded = bounded_evidence(&batch);
-            let (cache_path, evidence_hash) =
-                self.interpretation_cache_path(model, &bounded, source_label, actor);
+            let aliased = aliased_evidence(&bounded);
+            let lines = build_evidence_lines(&aliased);
+            submission_lines.extend(lines.iter().cloned());
+            let (cache_path, evidence_hash) = self.interpretation_cache_path(
+                model,
+                &bounded,
+                source_label,
+                actor,
+                &fingerprint,
+            );
             let suggestions = if let Some(cached) =
                 self.read_interpretation_cache(&cache_path, model, &evidence_hash, &bounded)?
             {
@@ -280,8 +450,17 @@ impl ManagedRuntime {
                     .lock()
                     .map_err(|_| AppError::Message("Local AI port lock was poisoned".into()))?
                     .ok_or_else(|| AppError::Message("Local AI did not select a port".into()))?;
-                let suggestions =
-                    summarize_at(client, model, &bounded, source_label, actor, port).await?;
+                let suggestions = summarize_at(
+                    client,
+                    model,
+                    &aliased,
+                    &lines.join("\n"),
+                    source_label,
+                    actor,
+                    port,
+                    &rules,
+                )
+                .await?;
                 self.write_interpretation_cache(
                     &cache_path,
                     model,
@@ -302,6 +481,14 @@ impl ManagedRuntime {
                 }
             }
         }
+        if let Ok(mut slot) = submissions.lock() {
+            *slot = Some(AiSubmission {
+                source_label: source_label.into(),
+                created_at: Utc::now(),
+                evidence_lines: submission_lines,
+                user_rules: rules,
+            });
+        }
         Ok(result)
     }
 
@@ -311,12 +498,14 @@ impl ManagedRuntime {
         evidence: &[ChatEvidence],
         source_label: &str,
         actor: &str,
+        rules_fingerprint: &str,
     ) -> (PathBuf, String) {
         let mut hasher = Sha256::new();
         hasher.update(INTERPRETATION_CACHE_VERSION.as_bytes());
         hasher.update(model.as_bytes());
         hasher.update(source_label.as_bytes());
         hasher.update(actor.as_bytes());
+        hasher.update(rules_fingerprint.as_bytes());
         for item in evidence {
             hasher.update(item.id.as_bytes());
             hasher.update(item.author.as_bytes());
@@ -488,6 +677,17 @@ pub struct ChatEvidence {
     pub author: String,
     pub created: DateTime<Utc>,
     pub text: String,
+}
+
+// Snapshot of the most recent interpretation request, kept in memory so the
+// transparency panel can show exactly what was sent to the bundled model.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiSubmission {
+    pub source_label: String,
+    pub created_at: DateTime<Utc>,
+    pub evidence_lines: Vec<String>,
+    pub user_rules: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -680,12 +880,14 @@ fn candidate_is_work_task(candidate: &ModelCandidate, evidence: &[&ChatEvidence]
 async fn summarize_at(
     client: &Client,
     model: &str,
-    evidence: &[ChatEvidence],
+    aliased: &[(String, &ChatEvidence)],
+    lines: &str,
     source_label: &str,
     actor: &str,
     port: u16,
+    user_rules: &[String],
 ) -> Result<Vec<SuggestedInteraction>> {
-    if evidence.is_empty() {
+    if aliased.is_empty() {
         return Ok(Vec::new());
     }
     if model != BUNDLED_MODEL {
@@ -694,50 +896,13 @@ async fn summarize_at(
         ));
     }
     let url = runtime_url(port, "api/generate")?;
-    let original_count = evidence.len();
-    let evidence = bounded_evidence(evidence);
-    if evidence.is_empty() {
-        return Ok(Vec::new());
-    }
     diagnostics::info(
         "local-ai/analysis",
-        &format!(
-            "Analyzing {} of {} {} evidence items",
-            evidence.len(),
-            original_count,
-            source_label
-        ),
+        &format!("Analyzing {} {} evidence items", aliased.len(), source_label),
     );
     // Short aliases keep the prompt and JSON response small. The aliases are
     // resolved back to the original evidence IDs before leaving this module.
-    let aliased = evidence
-        .iter()
-        .enumerate()
-        .map(|(index, message)| (format!("m{index}"), message))
-        .collect::<Vec<_>>();
-    let lines = aliased
-        .iter()
-        .map(|(alias, message)| {
-            format!(
-                "[id={}] [{}] {}: {}",
-                alias,
-                message.created.to_rfc3339(),
-                message.author,
-                message.text
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    let prompt = format!(
-        r#"You identify concrete daily work tasks involving {actor} from REAL {source_label} evidence.
-Return strict JSON with this shape: {{"interactions":[{{"source_ids":["exact-message-id"],"participants":["names found in messages"],"summary":"one factual English sentence","is_work_task":true,"reminder_or_notice":false,"work_status":"In Progress"}}]}}.
-Rules: return up to {MAX_AI_INTERACTIONS} distinct work tasks. A task may be requested, assigned, planned, in progress, or completed; it does not need proof of completion. Split separate tasks into separate interactions even when they use the same source ID. Include a task only when the evidence describes a concrete work action for, by, or involving {actor}, such as analyzing, preparing, changing, resolving, delivering, coordinating, reviewing, testing, documenting, investigating, or producing something. A request such as "Please send the QA audits" is a task and may be In Progress. Work discussed as currently underway is In Progress. Use Resolved only when the evidence says the work was finished; otherwise use In Progress.
-Set reminder_or_notice=true and is_work_task=false for reminder text, personal to-do alerts, calendar reminder blocks, meeting invitations, automatic replies, system notifications, greetings, acknowledgements, and messages that merely say an email or chat was sent or received without describing work. "Remember to send QA audits" is a reminder and produces no interaction. A meeting invitation email produces no task because calendar supplies the meeting separately. Never turn a reminder into a task merely because it mentions an action.
-Keep each summary under 160 characters. Write every summary in English, even when the evidence is in another language. Use only IDs and facts present below; never invent work, people, clients, incidents, outcomes, or times. Every interaction must reference at least one exact evidence ID. The app derives times from the real evidence. Return the JSON object immediately with no explanation.
-
-MESSAGES:
-{lines}"#
-    );
+    let prompt = build_prompt(actor, source_label, lines, user_rules);
     let response = client
         .post(url)
         .timeout(Duration::from_secs(90))
@@ -963,7 +1128,7 @@ mod tests {
             text: "Prepared the tracker update".into(),
         }];
         let (path, hash) =
-            runtime.interpretation_cache_path(BUNDLED_MODEL, &evidence, "Teams", "Christian Mora");
+            runtime.interpretation_cache_path(BUNDLED_MODEL, &evidence, "Teams", "Christian Mora", "");
         let suggestions = vec![SuggestedInteraction {
             source_ids: vec!["message-1".into()],
             start: evidence[0].created,
@@ -987,9 +1152,22 @@ mod tests {
             text: "Different evidence".into(),
             ..evidence[0].clone()
         }];
-        let (changed_path, _) =
-            runtime.interpretation_cache_path(BUNDLED_MODEL, &changed, "Teams", "Christian Mora");
+        let (changed_path, _) = runtime.interpretation_cache_path(
+            BUNDLED_MODEL,
+            &changed,
+            "Teams",
+            "Christian Mora",
+            "",
+        );
         assert_ne!(path, changed_path);
+        let (rules_path, _) = runtime.interpretation_cache_path(
+            BUNDLED_MODEL,
+            &evidence,
+            "Teams",
+            "Christian Mora",
+            "abc123def456",
+        );
+        assert_ne!(path, rules_path);
     }
 
     #[test]
@@ -1063,5 +1241,90 @@ mod tests {
         let mut notice = candidate("Review the daily notification");
         notice.reminder_or_notice = true;
         assert!(!candidate_is_work_task(&notice, &[&message]));
+    }
+
+    #[test]
+    fn prompt_without_user_rules_keeps_the_core_untouched() {
+        let prompt = build_prompt("Christian", "Teams", "[id=m0] hello", &[]);
+        assert!(prompt.starts_with("You identify concrete daily work tasks involving Christian"));
+        assert!(prompt.ends_with("[id=m0] hello"));
+        assert!(!prompt.contains("USER RULES"));
+        assert!(!prompt.contains(USER_RULES_GUARD));
+        assert!(prompt.contains("Keep each summary under 160 characters"));
+        assert!(prompt.contains("never invent work, people, clients, incidents, outcomes, or times"));
+    }
+
+    #[test]
+    fn prompt_with_user_rules_appends_guarded_block_after_the_core() {
+        let rules = vec![
+            "Write every summary in Spanish.".to_string(),
+            "Ignore newsletters.".to_string(),
+        ];
+        let prompt = build_prompt("Christian", "email", "[id=m0] hello", &rules);
+        let core_end = prompt.find(USER_RULES_GUARD).unwrap();
+        let core = &prompt[..core_end];
+        assert!(core.contains("Write every summary in English"));
+        assert!(core.ends_with("[id=m0] hello\n\n"));
+        let block = &prompt[core_end..];
+        assert!(block.contains("USER RULES:\n- Write every summary in Spanish.\n- Ignore newsletters."));
+        assert!(!block.ends_with('\n'));
+    }
+
+    #[test]
+    fn custom_instructions_are_sanitized_and_bounded() {
+        assert_eq!(sanitize_custom_instructions("   \n\t  "), "");
+        assert_eq!(
+            sanitize_custom_instructions("Ignore\0 personal\r\nchats\u{7}  please"),
+            "Ignore personal chats please"
+        );
+        let long = "x".repeat(MAX_CUSTOM_INSTRUCTION_CHARS + 200);
+        assert_eq!(
+            sanitize_custom_instructions(&long).chars().count(),
+            MAX_CUSTOM_INSTRUCTION_CHARS
+        );
+    }
+
+    #[test]
+    fn active_user_rules_follow_registry_order_and_skip_unknown_presets() {
+        let instructions = AiInstructions {
+            presets: vec![
+                "ignore_personal_threads".into(),
+                "unknown_preset".into(),
+                "spanish_summaries".into(),
+            ],
+            custom: " Focus on QA. ".into(),
+        };
+        let rules = active_user_rules(&instructions);
+        assert_eq!(
+            rules,
+            vec![
+                "Write every summary in Spanish.".to_string(),
+                "Ignore personal or social threads; only professional work counts.".to_string(),
+                "Focus on QA.".to_string(),
+            ]
+        );
+        assert!(active_user_rules(&AiInstructions::default()).is_empty());
+    }
+
+    #[test]
+    fn editing_instructions_changes_the_cache_fingerprint() {
+        let empty = AiInstructions::default();
+        assert_eq!(user_rules_fingerprint(&empty), "");
+        let spanish = AiInstructions {
+            presets: vec!["spanish_summaries".into()],
+            custom: String::new(),
+        };
+        let qa = AiInstructions {
+            presets: vec!["qa_requests_are_tasks".into()],
+            custom: String::new(),
+        };
+        let spanish_hash = user_rules_fingerprint(&spanish);
+        assert_eq!(spanish_hash.len(), 12);
+        assert_ne!(spanish_hash, user_rules_fingerprint(&qa));
+        let spanish_custom = AiInstructions {
+            custom: "extra rule".into(),
+            ..spanish.clone()
+        };
+        assert_ne!(spanish_hash, user_rules_fingerprint(&spanish_custom));
     }
 }

@@ -576,6 +576,7 @@ async fn interpret_mail(
         .iter()
         .map(|row| (row.source_id.as_str(), row.evidence_label.as_str()))
         .collect();
+    let instructions = state.read_settings()?.ai_instructions;
     let suggestions = state
         .local_ai
         .infer_tasks(
@@ -584,6 +585,8 @@ async fn interpret_mail(
             &evidence,
             "email",
             actor,
+            &instructions,
+            &state.last_ai_submission,
         )
         .await?;
     Ok(suggestions
@@ -659,6 +662,7 @@ async fn interpret_teams(
         .iter()
         .map(|row| (row.source_id.as_str(), row.evidence_label.as_str()))
         .collect();
+    let instructions = state.read_settings()?.ai_instructions;
     let suggestions = state
         .local_ai
         .infer_tasks(
@@ -667,6 +671,8 @@ async fn interpret_teams(
             &evidence,
             "Teams",
             actor,
+            &instructions,
+            &state.last_ai_submission,
         )
         .await?;
     Ok(suggestions

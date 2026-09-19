@@ -51,6 +51,24 @@ pub enum AutomationMode {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct AiInstructions {
+    #[serde(default)]
+    pub presets: Vec<String>,
+    #[serde(default)]
+    pub custom: String,
+}
+
+impl Default for AiInstructions {
+    fn default() -> Self {
+        Self {
+            presets: Vec::new(),
+            custom: String::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct TrackerDestination {
     pub kind: TrackerDestinationKind,
     pub value: String,
@@ -88,6 +106,8 @@ pub struct AppStatus {
     pub auto_sync: bool,
     pub auto_sync_time: String,
     pub automation_mode: AutomationMode,
+    pub language: String,
+    pub ai_instructions: AiInstructions,
     pub scheduled_launch: bool,
     pub log_path: String,
 }
@@ -111,6 +131,10 @@ pub struct Settings {
     pub auto_sync_time: String,
     #[serde(default)]
     pub automation_mode: AutomationMode,
+    #[serde(default = "default_language")]
+    pub language: String,
+    #[serde(default)]
+    pub ai_instructions: AiInstructions,
 }
 
 fn default_auto_sync() -> bool {
@@ -119,6 +143,10 @@ fn default_auto_sync() -> bool {
 
 fn default_auto_sync_time() -> String {
     crate::automation::DEFAULT_DAILY_TIME.into()
+}
+
+fn default_language() -> String {
+    "es".into()
 }
 
 impl Default for Settings {
@@ -133,6 +161,8 @@ impl Default for Settings {
             auto_sync: default_auto_sync(),
             auto_sync_time: default_auto_sync_time(),
             automation_mode: AutomationMode::default(),
+            language: default_language(),
+            ai_instructions: AiInstructions::default(),
         }
     }
 }

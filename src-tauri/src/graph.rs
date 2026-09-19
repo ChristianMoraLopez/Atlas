@@ -431,9 +431,18 @@ async fn mail(
         }
     }
     let real_ids: HashSet<&str> = evidence.iter().map(|item| item.id.as_str()).collect();
+    let instructions = state.read_settings()?.ai_instructions;
     let suggestions = state
         .local_ai
-        .infer_tasks(&state.http, model, &evidence, "email", actor)
+        .infer_tasks(
+            &state.http,
+            model,
+            &evidence,
+            "email",
+            actor,
+            &instructions,
+            &state.last_ai_submission,
+        )
         .await?;
     Ok(suggestions
         .into_iter()
@@ -568,9 +577,18 @@ async fn teams(
             }
         }
     }
+    let instructions = state.read_settings()?.ai_instructions;
     let suggestions = state
         .local_ai
-        .infer_tasks(&state.http, model, &evidence, "Teams", actor)
+        .infer_tasks(
+            &state.http,
+            model,
+            &evidence,
+            "Teams",
+            actor,
+            &instructions,
+            &state.last_ai_submission,
+        )
         .await?;
     let real_ids: HashSet<&str> = evidence.iter().map(|e| e.id.as_str()).collect();
     let mut result = Vec::new();

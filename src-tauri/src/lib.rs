@@ -16,8 +16,8 @@ mod tracker_writer;
 use crate::{
     error::{AppError, Result},
     models::{
-        AppStatus, AutomationMode, ExportResult, ExtractionResult, Interaction, SourceKind,
-        SourceMode, TrackerDestination, TrackerDestinationKind, UserProfile,
+        AiInstructions, AppStatus, AutomationMode, ExportResult, ExtractionResult, Interaction,
+        SourceKind, SourceMode, TrackerDestination, TrackerDestinationKind, UserProfile,
     },
     state::AppState,
 };
@@ -119,6 +119,8 @@ async fn build_status(state: &AppState) -> Result<AppStatus> {
         auto_sync: settings.auto_sync,
         auto_sync_time: settings.auto_sync_time,
         automation_mode: settings.automation_mode,
+        language: settings.language,
+        ai_instructions: settings.ai_instructions,
         scheduled_launch: state.background_launch,
         log_path: diagnostics::path(),
     })
@@ -247,6 +249,81 @@ fn save_profile(state: tauri::State<'_, AppState>, mut profile: UserProfile) -> 
         profile.area = "Manufacturing".into();
     }
     state.update_settings(|settings| settings.profile = Some(profile))
+}
+
+#[tauri::command]
+async fn save_ai_instructions(
+    state: tauri::State<'_, AppState>,
+    presets: Vec<String>,
+    custom: String,
+) -> Result<AppStatus> {
+    let mut known: Vec<String> = Vec::new();
+    for preset in &presets {
+        let id = preset.trim();
+        if ollama::AI_PRESETS.iter().any(|entry| entry.id == id)
+            && !known.iter().any(|saved| saved == id)
+        {
+            known.push(id.to_string());
+        }
+    }
+    let custom = ollama::sanitize_custom_instructions(&custom);
+    state.update_settings(|settings| {
+        settings.ai_instructions = AiInstructions {
+            presets: known,
+            custom,
+        };
+    })?;
+    diagnostics::info("settings", "Saved AI user instructions");
+    build_status(&state).await
+}
+
+#[tauri::command]
+async fn save_language(state: tauri::State<'_, AppState>, language: String) -> Result<AppStatus> {
+    let language = language.trim().to_ascii_lowercase();
+    if language != "es" && language != "en" {
+        return Err(AppError::Message("Unsupported interface language.".into()));
+    }
+    state.update_settings(|settings| settings.language = language)?;
+    build_status(&state).await
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AiPromptInfo {
+    core_template: String,
+    presets: Vec<AiPresetInfo>,
+    instructions: AiInstructions,
+    active_rules: Vec<String>,
+    last_submission: Option<ollama::AiSubmission>,
+}
+
+#[derive(serde::Serialize)]
+struct AiPresetInfo {
+    id: &'static str,
+    rule: &'static str,
+}
+
+#[tauri::command]
+fn get_ai_prompt_info(state: tauri::State<'_, AppState>) -> Result<AiPromptInfo> {
+    let settings = state.read_settings()?;
+    let last_submission = state
+        .last_ai_submission
+        .lock()
+        .map_err(|_| AppError::Message("AI submission lock was poisoned".into()))?
+        .clone();
+    Ok(AiPromptInfo {
+        core_template: ollama::core_prompt_template().into(),
+        presets: ollama::AI_PRESETS
+            .iter()
+            .map(|preset| AiPresetInfo {
+                id: preset.id,
+                rule: preset.rule,
+            })
+            .collect(),
+        active_rules: ollama::active_user_rules(&settings.ai_instructions),
+        instructions: settings.ai_instructions,
+        last_submission,
+    })
 }
 
 fn normalize_local_destination(value: String, existing: bool) -> Result<TrackerDestination> {
@@ -946,6 +1023,9 @@ pub fn run() {
             sign_in,
             sign_out,
             save_profile,
+            save_ai_instructions,
+            save_language,
+            get_ai_prompt_info,
             save_tracker_destination,
             log_frontend_error,
             background_frontend_ready,

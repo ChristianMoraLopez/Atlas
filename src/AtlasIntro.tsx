@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useT } from "./i18n";
 
 export default function AtlasIntro({ children }: { children: ReactNode }) {
+  const t = useT();
   const [leaving, setLeaving] = useState(false);
   const [finished, setFinished] = useState(false);
   const close = useCallback(() => {
@@ -18,7 +20,7 @@ export default function AtlasIntro({ children }: { children: ReactNode }) {
 
   return <>
     <div className={finished ? "" : "pointer-events-none select-none"} aria-hidden={!finished}>{children}</div>
-    {!finished && <section className={`atlas-intro ${leaving ? "atlas-intro--leaving" : ""}`} aria-label="Atlas is starting">
+    {!finished && <section className={`atlas-intro ${leaving ? "atlas-intro--leaving" : ""}`} aria-label={t("Atlas is starting")}>
       <div className="atlas-intro__glow atlas-intro__glow--one" />
       <div className="atlas-intro__glow atlas-intro__glow--two" />
       <div className="atlas-intro__grid" />
@@ -36,7 +38,7 @@ export default function AtlasIntro({ children }: { children: ReactNode }) {
         </div>
         <p className="atlas-intro__tagline">MEET · DO · RECORD</p>
       </div>
-      <button className="atlas-intro__skip" onClick={close}>Skip <span>Esc</span></button>
+      <button className="atlas-intro__skip" onClick={close}>{t("Skip")} <span>Esc</span></button>
     </section>}
   </>;
 }

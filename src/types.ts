@@ -25,6 +25,31 @@ export interface TrackerDestination {
   writerPackagePath?: string;
 }
 
+export interface AiInstructions {
+  presets: string[];
+  custom: string;
+}
+
+export interface AiPresetInfo {
+  id: string;
+  rule: string;
+}
+
+export interface AiSubmission {
+  sourceLabel: string;
+  createdAt: string;
+  evidenceLines: string[];
+  userRules: string[];
+}
+
+export interface AiPromptInfo {
+  coreTemplate: string;
+  presets: AiPresetInfo[];
+  instructions: AiInstructions;
+  activeRules: string[];
+  lastSubmission?: AiSubmission;
+}
+
 export interface AppStatus {
   configured: boolean;
   signedIn: boolean;
@@ -40,6 +65,8 @@ export interface AppStatus {
   autoSync: boolean;
   autoSyncTime: string;
   automationMode: AutomationMode;
+  language: string;
+  aiInstructions: AiInstructions;
   scheduledLaunch: boolean;
   logPath: string;
 }

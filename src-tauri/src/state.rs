@@ -2,7 +2,7 @@ use crate::{
     diagnostics,
     error::{Context, Result},
     models::{CachedAccessToken, Interaction, MicrosoftConfig, Settings},
-    ollama::ManagedRuntime,
+    ollama::{AiSubmission, ManagedRuntime},
 };
 use std::{
     collections::HashMap,
@@ -26,6 +26,7 @@ pub struct AppState {
     pub frontend_ready: AtomicBool,
     pub background_launch: bool,
     pub foreground_requested: AtomicBool,
+    pub last_ai_submission: Mutex<Option<AiSubmission>>,
 }
 
 impl AppState {
@@ -89,6 +90,7 @@ impl AppState {
             frontend_ready: AtomicBool::new(false),
             background_launch,
             foreground_requested: AtomicBool::new(false),
+            last_ai_submission: Mutex::new(None),
         })
     }
 

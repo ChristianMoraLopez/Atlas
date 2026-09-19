@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AppStatus, AutomationMode, ExportResult, ExtractionResult, Interaction, TrackerDestination, UserProfile } from "./types";
+import type { AiPromptInfo, AppStatus, AutomationMode, ExportResult, ExtractionResult, Interaction, TrackerDestination, UserProfile } from "./types";
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   try {
@@ -16,6 +16,9 @@ export const api = {
   signIn: () => call<AppStatus>("sign_in"),
   signOut: () => call<void>("sign_out"),
   saveProfile: (profile: UserProfile) => call<void>("save_profile", { profile }),
+  saveAiInstructions: (presets: string[], custom: string) => call<AppStatus>("save_ai_instructions", { presets, custom }),
+  saveLanguage: (language: string) => call<AppStatus>("save_language", { language }),
+  getAiPromptInfo: () => call<AiPromptInfo>("get_ai_prompt_info"),
   saveDestination: (destination: TrackerDestination, autoSync: boolean, autoSyncTime: string, automationMode: AutomationMode) =>
     call<AppStatus>("save_tracker_destination", { destination, autoSync, autoSyncTime, automationMode }),
   extract: (date: string, includeEmail: boolean, includeTeams: boolean, timezone: string) =>
