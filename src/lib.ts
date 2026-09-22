@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AiPromptInfo, AppStatus, AutomationMode, ExportResult, ExtractionResult, Interaction, QaConfig, QaCase, QaExportResult, QaExtractionResult, QaWatchStatus, TrackerDestination, UserProfile } from "./types";
+import type { AiPromptInfo, AppStatus, AutomationMode, ExportResult, ExtractionResult, Interaction, QaConfig, QaCase, QaExportResult, QaExtractionResult, QaLastRun, QaWatchStatus, TrackerDestination, UserProfile } from "./types";
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   try {
@@ -38,10 +38,11 @@ export const api = {
   logError: (context: string, message: string) => invoke<void>("log_frontend_error", { context, message }),
   qaGetConfig: () => call<QaConfig>("qa_get_config"),
   qaSaveConfig: (config: QaConfig) => call<void>("qa_save_config", { config }),
-  qaExtract: () => call<QaExtractionResult>("qa_extract_cases"),
+  qaExtract: (historical: boolean, source: string) => call<QaExtractionResult>("qa_extract_cases", { historical, source }),
   qaCheckNewMail: () => call<QaWatchStatus>("qa_check_new_mail"),
   qaExport: (cases: QaCase[]) => call<QaExportResult>("qa_export_cases", { cases }),
-  qaOpenFolder: () => call<void>("qa_open_output_folder")
+  qaOpenFolder: () => call<void>("qa_open_output_folder"),
+  qaLoadLastRun: () => call<QaLastRun | null>("qa_load_last_run")
 };
 
 export function localDate(): string {

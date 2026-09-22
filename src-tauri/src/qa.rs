@@ -11,7 +11,7 @@ use crate::{
     state::AppState,
 };
 use base64::Engine;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Datelike, Duration, Utc};
 use regex::Regex;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -20,6 +20,7 @@ use url::Url;
 
 const GRAPH_ROOT: &str = "https://graph.microsoft.com/v1.0";
 const MAX_CONVERSATIONS_PER_AUDITEE: usize = 10;
+const MAX_CONVERSATIONS_HISTORICAL: usize = 50;
 const MAX_MESSAGES_PER_CONVERSATION: usize = 40;
 const MAX_ATTACHMENT_BYTES: i64 = 8 * 1024 * 1024;
 const BODY_BUDGET: usize = 1200;
@@ -167,22 +168,39 @@ struct ConversationEvidence {
     messages: Vec<MessageEvidence>,
 }
 
+fn subject_matches(subject: &str, keywords: &[String]) -> bool {
+    let lower = subject.to_ascii_lowercase();
+    keywords
+        .iter()
+        .map(|k| k.trim().to_ascii_lowercase())
+        .filter(|k| !k.is_empty())
+        .any(|k| lower.contains(&k))
+}
+
 async fn list_auditee_conversations(
     state: &AppState,
     token: &str,
     auditee: &QaAuditee,
-    start: DateTime<Utc>,
+    start: Option<DateTime<Utc>>,
+    cap: usize,
+    keywords: &[String],
 ) -> Result<Vec<String>> {
-    let filter = format!(
-        "from/emailAddress/address eq '{}' and receivedDateTime ge {}",
-        escape_filter(&auditee.email),
-        start.to_rfc3339()
-    );
+    let filter = match start {
+        Some(start) => format!(
+            "from/emailAddress/address eq '{}' and receivedDateTime ge {}",
+            escape_filter(&auditee.email),
+            start.to_rfc3339()
+        ),
+        None => format!(
+            "from/emailAddress/address eq '{}'",
+            escape_filter(&auditee.email)
+        ),
+    };
     let mut url = qa_url(
         "/me/messages",
         &[
             ("$filter", filter),
-            ("$select", "id,conversationId,receivedDateTime".into()),
+            ("$select", "id,subject,conversationId,receivedDateTime".into()),
             ("$orderby", "receivedDateTime desc".into()),
             ("$top", "50".into()),
         ],
@@ -192,13 +210,17 @@ async fn list_auditee_conversations(
     loop {
         let page: Page<QaMailMessage> = graph_get(state, token, url).await?;
         for message in page.value {
+            // Only QA-related topics are audited (e.g. subject mentions "QA").
+            if !subject_matches(message.subject.as_deref().unwrap_or(""), keywords) {
+                continue;
+            }
             if let Some(id) = message.conversation_id {
                 if seen.insert(id.clone()) {
                     conversations.push(id);
                 }
             }
         }
-        if conversations.len() >= MAX_CONVERSATIONS_PER_AUDITEE {
+        if conversations.len() >= cap {
             break;
         }
         match page.next_link {
@@ -206,7 +228,7 @@ async fn list_auditee_conversations(
             None => break,
         }
     }
-    conversations.truncate(MAX_CONVERSATIONS_PER_AUDITEE);
+    conversations.truncate(cap);
     Ok(conversations)
 }
 
@@ -214,13 +236,16 @@ async fn fetch_conversation(
     state: &AppState,
     token: &str,
     conversation_id: &str,
-    start: DateTime<Utc>,
+    start: Option<DateTime<Utc>>,
 ) -> Result<ConversationEvidence> {
-    let filter = format!(
-        "conversationId eq '{}' and receivedDateTime ge {}",
-        escape_filter(conversation_id),
-        start.to_rfc3339()
-    );
+    let filter = match start {
+        Some(start) => format!(
+            "conversationId eq '{}' and receivedDateTime ge {}",
+            escape_filter(conversation_id),
+            start.to_rfc3339()
+        ),
+        None => format!("conversationId eq '{}'", escape_filter(conversation_id)),
+    };
     let mut url = qa_url(
         "/me/messages",
         &[
@@ -700,35 +725,71 @@ fn no_cases_case(auditee: &QaAuditee) -> QaCase {
 // Public entry points
 // ---------------------------------------------------------------------------
 
-pub async fn extract(state: &AppState, token: &str, model: &str) -> Result<QaExtractionResult> {
+pub async fn extract(
+    state: &AppState,
+    token: &str,
+    model: &str,
+    historical: bool,
+) -> Result<QaExtractionResult> {
     let config = state.read_settings()?.qa;
     if config.auditees.is_empty() {
         return Err(AppError::Message(
             "Add at least one person to the QA audit list first.".into(),
         ));
     }
-    let end = Utc::now();
-    let start = end - Duration::days(config.lookback_days.max(1) as i64);
+    // Historical mode audits everything QA-related the person has ever sent
+    // (only for people whose historical audit is still pending). Weekly mode
+    // covers the configured lookback window for everyone.
+    let auditees: Vec<&QaAuditee> = if historical {
+        config.auditees.iter().filter(|a| !a.historical_done).collect()
+    } else {
+        config.auditees.iter().collect()
+    };
+    if auditees.is_empty() {
+        return Err(AppError::Message(
+            "Everyone on the list already has their historical audit. To redo one, mark it as pending from the person's menu.".into(),
+        ));
+    }
+    let start = (!historical).then(|| Utc::now() - Duration::days(config.lookback_days.max(1) as i64));
+    let cap = if historical {
+        MAX_CONVERSATIONS_HISTORICAL
+    } else {
+        MAX_CONVERSATIONS_PER_AUDITEE
+    };
     let mut cases = Vec::new();
     let mut warnings = Vec::new();
-    for auditee in &config.auditees {
-        let conversations = match list_auditee_conversations(state, token, auditee, start).await {
-            Ok(ids) => ids,
-            Err(error) => {
-                warnings.push(format!(
-                    "Could not search mail from {}: {error}",
-                    auditee.email
-                ));
-                continue;
-            }
-        };
+    for auditee in &auditees {
+        let conversations =
+            match list_auditee_conversations(state, token, auditee, start, cap, &config.subject_keywords).await {
+                Ok(ids) => ids,
+                Err(error) => {
+                    warnings.push(format!(
+                        "Could not search mail from {}: {error}",
+                        auditee.email
+                    ));
+                    continue;
+                }
+            };
         if conversations.is_empty() {
-            warnings.push(format!(
-                "No QA cases found for {} in the last {} days.",
-                auditee.name, config.lookback_days
-            ));
+            warnings.push(if historical {
+                format!(
+                    "No historical QA conversations found for {}.",
+                    auditee.name
+                )
+            } else {
+                format!(
+                    "No QA cases found for {} in the last {} days.",
+                    auditee.name, config.lookback_days
+                )
+            });
             cases.push(no_cases_case(auditee));
             continue;
+        }
+        if conversations.len() >= cap {
+            warnings.push(format!(
+                "{} has more than {cap} QA conversations; only the {cap} most recent were audited.",
+                auditee.name
+            ));
         }
         for conversation_id in conversations {
             let conversation =
@@ -803,6 +864,11 @@ pub async fn check_new_mail(state: &AppState, token: &str) -> Result<QaWatchStat
     let checked_at = Utc::now();
     state.update_settings(|settings| {
         settings.qa.last_mail_check = Some(checked_at.to_rfc3339());
+        for name in &new_senders {
+            if !settings.qa.pending_watch.contains(name) {
+                settings.qa.pending_watch.push(name.clone());
+            }
+        }
     })?;
     Ok(QaWatchStatus {
         new_senders,
@@ -811,7 +877,62 @@ pub async fn check_new_mail(state: &AppState, token: &str) -> Result<QaWatchStat
 }
 
 // ---------------------------------------------------------------------------
-// Excel export (cumulative per analyst, one sheet per audit date)
+// Last-run cache (so scheduled/background runs can be reviewed later)
+// ---------------------------------------------------------------------------
+
+fn last_run_path(state: &AppState) -> PathBuf {
+    state.config_dir.join("qa-last-run.json")
+}
+
+pub fn save_last_run(
+    state: &AppState,
+    result: &QaExtractionResult,
+    source: &str,
+    historical: bool,
+) -> Result<()> {
+    let snapshot = crate::models::QaLastRun {
+        ran_at: Utc::now().to_rfc3339(),
+        source: source.into(),
+        historical,
+        result: result.clone(),
+    };
+    let path = last_run_path(state);
+    let temp = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+    fs::write(&temp, serde_json::to_vec_pretty(&snapshot)?)
+        .context("Unable to save the QA run snapshot")?;
+    fs::rename(&temp, &path).context("Unable to commit the QA run snapshot")?;
+    Ok(())
+}
+
+pub fn load_last_run(state: &AppState) -> Result<Option<crate::models::QaLastRun>> {
+    let path = last_run_path(state);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let snapshot = fs::read(&path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok());
+    if snapshot.is_none() {
+        diagnostics::error(
+            "qa/cache",
+            &format!("Ignored an invalid QA run snapshot at {}", path.display()),
+        );
+    }
+    Ok(snapshot)
+}
+
+/// ISO week label (e.g. "2026-W39") used for the per-week Excel sheets.
+fn week_label(date: &str) -> String {
+    chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
+        .map(|d| {
+            let week = d.iso_week();
+            format!("{}-W{:02}", week.year(), week.week())
+        })
+        .unwrap_or_else(|_| date.to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Excel export (cumulative per analyst, one sheet per audit week)
 // ---------------------------------------------------------------------------
 
 pub const AUTO_FAIL_LABELS: [(&str, &str); 6] = [
@@ -893,19 +1014,20 @@ pub fn export(config: &QaConfig, cases: &[QaCase]) -> Result<QaExportResult> {
         } else {
             umya_spreadsheet::new_file()
         };
-        // Group this analyst's cases by audit date; each date gets (or
-        // replaces) its own sheet so same-day reruns stay idempotent.
-        let mut by_date: HashMap<&str, Vec<&QaCase>> = HashMap::new();
+        // Group this analyst's cases by ISO week; each week gets (or
+        // replaces) its own sheet so same-week reruns stay idempotent.
+        let mut by_week: HashMap<String, Vec<&QaCase>> = HashMap::new();
         for case in analyst_cases {
-            by_date.entry(case.audit_date.as_str()).or_default().push(case);
+            by_week.entry(week_label(&case.audit_date)).or_default().push(case);
         }
-        let mut dates: Vec<&str> = by_date.keys().copied().collect();
-        dates.sort();
+        let mut weeks: Vec<String> = by_week.keys().cloned().collect();
+        weeks.sort();
         let mut first_sheet_of_new_book = !file.is_file();
-        for date in dates {
-            if book.get_sheet_by_name(date).is_some() {
-                book.remove_sheet_by_name(date)
-                    .context("Unable to refresh the QA sheet for the audit date")?;
+        for week in weeks {
+            let week = week.as_str();
+            if book.get_sheet_by_name(week).is_some() {
+                book.remove_sheet_by_name(week)
+                    .context("Unable to refresh the QA sheet for the audit week")?;
             }
             let reused_default = first_sheet_of_new_book
                 && book.get_sheet_by_name("Sheet1").is_some()
@@ -914,15 +1036,15 @@ pub fn export(config: &QaConfig, cases: &[QaCase]) -> Result<QaExportResult> {
                 let sheet = book.get_sheet_by_name_mut("Sheet1").ok_or_else(|| {
                     AppError::Message("Unable to prepare the QA worksheet.".into())
                 })?;
-                sheet.set_name(date);
+                sheet.set_name(week);
                 sheet
             } else {
-                book.new_sheet(date)
+                book.new_sheet(week)
                     .context("Unable to create the QA worksheet")?
             };
             first_sheet_of_new_book = false;
-            write_sheet(sheet, config, &by_date[date]);
-            written += by_date[date].len();
+            write_sheet(sheet, config, &by_week[week]);
+            written += by_week[week].len();
         }
         let temp = file.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
         umya_spreadsheet::writer::xlsx::write(&book, &temp)

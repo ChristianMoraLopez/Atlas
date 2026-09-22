@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
-  AlertCircle, Bell, Bot, Check, ChevronDown, FileSpreadsheet, FolderOpen,
-  Loader2, Mail, Plus, RefreshCw, Save, Search, Trash2, UserRound, X
+  AlertCircle, Bell, Bot, Check, ChevronDown, Clock, FileSpreadsheet, FolderOpen,
+  History, Loader2, Mail, Plus, RefreshCw, Save, Search, Trash2, UserRound, X
 } from "lucide-react";
-import { api } from "./lib";
+import { api, formatDateTime } from "./lib";
 import { useT } from "./i18n";
-import type { QaAuditee, QaCase, QaConfig } from "./types";
+import type { QaAuditee, QaCase, QaConfig, QaScheduleMode } from "./types";
 
 const YNA = ["Y", "N", "N/A"];
 const SENTIMENTS = ["Positive", "Neutral", "Negative"];
@@ -19,7 +19,7 @@ const AUTO_FAILS: [string, string][] = [
   ["no_cases", "No Cases Available for audit"],
 ];
 
-const emptyAuditee: QaAuditee = { name: "", email: "", customRules: "", watched: true };
+const emptyAuditee: QaAuditee = { name: "", email: "", customRules: "", watched: true, historicalDone: false };
 
 function Banner({ tone, message, onClose }: { tone: "error" | "info"; message: string; onClose?: () => void }) {
   const styles = tone === "error"
@@ -137,6 +137,60 @@ function CaseCard({ item, onChange }: { item: QaCase; onChange: (next: QaCase) =
   </div>;
 }
 
+const firedKey = (slot: string) => `qa-fired-${new Date().toISOString().slice(0, 10)}-${slot}`;
+const wasFired = (slot: string) => localStorage.getItem(firedKey(slot)) === "1";
+const markFired = (slot: string) => localStorage.setItem(firedKey(slot), "1");
+
+function timeReached(hhmm: string): boolean {
+  const [h, m] = hhmm.split(":").map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return false;
+  const now = new Date();
+  return now.getHours() * 60 + now.getMinutes() >= h * 60 + m;
+}
+
+/**
+ * QA scheduler, mounted once in the workspace so triggers fire regardless of
+ * the active tab: twice-daily mailbox checks (morning/afternoon), plus the
+ * weekly analysis at PC startup or at a chosen time. Default mode is manual
+ * (the manager runs the analysis by hand).
+ */
+export function useQaScheduler() {
+  useEffect(() => {
+    const tick = async () => {
+      let cfg: QaConfig;
+      try { cfg = await api.qaGetConfig(); } catch { return; }
+      if (cfg.watchEnabled && cfg.auditees.some(a => a.watched)) {
+        if (timeReached(cfg.checkMorning) && !wasFired("check-morning")) {
+          markFired("check-morning");
+          try { await api.qaCheckNewMail(); } catch (e) { void api.logError("qa-watch", String(e)); }
+        }
+        if (timeReached(cfg.checkAfternoon) && !wasFired("check-afternoon")) {
+          markFired("check-afternoon");
+          try { await api.qaCheckNewMail(); } catch (e) { void api.logError("qa-watch", String(e)); }
+        }
+      }
+      if (cfg.scheduleMode === "daily_time" && cfg.auditees.length > 0
+        && timeReached(cfg.scheduleTime) && !wasFired("analysis")) {
+        markFired("analysis");
+        try { await api.qaExtract(false, "scheduled"); } catch (e) { void api.logError("qa-scheduled", String(e)); }
+      }
+    };
+    const startup = async () => {
+      try {
+        const cfg = await api.qaGetConfig();
+        if (cfg.scheduleMode === "startup" && cfg.auditees.length > 0 && !wasFired("startup")) {
+          markFired("startup");
+          await api.qaExtract(false, "scheduled");
+        }
+      } catch (e) { void api.logError("qa-startup", String(e)); }
+    };
+    void startup();
+    void tick();
+    const timer = window.setInterval(() => void tick(), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+}
+
 export default function QaPanel() {
   const t = useT();
   const [config, setConfig] = useState<QaConfig>();
@@ -144,32 +198,37 @@ export default function QaPanel() {
   const [warnings, setWarnings] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [watchNotice, setWatchNotice] = useState<string[]>([]);
-  const [busy, setBusy] = useState<"" | "save" | "extract" | "export" | "watch">("");
+  const [busy, setBusy] = useState<"" | "save" | "extract" | "historical" | "export" | "watch">("");
   const [configSaved, setConfigSaved] = useState(true);
+  const [keywordsText, setKeywordsText] = useState("");
 
   useEffect(() => {
-    api.qaGetConfig().then(setConfig).catch(e => setError(String(e)));
+    api.qaGetConfig()
+      .then(cfg => {
+        setConfig(cfg);
+        setKeywordsText(cfg.subjectKeywords.join(", "));
+      })
+      .catch(e => setError(String(e)));
+    api.qaLoadLastRun()
+      .then(last => {
+        if (last && last.result.cases.length > 0) {
+          setCases(last.result.cases);
+          setWarnings(last.result.warnings);
+          if (last.source === "scheduled") {
+            setNotice(t("Showing the scheduled run from {date}. Review it and export when ready.", { date: formatDateTime(last.ranAt) }));
+          }
+        }
+      })
+      .catch(() => undefined);
   }, []);
 
-  const runWatch = useCallback(async (silent: boolean) => {
-    if (!silent) setBusy("watch");
+  const refreshConfig = useCallback(async () => {
     try {
-      const status = await api.qaCheckNewMail();
-      setWatchNotice(status.newSenders);
-    } catch (e) {
-      if (!silent) setError(String(e));
-    } finally {
-      if (!silent) setBusy("");
-    }
+      const cfg = await api.qaGetConfig();
+      setConfig(cfg);
+      setKeywordsText(cfg.subjectKeywords.join(", "));
+    } catch { /* keep current state */ }
   }, []);
-
-  useEffect(() => {
-    if (!config?.watchEnabled || !config.auditees.some(a => a.watched)) return;
-    void runWatch(true);
-    const timer = window.setInterval(() => void runWatch(true), 10 * 60 * 1000);
-    return () => window.clearInterval(timer);
-  }, [config?.watchEnabled, config?.auditees, runWatch]);
 
   const updateConfig = (patch: Partial<QaConfig>) => {
     setConfigSaved(false);
@@ -192,24 +251,41 @@ export default function QaPanel() {
     if (!config) return;
     setBusy("save"); setError(""); setNotice("");
     try {
-      await api.qaSaveConfig(config);
+      await api.qaSaveConfig({
+        ...config,
+        subjectKeywords: keywordsText.split(",").map(k => k.trim()).filter(Boolean),
+      });
       setConfigSaved(true);
       setNotice(t("QA configuration saved."));
+      await refreshConfig();
     } catch (e) { setError(String(e)); }
     finally { setBusy(""); }
   };
 
-  const extract = async () => {
-    setBusy("extract"); setError(""); setNotice(""); setWarnings([]); setWatchNotice([]);
+  const extract = async (historical: boolean) => {
+    setBusy(historical ? "historical" : "extract"); setError(""); setNotice(""); setWarnings([]);
     try {
-      if (!configSaved) await api.qaSaveConfig(config!);
-      setConfigSaved(true);
-      const result = await api.qaExtract();
+      if (!configSaved) await saveConfig();
+      const result = await api.qaExtract(historical, "manual");
       setCases(result.cases);
       setWarnings(result.warnings);
+      if (historical) await refreshConfig();
+      // A manual run acknowledges the pending watch notifications.
+      if (config && config.pendingWatch.length > 0) {
+        await api.qaSaveConfig({ ...config, pendingWatch: [] }).catch(() => undefined);
+        await refreshConfig();
+      }
       if (!result.cases.length) setNotice(t("No QA cases were found in the manager mailbox for the configured period."));
     } catch (e) { setError(String(e)); }
     finally { setBusy(""); }
+  };
+
+  const dismissWatch = async () => {
+    if (!config) return;
+    try {
+      await api.qaSaveConfig({ ...config, pendingWatch: [] });
+      await refreshConfig();
+    } catch (e) { setError(String(e)); }
   };
 
   const exportCases = async () => {
@@ -224,13 +300,19 @@ export default function QaPanel() {
   if (!config) return <div className="card grid min-h-64 place-items-center p-10"><Loader2 className="h-6 w-6 animate-spin text-pine" /></div>;
 
   const selectedCount = cases.filter(c => c.selected).length;
+  const pendingHistorical = config.auditees.filter(a => !a.historicalDone);
+  const scheduleModes: [QaScheduleMode, string][] = [
+    ["manual", t("Manual (I run it myself)")],
+    ["startup", t("When the PC starts")],
+    ["daily_time", t("At a chosen time")],
+  ];
 
   return <div className="space-y-6">
     <div className="mb-1 flex items-end justify-between">
       <div>
         <p className="text-xs font-bold uppercase tracking-[.18em] text-pine">{t("QA Audit")}</p>
         <h1 className="mt-2 font-display text-4xl">{t("Audit your team's cases.")}</h1>
-        <p className="mt-2 text-sm text-ink/50">{t("Atlas finds the team's conversations in your mailbox, the local AI evaluates the QA rubric, and you review before exporting.")}</p>
+        <p className="mt-2 text-sm text-ink/50">{t("Atlas finds the team's QA conversations in your mailbox, the local AI evaluates the rubric, and you review before exporting.")}</p>
       </div>
       <div className="flex items-center gap-2">
         <span className="chip bg-white text-ink/55"><Search className="h-3 w-3" />{t("{count} cases", { count: cases.length })}</span>
@@ -241,11 +323,11 @@ export default function QaPanel() {
     {error && <Banner tone="error" message={error} onClose={() => setError("")} />}
     {notice && <Banner tone="info" message={notice} onClose={() => setNotice("")} />}
     {warnings.map((w, i) => <Banner key={i} tone="error" message={w} />)}
-    {watchNotice.length > 0 && <div className="flex items-center gap-3 rounded-xl border border-[#e89969]/40 bg-[#fff0df] px-4 py-3 text-sm text-[#9a5a1e]">
+    {config.pendingWatch.length > 0 && <div className="flex items-center gap-3 rounded-xl border border-[#e89969]/40 bg-[#fff0df] px-4 py-3 text-sm text-[#9a5a1e]">
       <Bell className="h-4 w-4 shrink-0" />
-      <span className="flex-1">{t("New mail arrived from: {names}. Run the QA analysis to audit it.", { names: watchNotice.join(", ") })}</span>
-      <button className="font-bold underline" disabled={busy !== ""} onClick={extract}>{t("Run now")}</button>
-      <button onClick={() => setWatchNotice([])}><X className="h-4 w-4" /></button>
+      <span className="flex-1">{t("New mail arrived from: {names}. Run the QA analysis to audit it.", { names: config.pendingWatch.join(", ") })}</span>
+      <button className="font-bold underline" disabled={busy !== ""} onClick={() => void extract(false)}>{t("Run now")}</button>
+      <button onClick={() => void dismissWatch()}><X className="h-4 w-4" /></button>
     </div>}
 
     <div className="card p-5">
@@ -278,6 +360,13 @@ export default function QaPanel() {
               </button>
             </div>
           </div>
+          <div className="mt-3 flex items-center gap-2">
+            {a.historicalDone
+              ? <span className="chip bg-mint text-pine"><Check className="h-3 w-3" />{t("Historical audit done")}</span>
+              : <span className="chip bg-[#fff0df] text-[#9a5a1e]"><History className="h-3 w-3" />{t("Historical audit pending")}</span>}
+            {a.historicalDone && <button className="text-[11px] font-bold text-pine underline"
+              onClick={() => updateAuditee(i, { historicalDone: false })}>{t("Mark historical as pending")}</button>}
+          </div>
           <label className="mt-3 block"><span className="label">{t("Manager rules for this person (optional)")}</span>
             <textarea className="field min-h-[44px] resize-y text-xs" value={a.customRules}
               placeholder={t("Example: response-time ranges do not apply; this CSA works ticket-based via IRIS.")}
@@ -296,11 +385,33 @@ export default function QaPanel() {
             <FolderOpen className="h-4 w-4 shrink-0 text-ink/40" />
             <span className="truncate">{config.outputFolder || t("Choose a folder…")}</span>
           </button></label>
-        <label className="flex cursor-pointer items-center gap-2 pb-3 text-xs font-bold text-ink/60" title={t("Check the mailbox every 10 minutes and notify when an audited person writes")}>
+        <label><span className="label">{t("QA subject keywords")}</span>
+          <input className="field" value={keywordsText} placeholder="QA, audit"
+            onChange={e => { setConfigSaved(false); setKeywordsText(e.target.value); }} /></label>
+      </div>
+      <div className="mt-4 grid grid-cols-1 items-end gap-4 md:grid-cols-[1fr_140px_140px_140px]">
+        <label><span className="label">{t("Run the weekly analysis")}</span>
+          <div className="relative">
+            <select className="field appearance-none pr-8" value={config.scheduleMode}
+              onChange={e => updateConfig({ scheduleMode: e.target.value as QaScheduleMode })}>
+              {scheduleModes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink/35" />
+          </div></label>
+        {config.scheduleMode === "daily_time" && <label><span className="label">{t("Analysis time")}</span>
+          <input type="time" className="field" value={config.scheduleTime}
+            onChange={e => updateConfig({ scheduleTime: e.target.value })} /></label>}
+        <label className="flex cursor-pointer items-center gap-2 pb-3 text-xs font-bold text-ink/60" title={t("Check the mailbox twice a day and notify when an audited person writes")}>
           <input type="checkbox" className="h-4 w-4 accent-[#24776a]" checked={config.watchEnabled}
             onChange={e => updateConfig({ watchEnabled: e.target.checked })} />
           {t("Watch mailbox")}
         </label>
+        {config.watchEnabled && <label><span className="label">{t("Morning check")}</span>
+          <input type="time" className="field" value={config.checkMorning}
+            onChange={e => updateConfig({ checkMorning: e.target.value })} /></label>}
+        {config.watchEnabled && <label><span className="label">{t("Afternoon check")}</span>
+          <input type="time" className="field" value={config.checkAfternoon}
+            onChange={e => updateConfig({ checkAfternoon: e.target.value })} /></label>}
       </div>
       <div className="mt-4 flex items-center gap-3">
         <button className="btn-secondary" disabled={busy !== ""} onClick={saveConfig}>
@@ -314,13 +425,21 @@ export default function QaPanel() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="font-display text-xl">{t("Find and evaluate cases")}</h2>
-          <p className="mt-1 text-xs text-ink/45">{t("Searches your mailbox for conversations with the people on the list and evaluates them with the bundled local AI. Nothing leaves this computer.")}</p>
+          <p className="mt-1 text-xs text-ink/45">{t("Searches your mailbox for QA conversations with the people on the list and evaluates them with the bundled local AI. Nothing leaves this computer.")}</p>
         </div>
-        <button className="btn-primary h-[46px] px-5" disabled={busy !== "" || config.auditees.length === 0} onClick={extract}>
-          {busy === "extract" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bot className="h-4 w-4" />}
-          {busy === "extract" ? t("Evaluating…") : t("Find QA cases")}
-        </button>
+        <div className="flex items-center gap-2">
+          {pendingHistorical.length > 0 && <button className="btn-secondary h-[46px]" disabled={busy !== ""} onClick={() => void extract(true)}
+            title={t("Pulls every QA conversation these people have ever sent. It can take a while.")}>
+            {busy === "historical" ? <Loader2 className="h-4 w-4 animate-spin" /> : <History className="h-4 w-4" />}
+            {busy === "historical" ? t("Auditing history…") : t("Historical audit ({count})", { count: pendingHistorical.length })}
+          </button>}
+          <button className="btn-primary h-[46px] px-5" disabled={busy !== "" || config.auditees.length === 0} onClick={() => void extract(false)}>
+            {busy === "extract" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bot className="h-4 w-4" />}
+            {busy === "extract" ? t("Evaluating…") : t("Find QA cases (this week)")}
+          </button>
+        </div>
       </div>
+      <p className="mt-3 flex items-center gap-2 text-[11px] text-ink/40"><Clock className="h-3 w-3" />{t("Weekly audits cover the configured lookback days and are grouped by ISO week in Excel.")}</p>
     </div>
 
     {cases.length > 0 && <div className="space-y-4">

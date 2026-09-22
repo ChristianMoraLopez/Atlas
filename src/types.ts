@@ -122,7 +122,10 @@ export interface QaAuditee {
   email: string;
   customRules: string;
   watched: boolean;
+  historicalDone: boolean;
 }
+
+export type QaScheduleMode = "manual" | "startup" | "daily_time";
 
 export interface QaConfig {
   auditees: QaAuditee[];
@@ -131,6 +134,19 @@ export interface QaConfig {
   vertical: string;
   watchEnabled: boolean;
   lastMailCheck?: string;
+  scheduleMode: QaScheduleMode;
+  scheduleTime: string;
+  checkMorning: string;
+  checkAfternoon: string;
+  pendingWatch: string[];
+  subjectKeywords: string[];
+}
+
+export interface QaLastRun {
+  ranAt: string;
+  source: string;
+  historical: boolean;
+  result: QaExtractionResult;
 }
 
 export interface QaEvidenceRef {

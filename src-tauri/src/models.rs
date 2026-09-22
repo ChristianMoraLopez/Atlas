@@ -246,6 +246,9 @@ pub struct QaAuditee {
     /// Whether new mail from this person triggers a QA check notification.
     #[serde(default = "default_true")]
     pub watched: bool,
+    /// False until the full historical audit for this person has run.
+    #[serde(default)]
+    pub historical_done: bool,
 }
 
 fn default_true() -> bool {
@@ -258,6 +261,30 @@ fn default_qa_lookback_days() -> u32 {
 
 fn default_qa_vertical() -> String {
     "320 - CLIENT SERVICE BEAUTY, HEALTH & WELLNESS".into()
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum QaScheduleMode {
+    /// The manager runs the analysis by hand (default).
+    #[default]
+    Manual,
+    /// The weekly analysis runs when the PC/app starts.
+    Startup,
+    /// The weekly analysis runs at a chosen time while the app is running.
+    DailyTime,
+}
+
+fn default_qa_schedule_time() -> String {
+    "09:00".into()
+}
+
+fn default_qa_check_morning() -> String {
+    "09:00".into()
+}
+
+fn default_qa_check_afternoon() -> String {
+    "15:00".into()
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -278,6 +305,29 @@ pub struct QaConfig {
     /// RFC3339 timestamp of the last mailbox watch check.
     #[serde(default)]
     pub last_mail_check: Option<String>,
+    /// How the weekly QA analysis is activated. Manual by default.
+    #[serde(default)]
+    pub schedule_mode: QaScheduleMode,
+    /// Chosen analysis time (HH:MM) when schedule_mode is daily_time.
+    #[serde(default = "default_qa_schedule_time")]
+    pub schedule_time: String,
+    /// Mailbox check times (HH:MM): the watch fires twice a day.
+    #[serde(default = "default_qa_check_morning")]
+    pub check_morning: String,
+    #[serde(default = "default_qa_check_afternoon")]
+    pub check_afternoon: String,
+    /// Auditee names with new mail waiting for a QA run (persisted so the
+    /// notification survives app restarts and tab switches).
+    #[serde(default)]
+    pub pending_watch: Vec<String>,
+    /// Subject keywords: only conversations whose topic mentions one of
+    /// these (case-insensitive) are audited. Default: ["QA"].
+    #[serde(default = "default_qa_subject_keywords")]
+    pub subject_keywords: Vec<String>,
+}
+
+fn default_qa_subject_keywords() -> Vec<String> {
+    vec!["QA".into()]
 }
 
 impl Default for QaConfig {
@@ -289,6 +339,12 @@ impl Default for QaConfig {
             vertical: default_qa_vertical(),
             watch_enabled: false,
             last_mail_check: None,
+            schedule_mode: QaScheduleMode::default(),
+            schedule_time: default_qa_schedule_time(),
+            check_morning: default_qa_check_morning(),
+            check_afternoon: default_qa_check_afternoon(),
+            pending_watch: Vec::new(),
+            subject_keywords: default_qa_subject_keywords(),
         }
     }
 }
@@ -298,6 +354,17 @@ impl Default for QaConfig {
 pub struct QaWatchStatus {
     pub new_senders: Vec<String>,
     pub checked_at: String,
+}
+
+/// Persisted snapshot of the most recent QA run so scheduled/background
+/// analyses can be reviewed when the manager opens the QA tab.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QaLastRun {
+    pub ran_at: String,
+    pub source: String,
+    pub historical: bool,
+    pub result: QaExtractionResult,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

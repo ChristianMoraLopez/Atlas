@@ -954,7 +954,11 @@ fn qa_save_config(state: tauri::State<'_, AppState>, config: QaConfig) -> Result
 }
 
 #[tauri::command]
-async fn qa_extract_cases(state: tauri::State<'_, AppState>) -> Result<QaExtractionResult> {
+async fn qa_extract_cases(
+    state: tauri::State<'_, AppState>,
+    historical: bool,
+    source: String,
+) -> Result<QaExtractionResult> {
     let settings = state.read_settings()?;
     if settings.source_mode != SourceMode::MicrosoftGraph {
         return Err(AppError::Message(
@@ -962,7 +966,25 @@ async fn qa_extract_cases(state: tauri::State<'_, AppState>) -> Result<QaExtract
         ));
     }
     let token = auth::access_token(&state).await?;
-    qa::extract(&state, &token, ollama::BUNDLED_MODEL).await
+    let result = qa::extract(&state, &token, ollama::BUNDLED_MODEL, historical).await?;
+    if historical {
+        // The historical audit ran: everyone currently on the list is
+        // considered covered (the manager can re-mark a person as pending).
+        state.update_settings(|settings| {
+            for auditee in &mut settings.qa.auditees {
+                auditee.historical_done = true;
+            }
+        })?;
+    }
+    if let Err(error) = qa::save_last_run(&state, &result, &source, historical) {
+        diagnostics::error("qa/cache", &format!("Could not save the QA run snapshot: {error}"));
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+fn qa_load_last_run(state: tauri::State<'_, AppState>) -> Result<Option<crate::models::QaLastRun>> {
+    qa::load_last_run(&state)
 }
 
 #[tauri::command]
@@ -1124,7 +1146,8 @@ pub fn run() {
             qa_extract_cases,
             qa_check_new_mail,
             qa_export_cases,
-            qa_open_output_folder
+            qa_open_output_folder,
+            qa_load_last_run
         ])
         .build(tauri::generate_context!())
         .expect("error while building Atlas");

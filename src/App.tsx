@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { api, fromLocalInput, localDate, toLocalInput } from "./lib";
 import AiTransparencyModal from "./AiTransparencyModal";
-import QaPanel from "./QaPanel";
+import QaPanel, { useQaScheduler } from "./QaPanel";
 import { I18nProvider, useI18n, useT } from "./i18n";
 import type { AppStatus, AutomationMode, AutomationRequest, ExportResult, ExtractionResult, Interaction, TrackerDestination, TrackerDestinationKind, UserProfile } from "./types";
 
@@ -262,6 +262,7 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
   const profile = status.profile!; const destination = status.destination!; const bridgeMode = status.sourceMode === "power_automate_folder"; const [date, setDate] = useState(localDate()); const [includeEmail, setIncludeEmail] = useState(true); const [includeTeams, setIncludeTeams] = useState(true); const [items, setItems] = useState<Interaction[]>([]); const [warnings, setWarnings] = useState<string[]>([]); const [busy, setBusy] = useState(false); const busyRef = useRef(false); const [error, setError] = useState(""); const [syncNotice, setSyncNotice] = useState(""); const [manual, setManual] = useState(false); const [editingProfile, setEditingProfile] = useState(false); const [success, setSuccess] = useState<ExportResult>();
   const [aiPanel, setAiPanel] = useState(false);
   const [tab, setTab] = useState<"tracker" | "qa">("tracker");
+  useQaScheduler();
   const [workStatus, setWorkStatus] = useState<{ message: string; detail: string }>();
   const counts = useMemo(() => ({ all: items.length, selected: items.filter(i => i.selected).length, review: items.filter(i => !i.reviewed).length }), [items]);
   const startWork = (message: string, detail: string) => { if (busyRef.current) return false; busyRef.current = true; setWorkStatus({ message, detail }); setBusy(true); setError(""); setSyncNotice(""); return true; };

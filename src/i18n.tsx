@@ -285,6 +285,27 @@ const es: Record<string, string> = {
   "Pending review": "Pendiente de revisión",
   "Hide evidence": "Ocultar evidencia",
   "Show evidence ({count})": "Mostrar evidencia ({count})",
+
+  // QA scheduling, weekly cadence and historical audits
+  "Atlas finds the team's QA conversations in your mailbox, the local AI evaluates the rubric, and you review before exporting.": "Atlas encuentra las conversaciones de QA del equipo en tu buzón, la IA local evalúa la rúbrica y tú revisas antes de exportar.",
+  "Showing the scheduled run from {date}. Review it and export when ready.": "Mostrando la corrida programada del {date}. Revísala y exporta cuando esté lista.",
+  "Historical audit done": "Histórico auditado",
+  "Historical audit pending": "Histórico pendiente",
+  "Mark historical as pending": "Marcar histórico como pendiente",
+  "QA subject keywords": "Palabras clave de asunto QA",
+  "Run the weekly analysis": "Ejecutar el análisis semanal",
+  "Manual (I run it myself)": "Manual (lo ejecuto yo)",
+  "When the PC starts": "Al encender el PC",
+  "Analysis time": "Hora del análisis",
+  "Morning check": "Chequeo de la mañana",
+  "Afternoon check": "Chequeo de la tarde",
+  "Check the mailbox twice a day and notify when an audited person writes": "Revisa el buzón dos veces al día y avisa cuando una persona auditada escriba",
+  "Pulls every QA conversation these people have ever sent. It can take a while.": "Trae todas las conversaciones de QA que estas personas han enviado. Puede tardar.",
+  "Auditing history…": "Auditando histórico…",
+  "Historical audit ({count})": "Auditoría histórica ({count})",
+  "Find QA cases (this week)": "Buscar casos QA (esta semana)",
+  "Weekly audits cover the configured lookback days and are grouped by ISO week in Excel.": "Las auditorías semanales cubren los días configurados y se agrupan por semana ISO en Excel.",
+  "Searches your mailbox for QA conversations with the people on the list and evaluates them with the bundled local AI. Nothing leaves this computer.": "Busca en tu buzón las conversaciones de QA con las personas de la lista y las evalúa con la IA local incluida. Nada sale de este equipo.",
 };
 
 // Spanish-keyed entries (setup wizard and legacy Spanish UI) translated to English.
