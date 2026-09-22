@@ -24,6 +24,15 @@ pub struct MicrosoftConfig {
     pub tenant_id: String,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AppRole {
+    /// Customer service agent: daily interactions tracker.
+    Cs,
+    /// Team manager: QA audits of the team's conversations.
+    Manager,
+}
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceMode {
@@ -110,6 +119,8 @@ pub struct AppStatus {
     pub ai_instructions: AiInstructions,
     pub scheduled_launch: bool,
     pub log_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_role: Option<AppRole>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -137,6 +148,8 @@ pub struct Settings {
     pub ai_instructions: AiInstructions,
     #[serde(default)]
     pub qa: QaConfig,
+    #[serde(default)]
+    pub app_role: Option<AppRole>,
 }
 
 fn default_auto_sync() -> bool {
@@ -166,6 +179,7 @@ impl Default for Settings {
             language: default_language(),
             ai_instructions: AiInstructions::default(),
             qa: QaConfig::default(),
+            app_role: None,
         }
     }
 }

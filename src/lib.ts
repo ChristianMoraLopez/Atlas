@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AiPromptInfo, AppStatus, AutomationMode, ExportResult, ExtractionResult, Interaction, QaConfig, QaCase, QaExportResult, QaExtractionResult, QaLastRun, QaWatchStatus, TrackerDestination, UserProfile } from "./types";
+import type { AiPromptInfo, AppRole, AppStatus, AutomationMode, ExportResult, ExtractionResult, Interaction, QaConfig, QaCase, QaExportResult, QaExtractionResult, QaLastRun, QaWatchStatus, TrackerDestination, UserProfile } from "./types";
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   try {
@@ -42,7 +42,8 @@ export const api = {
   qaCheckNewMail: () => call<QaWatchStatus>("qa_check_new_mail"),
   qaExport: (cases: QaCase[]) => call<QaExportResult>("qa_export_cases", { cases }),
   qaOpenFolder: () => call<void>("qa_open_output_folder"),
-  qaLoadLastRun: () => call<QaLastRun | null>("qa_load_last_run")
+  qaLoadLastRun: () => call<QaLastRun | null>("qa_load_last_run"),
+  saveAppRole: (role: AppRole | null) => call<AppStatus>("save_app_role", { role })
 };
 
 export function localDate(): string {

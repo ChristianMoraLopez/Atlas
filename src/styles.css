@@ -77,3 +77,35 @@ button:disabled { opacity: .48; cursor: not-allowed; }
   .atlas-intro *, .atlas-intro *::before, .atlas-intro *::after, .atlas-loader *, .atlas-loader *::before, .atlas-loader *::after { animation-duration: .01ms !important; animation-delay: 0ms !important; animation-iteration-count: 1 !important; }
   .atlas-intro { transition-duration: .12s; }
 }
+
+/* ------------------------------------------------------------------------- */
+/* Enterprise motion utilities (Atlas design language: pine, cream, terracotta) */
+/* ------------------------------------------------------------------------- */
+
+.rise { opacity: 0; transform: translateY(14px); animation: atlas-rise .55s cubic-bezier(.22,.8,.3,1) forwards; }
+.rise-1 { animation-delay: .07s; }
+.rise-2 { animation-delay: .14s; }
+.rise-3 { animation-delay: .21s; }
+.rise-4 { animation-delay: .28s; }
+.rise-5 { animation-delay: .35s; }
+@keyframes atlas-rise { to { opacity: 1; transform: translateY(0); } }
+
+.pop { opacity: 0; transform: scale(.9); animation: atlas-pop .5s cubic-bezier(.2,.9,.25,1.35) forwards; }
+@keyframes atlas-pop { to { opacity: 1; transform: scale(1); } }
+
+.card-lift { transition: transform .22s cubic-bezier(.22,.8,.3,1), box-shadow .22s ease, border-color .22s ease; }
+.card-lift:hover { transform: translateY(-4px); box-shadow: 0 18px 42px -18px rgba(15,79,69,.38); border-color: rgba(15,79,69,.35); }
+
+.lottie-frame { display: grid; place-items: center; overflow: hidden; border-radius: 1.25rem; background: linear-gradient(145deg, #d9eee7 0%, #f6f3ea 100%); }
+.lottie-frame--plain { background: transparent; border-radius: 0; }
+.lottie-frame--round { border-radius: 999px; }
+
+.watch-ring { position: relative; }
+.watch-ring::after { content: ""; position: absolute; inset: -4px; border-radius: 999px; border: 2px solid rgba(232,153,105,.55); animation: atlas-watch-ring 2s ease-out infinite; }
+@keyframes atlas-watch-ring { 0% { opacity: .9; transform: scale(.82); } 100% { opacity: 0; transform: scale(1.35); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .rise, .pop { animation-duration: .01ms !important; animation-delay: 0ms !important; }
+  .card-lift, .card-lift:hover { transition: none; transform: none; }
+  .watch-ring::after { animation: none; opacity: 0; }
+}

@@ -14,6 +14,7 @@ export interface AccountInfo {
 }
 
 export type SourceMode = "microsoft_graph" | "power_automate_folder";
+export type AppRole = "cs" | "manager";
 
 export type TrackerDestinationKind = "local_existing" | "local_new" | "share_point" | "share_point_flow";
 export type AutomationMode = "startup_previous_workday" | "daily_time";
@@ -69,6 +70,7 @@ export interface AppStatus {
   aiInstructions: AiInstructions;
   scheduledLaunch: boolean;
   logPath: string;
+  appRole?: AppRole;
 }
 
 export interface Interaction {

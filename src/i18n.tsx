@@ -306,6 +306,15 @@ const es: Record<string, string> = {
   "Find QA cases (this week)": "Buscar casos QA (esta semana)",
   "Weekly audits cover the configured lookback days and are grouped by ISO week in Excel.": "Las auditorías semanales cubren los días configurados y se agrupan por semana ISO en Excel.",
   "Searches your mailbox for QA conversations with the people on the list and evaluates them with the bundled local AI. Nothing leaves this computer.": "Busca en tu buzón las conversaciones de QA con las personas de la lista y las evalúa con la IA local incluida. Nada sale de este equipo.",
+
+  // Role selection
+  "How will you use Atlas?": "¿Cómo vas a usar Atlas?",
+  "Each flow is independent: you can switch roles later from the home button.": "Cada flujo es independiente: puedes cambiar de rol después con el botón de inicio.",
+  "CS · Daily tracker": "CS · Tracker diario",
+  "Record your own daily work from calendar, mail and Teams evidence, then export the interactions tracker.": "Registra tu trabajo diario a partir de evidencia de calendario, correo y Teams, y exporta el tracker de interacciones.",
+  "Manager · QA Audit": "Manager · QA Audit",
+  "Audit your team's QA conversations with local AI, review each case and export per-analyst weekly Excel workbooks.": "Audita las conversaciones de QA de tu equipo con IA local, revisa cada caso y exporta Excel semanales por analista.",
+  "Change role": "Cambiar de rol",
 };
 
 // Spanish-keyed entries (setup wizard and legacy Spanish UI) translated to English.

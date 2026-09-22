@@ -7,15 +7,16 @@ import { openPath, openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import {
   AlertCircle, ArrowRight, Bot, CalendarDays, Check, ChevronDown, Cloud,
-  ExternalLink, FilePlus2, FileSpreadsheet, FileText, FolderOpen, HardDrive,
+  ExternalLink, FilePlus2, FileSpreadsheet, FileText, FolderOpen, HardDrive, Home,
   Inbox, Loader2, LogOut, Mail, PenLine, Plus, RefreshCw, Save, Settings,
   ShieldCheck, Sparkles, Trash2, UserRound, X
 } from "lucide-react";
 import { api, fromLocalInput, localDate, toLocalInput } from "./lib";
 import AiTransparencyModal from "./AiTransparencyModal";
-import QaPanel, { useQaScheduler } from "./QaPanel";
+import LottieIcon, { type LottieName } from "./LottieIcon";
+import QaPanel from "./QaPanel";
 import { I18nProvider, useI18n, useT } from "./i18n";
-import type { AppStatus, AutomationMode, AutomationRequest, ExportResult, ExtractionResult, Interaction, TrackerDestination, TrackerDestinationKind, UserProfile } from "./types";
+import type { AppRole, AppStatus, AutomationMode, AutomationRequest, ExportResult, ExtractionResult, Interaction, TrackerDestination, TrackerDestinationKind, UserProfile } from "./types";
 
 const emptyProfile: UserProfile = {
   loginId: "", fullName: "", area: "Manufacturing", teamLead: "", circanaManager: ""
@@ -253,16 +254,14 @@ function ExportPanel({ destination, autoSync, autoSyncTime, automationMode, brid
 function SuccessModal({ result, onClose }: { result: ExportResult; onClose: () => void }) {
   const t = useT();
   const remote = result.path.startsWith("https://");
-  return <div className="fixed inset-0 z-50 grid place-items-center bg-[#081c1a]/45 p-8 backdrop-blur-sm"><div className="card w-full max-w-lg p-8 text-center"><div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-mint text-pine"><Check className="h-7 w-7" /></div><h2 className="mt-5 font-display text-3xl">{result.queued ? t("Sent to SharePoint queue") : t("Tracker saved")}</h2><p className="mt-2 text-sm text-ink/50">{result.queued ? t("{count} rows are ready for the cloud writer", { count: result.inserted }) : t("{added} added · {updated} refreshed · {skipped} skipped", { added: result.inserted, updated: result.updated, skipped: result.skipped })}</p><p className="mt-5 break-all rounded-xl bg-cream p-3 text-xs text-ink/55">{result.path}</p>{remote ? <button className="btn-primary mt-6 w-full" onClick={() => void api.openTracker().catch(failure => window.alert(String(failure)))}><ExternalLink className="h-4 w-4" />{t("Open in SharePoint")}</button> : <div className="mt-6 grid grid-cols-2 gap-3"><button className="btn-secondary" onClick={() => revealItemInDir(result.path)}><FolderOpen className="h-4 w-4" />{t("Open folder")}</button><button className="btn-primary" onClick={() => void api.openTracker().catch(failure => window.alert(String(failure)))}><ExternalLink className="h-4 w-4" />{t("Open file")}</button></div>}<button className="mt-5 text-xs font-bold text-ink/45 hover:text-ink" onClick={onClose}>{t("Back to tracker")}</button></div></div>;
+  return <div className="fixed inset-0 z-50 grid place-items-center bg-[#081c1a]/45 p-8 backdrop-blur-sm"><div className="card pop w-full max-w-lg p-8 text-center"><div className="lottie-frame lottie-frame--round mx-auto h-24 w-24"><LottieIcon name="trophy" loop={false} className="h-20 w-20" /></div><h2 className="mt-5 font-display text-3xl">{result.queued ? t("Sent to SharePoint queue") : t("Tracker saved")}</h2><p className="mt-2 text-sm text-ink/50">{result.queued ? t("{count} rows are ready for the cloud writer", { count: result.inserted }) : t("{added} added · {updated} refreshed · {skipped} skipped", { added: result.inserted, updated: result.updated, skipped: result.skipped })}</p><p className="mt-5 break-all rounded-xl bg-cream p-3 text-xs text-ink/55">{result.path}</p>{remote ? <button className="btn-primary mt-6 w-full" onClick={() => void api.openTracker().catch(failure => window.alert(String(failure)))}><ExternalLink className="h-4 w-4" />{t("Open in SharePoint")}</button> : <div className="mt-6 grid grid-cols-2 gap-3"><button className="btn-secondary" onClick={() => revealItemInDir(result.path)}><FolderOpen className="h-4 w-4" />{t("Open folder")}</button><button className="btn-primary" onClick={() => void api.openTracker().catch(failure => window.alert(String(failure)))}><ExternalLink className="h-4 w-4" />{t("Open file")}</button></div>}<button className="mt-5 text-xs font-bold text-ink/45 hover:text-ink" onClick={onClose}>{t("Back to tracker")}</button></div></div>;
 }
 
-function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestination }: { status: AppStatus; refreshStatus: () => Promise<void>; signOut: () => Promise<void>; editMicrosoft: () => void; editDestination: () => void }) {
+function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestination, exitRole }: { status: AppStatus; refreshStatus: () => Promise<void>; signOut: () => Promise<void>; editMicrosoft: () => void; editDestination: () => void; exitRole: () => Promise<void> }) {
   const { lang, setLang } = useI18n();
   const t = useT();
   const profile = status.profile!; const destination = status.destination!; const bridgeMode = status.sourceMode === "power_automate_folder"; const [date, setDate] = useState(localDate()); const [includeEmail, setIncludeEmail] = useState(true); const [includeTeams, setIncludeTeams] = useState(true); const [items, setItems] = useState<Interaction[]>([]); const [warnings, setWarnings] = useState<string[]>([]); const [busy, setBusy] = useState(false); const busyRef = useRef(false); const [error, setError] = useState(""); const [syncNotice, setSyncNotice] = useState(""); const [manual, setManual] = useState(false); const [editingProfile, setEditingProfile] = useState(false); const [success, setSuccess] = useState<ExportResult>();
   const [aiPanel, setAiPanel] = useState(false);
-  const [tab, setTab] = useState<"tracker" | "qa">("tracker");
-  useQaScheduler();
   const [workStatus, setWorkStatus] = useState<{ message: string; detail: string }>();
   const counts = useMemo(() => ({ all: items.length, selected: items.filter(i => i.selected).length, review: items.filter(i => !i.reviewed).length }), [items]);
   const startWork = (message: string, detail: string) => { if (busyRef.current) return false; busyRef.current = true; setWorkStatus({ message, detail }); setBusy(true); setError(""); setSyncNotice(""); return true; };
@@ -369,25 +368,21 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
     return () => { disposed = true; unlistenBackground?.(); };
   }, []);
   return <div className="min-h-screen" aria-busy={busy}>
-    <header className="sticky top-0 z-30 border-b border-white/70 bg-cream/80 px-8 py-4 backdrop-blur-xl"><div className="mx-auto flex max-w-[1540px] items-center justify-between"><Brand /><div className="flex items-center gap-2"><div className="mr-3 max-w-xs text-right"><p className="text-xs font-bold">{bridgeMode ? t("Power Automate Inbox") : status.account?.displayName}</p><p className="truncate text-[10px] text-ink/40">{bridgeMode ? status.bridgeFolder : status.account?.email}</p></div><button title={t("Switch language")} className="rounded-xl border border-ink/10 bg-white px-2.5 py-2.5 text-[11px] font-extrabold tracking-wide hover:bg-mint" onClick={() => void switchLanguage()}>{lang === "es" ? "ES" : "EN"}</button><button title={t("Tracker destination")} className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={editDestination}><FileSpreadsheet className="h-4 w-4" /></button><button title={t("Open failure log")} className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={() => openPath(status.logPath)}><FileText className="h-4 w-4" /></button><button title={t("Data source")} className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={editMicrosoft}>{bridgeMode ? <Inbox className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}</button><button title={t("Profile settings")} className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={() => setEditingProfile(true)}><Settings className="h-4 w-4" /></button>{!bridgeMode && <button title={t("Sign out")} className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-red-50 hover:text-red-600" onClick={signOut}><LogOut className="h-4 w-4" /></button>}</div></div></header>
+    <header className="sticky top-0 z-30 border-b border-white/70 bg-cream/80 px-8 py-4 backdrop-blur-xl"><div className="mx-auto flex max-w-[1540px] items-center justify-between"><Brand /><div className="flex items-center gap-2"><div className="mr-3 max-w-xs text-right"><p className="text-xs font-bold">{bridgeMode ? t("Power Automate Inbox") : status.account?.displayName}</p><p className="truncate text-[10px] text-ink/40">{bridgeMode ? status.bridgeFolder : status.account?.email}</p></div><button title={t("Switch language")} className="rounded-xl border border-ink/10 bg-white px-2.5 py-2.5 text-[11px] font-extrabold tracking-wide hover:bg-mint" onClick={() => void switchLanguage()}>{lang === "es" ? "ES" : "EN"}</button><button title={t("Tracker destination")} className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={editDestination}><FileSpreadsheet className="h-4 w-4" /></button><button title={t("Open failure log")} className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={() => openPath(status.logPath)}><FileText className="h-4 w-4" /></button><button title={t("Data source")} className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={editMicrosoft}>{bridgeMode ? <Inbox className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}</button><button title={t("Change role")} className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={() => void exitRole()}><Home className="h-4 w-4" /></button><button title={t("Profile settings")} className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={() => setEditingProfile(true)}><Settings className="h-4 w-4" /></button>{!bridgeMode && <button title={t("Sign out")} className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-red-50 hover:text-red-600" onClick={signOut}><LogOut className="h-4 w-4" /></button>}</div></div></header>
     <main className="mx-auto max-w-[1540px] px-8 py-8">
-      <div className="mb-6 flex gap-2">
-        <button className={tab === "tracker" ? "btn-primary" : "btn-secondary"} onClick={() => setTab("tracker")}><CalendarDays className="h-4 w-4" />{t("Daily tracker")}</button>
-        <button className={tab === "qa" ? "btn-primary" : "btn-secondary"} onClick={() => setTab("qa")}><ShieldCheck className="h-4 w-4" />{t("QA Audit")}</button>
-      </div>
-      {tab === "qa" ? <QaPanel /> : <div className="grid grid-cols-[minmax(0,1fr)_290px] gap-6">
+      <div className="grid grid-cols-[minmax(0,1fr)_290px] gap-6">
         <section className="min-w-0">
-          <div className="mb-7 flex items-end justify-between"><div><p className="text-xs font-bold uppercase tracking-[.18em] text-pine">{t("Daily workspace")}</p><h1 className="mt-2 font-display text-4xl">{t("Record your daily work.")}</h1><p className="mt-2 text-sm text-ink/50">{t("Meetings and concrete work tasks become separate tracker rows.")}</p></div><div className="flex items-center gap-2"><span className="chip bg-white text-ink/55"><Inbox className="h-3 w-3" />{t("{count} found", { count: counts.all })}</span><span className="chip bg-mint text-pine"><Check className="h-3 w-3" />{t("{count} selected", { count: counts.selected })}</span>{counts.review > 0 && <span className="chip bg-[#fff0df] text-[#9a5a1e]">{t("{count} to review", { count: counts.review })}</span>}</div></div>
-          <div className="card p-5"><div className="grid grid-cols-[220px_1fr_1fr_auto] items-end gap-4"><label><span className="label">{t("Workday")}</span><input type="date" max={localDate()} className="field" value={date} disabled={busy} onChange={e => { setDate(e.target.value); setItems([]); setSyncNotice(""); }} /></label><Toggle checked={includeEmail} onChange={setIncludeEmail} label={t("Infer from mail")} detail={t("Work tasks, without inbox noise")} icon={<Mail className="h-4 w-4" />} /><Toggle checked={includeTeams} onChange={changeTeams} label={t("Infer from Teams")} detail={t("Separate task for each activity")} icon={<Bot className="h-4 w-4" />} /><button className="btn-primary h-[46px] px-5" disabled={busy || ((includeEmail || includeTeams) && (!status.ollamaRunning || !status.ollamaModelAvailable))} onClick={extract}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}{bridgeMode ? t("Import selected day") : t("Extract selected day")}</button></div>
+          <div className="rise mb-7 flex items-end justify-between"><div><p className="text-xs font-bold uppercase tracking-[.18em] text-pine">{t("Daily workspace")}</p><h1 className="mt-2 font-display text-4xl">{t("Record your daily work.")}</h1><p className="mt-2 text-sm text-ink/50">{t("Meetings and concrete work tasks become separate tracker rows.")}</p></div><div className="flex items-center gap-2"><span className="chip bg-white text-ink/55"><Inbox className="h-3 w-3" />{t("{count} found", { count: counts.all })}</span><span className="chip bg-mint text-pine"><Check className="h-3 w-3" />{t("{count} selected", { count: counts.selected })}</span>{counts.review > 0 && <span className="chip bg-[#fff0df] text-[#9a5a1e]">{t("{count} to review", { count: counts.review })}</span>}</div></div>
+          <div className="card rise rise-1 p-5"><div className="grid grid-cols-[220px_1fr_1fr_auto] items-end gap-4"><label><span className="label">{t("Workday")}</span><input type="date" max={localDate()} className="field" value={date} disabled={busy} onChange={e => { setDate(e.target.value); setItems([]); setSyncNotice(""); }} /></label><Toggle checked={includeEmail} onChange={setIncludeEmail} label={t("Infer from mail")} detail={t("Work tasks, without inbox noise")} icon={<Mail className="h-4 w-4" />} /><Toggle checked={includeTeams} onChange={changeTeams} label={t("Infer from Teams")} detail={t("Separate task for each activity")} icon={<Bot className="h-4 w-4" />} /><button className="btn-primary h-[46px] px-5" disabled={busy || ((includeEmail || includeTeams) && (!status.ollamaRunning || !status.ollamaModelAvailable))} onClick={extract}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}{bridgeMode ? t("Import selected day") : t("Extract selected day")}</button></div>
             {status.ollamaRunning && status.ollamaModelAvailable && <button type="button" onClick={() => setAiPanel(true)} title={t("View AI prompt")} className="mt-4 flex w-full items-center gap-3 rounded-xl border border-pine/15 bg-mint/55 px-4 py-3 text-left text-xs text-pine hover:bg-mint"><Bot className="h-5 w-5" /><span className="flex-1"><b>{t("Atlas Local AI is ready.")}</b> {t("Mail and Teams evidence stay on this computer and are interpreted by")} <code>{status.ollamaModel}</code>.</span><span className="shrink-0 font-bold underline">{t("View prompt")}</span></button>}
             {(!status.ollamaRunning || !status.ollamaModelAvailable) && <div role="button" tabIndex={0} onClick={() => setAiPanel(true)} onKeyDown={e => { if (e.key === "Enter") setAiPanel(true); }} title={t("View AI prompt")} className="mt-4 flex cursor-pointer items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-800"><Bot className="h-5 w-5" /><span className="flex-1"><b>{t("Bundled Local AI could not start.")}</b> {status.localAiError ?? t("Extract the complete Atlas portable ZIP again.")}</span><button className="font-bold underline" onClick={e => { e.stopPropagation(); void recheckLocalAi(); }}>{t("Recheck")}</button></div>}
           </div>
           {error && <div className="mt-5"><ErrorBanner message={error} onClose={() => setError("")} /></div>}{syncNotice && <div className="mt-5 flex items-center gap-3 rounded-xl border border-pine/15 bg-mint/55 px-4 py-3 text-sm text-pine"><Check className="h-4 w-4" />{syncNotice}</div>}{warnings.map((w, i) => <div className="mt-3" key={i}><ErrorBanner message={w} /></div>)}
-          <div className="mt-6 flex items-center justify-between"><div><h2 className="font-display text-2xl">{t("Preview")}</h2><p className="mt-1 text-xs text-ink/45">{t("Atlas selects finished meetings and concrete work tasks, including tasks still in progress. Reminders and automatic notices stay out.")}</p></div><button className="btn-secondary" onClick={() => setManual(true)}><Plus className="h-4 w-4" />{t("Add manual task")}</button></div>
-          <div className="mt-4">{items.length ? <InteractionTable items={items} setItems={setItems} /> : <div className="card grid min-h-64 place-items-center p-10 text-center"><div><div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-mint text-pine"><CalendarDays /></div><h3 className="mt-4 font-display text-xl">{bridgeMode ? t("Choose a day and import") : t("Choose a day and extract")}</h3><p className="mt-2 max-w-sm text-xs leading-5 text-ink/45">{t("Atlas shows only interactions backed by your calendar, selected mail, chat evidence, or details you type manually.")}</p></div></div>}</div>
+          <div className="rise rise-2 mt-6 flex items-center justify-between"><div><h2 className="font-display text-2xl">{t("Preview")}</h2><p className="mt-1 text-xs text-ink/45">{t("Atlas selects finished meetings and concrete work tasks, including tasks still in progress. Reminders and automatic notices stay out.")}</p></div><button className="btn-secondary" onClick={() => setManual(true)}><Plus className="h-4 w-4" />{t("Add manual task")}</button></div>
+          <div className="mt-4">{items.length ? <InteractionTable items={items} setItems={setItems} /> : <div className="card rise rise-3 grid min-h-64 place-items-center p-10 text-center"><div><div className="lottie-frame mx-auto h-32 w-32"><LottieIcon name="analytics" className="h-28 w-28" /></div><h3 className="mt-4 font-display text-xl">{bridgeMode ? t("Choose a day and import") : t("Choose a day and extract")}</h3><p className="mt-2 max-w-sm text-xs leading-5 text-ink/45">{t("Atlas shows only interactions backed by your calendar, selected mail, chat evidence, or details you type manually.")}</p></div></div>}</div>
         </section>
         <div className="space-y-5"><ExportPanel destination={destination} autoSync={status.autoSync} autoSyncTime={status.autoSyncTime} automationMode={status.automationMode} bridgeMode={bridgeMode} items={items} busy={busy} onSave={saveSelected} onSync={() => void syncCalendar(false)} onEdit={editDestination} /><aside className="rounded-2xl bg-[#081c1a] p-5 text-white"><ShieldCheck className="h-5 w-5 text-[#8dd7c4]" /><h3 className="mt-4 font-display text-xl">{t("Daily minimum: 3")}</h3><p className="mt-2 text-xs leading-5 text-white/55">{t("Atlas always saves the real activities found. If there are fewer than three, it opens the app so you can add the missing ones.")}</p></aside></div>
-      </div>}
+      </div>
     </main>
     {aiPanel && <AiTransparencyModal onClose={() => setAiPanel(false)} onSaved={refreshStatus} />}
     {manual && <ManualModal date={date} onClose={() => setManual(false)} onAdd={item => { setItems(old => [...old, item]); setManual(false); }} />}
@@ -397,25 +392,75 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
   </div>;
 }
 
+function RoleScreen({ onChoose, busy }: { onChoose: (role: AppRole) => void; busy: boolean }) {
+  const t = useT();
+  const card = (role: AppRole, lottie: LottieName, title: string, detail: string, delay: string) => (
+    <button disabled={busy} onClick={() => onChoose(role)}
+      className={`card card-lift group flex flex-col items-start gap-4 p-8 text-left rise ${delay} disabled:opacity-60`}>
+      <span className="lottie-frame h-32 w-32 self-center"><LottieIcon name={lottie} className="h-28 w-28" /></span>
+      <span className="font-display text-2xl">{title}</span>
+      <span className="text-sm leading-6 text-ink/50">{detail}</span>
+      <span className="mt-2 flex items-center gap-2 text-sm font-bold text-pine">{t("Start")}<ArrowRight className="h-4 w-4 transition group-hover:translate-x-1" /></span>
+    </button>
+  );
+  return <main className="grid min-h-screen place-items-center px-8 py-12" aria-busy={busy}>
+    <div className="w-full max-w-3xl">
+      <div className="rise mb-10 flex flex-col items-center text-center">
+        <Brand />
+        <h1 className="mt-6 font-display text-4xl">{t("How will you use Atlas?")}</h1>
+        <p className="mt-2 max-w-md text-sm text-ink/50">{t("Each flow is independent: you can switch roles later from the home button.")}</p>
+      </div>
+      <div className="grid gap-5 sm:grid-cols-2">
+        {card("cs", "analytics", t("CS · Daily tracker"), t("Record your own daily work from calendar, mail and Teams evidence, then export the interactions tracker."), "rise-1")}
+        {card("manager", "auditDoc", t("Manager · QA Audit"), t("Audit your team's QA conversations with local AI, review each case and export per-analyst weekly Excel workbooks."), "rise-2")}
+      </div>
+    </div>
+  </main>;
+}
+
+function ManagerWorkspace({ status, signOut, exitRole }: { status: AppStatus; signOut: () => Promise<void>; exitRole: () => Promise<void> }) {
+  const { lang, setLang } = useI18n();
+  const t = useT();
+  const switchLanguage = async () => {
+    const next = lang === "es" ? "en" : "es";
+    setLang(next);
+    try { await api.saveLanguage(next); } catch (failure) { void api.logError("save-language", String(failure)); }
+  };
+  return <div className="min-h-screen">
+    <header className="sticky top-0 z-30 border-b border-white/70 bg-cream/80 px-8 py-4 backdrop-blur-xl"><div className="mx-auto flex max-w-[1540px] items-center justify-between"><Brand /><div className="flex items-center gap-2"><div className="mr-3 max-w-xs text-right"><p className="text-xs font-bold">{status.account?.displayName}</p><p className="truncate text-[10px] text-ink/40">{status.account?.email}</p></div><button title={t("Switch language")} className="rounded-xl border border-ink/10 bg-white px-2.5 py-2.5 text-[11px] font-extrabold tracking-wide hover:bg-mint" onClick={() => void switchLanguage()}>{lang === "es" ? "ES" : "EN"}</button><button title={t("Change role")} className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={() => void exitRole()}><Home className="h-4 w-4" /></button><button title={t("Sign out")} className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-red-50 hover:text-red-600" onClick={signOut}><LogOut className="h-4 w-4" /></button></div></div></header>
+    <main className="mx-auto max-w-[1540px] px-8 py-8"><QaPanel /></main>
+  </div>;
+}
+
 function AtlasApp() {
   const { setLang } = useI18n();
   const [status, setStatus] = useState<AppStatus>(); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [installing, setInstalling] = useState(false); const [editingDestination, setEditingDestination] = useState(false);
   const refresh = async () => { setStatus(await api.status()); };
   useEffect(() => { if (status?.language === "es" || status?.language === "en") setLang(status.language as "es" | "en"); }, [status?.language, setLang]);
   useEffect(() => { refresh().catch(e => setError(String(e))); }, []);
-  useEffect(() => { if (status?.scheduledLaunch && (!status.configured || !status.signedIn || !status.profile || !status.destination || !status.autoSync)) void api.completeScheduled("", false, true); }, [status]);
+  useEffect(() => {
+    if (!status?.scheduledLaunch) return;
+    // The scheduled tracker task belongs to the CS flow; a manager session
+    // acknowledges it quietly instead of demanding tracker attention.
+    if (status.appRole === "manager") { void api.completeScheduled("", true, false); return; }
+    if (!status.configured || !status.signedIn || !status.profile || !status.destination || !status.autoSync) void api.completeScheduled("", false, true);
+  }, [status]);
   useEffect(() => { const onError = (event: ErrorEvent) => { void api.logError("window", event.message); }; const onRejection = (event: PromiseRejectionEvent) => { void api.logError("promise", String(event.reason)); }; window.addEventListener("error", onError); window.addEventListener("unhandledrejection", onRejection); return () => { window.removeEventListener("error", onError); window.removeEventListener("unhandledrejection", onRejection); }; }, []);
   const signIn = async () => { setBusy(true); setError(""); try { setStatus(await api.signIn()); } catch (e) { setError(String(e)); } finally { setBusy(false); } };
   const signOut = async () => { await api.signOut(); await refresh(); };
   const saveProfile = async (p: UserProfile) => { await api.saveProfile(p); await refresh(); };
   const usePowerAutomate = async (folder: string) => { setStatus(await api.savePowerAutomateFolder(folder)); setInstalling(false); };
   const saveDestination = async (destination: TrackerDestination, autoSync: boolean, autoSyncTime: string, automationMode: AutomationMode) => { setStatus(await api.saveDestination(destination, autoSync, autoSyncTime, automationMode)); setEditingDestination(false); };
+  const chooseRole = async (role: AppRole) => { setBusy(true); setError(""); try { setStatus(await api.saveAppRole(role)); } catch (e) { setError(String(e)); } finally { setBusy(false); } };
+  const exitRole = async () => { setStatus(await api.saveAppRole(null)); };
   if (!status) return error ? <main className="grid min-h-screen place-items-center p-10"><ErrorBanner message={error} /></main> : <LoadingScreen />;
   if (!status.configured || installing) return <ConnectorInstaller onClose={status.configured ? () => setInstalling(false) : undefined} onUseFolder={usePowerAutomate} />;
   if (!status.signedIn) return <LoginScreen onSignIn={signIn} onEditMicrosoft={() => setInstalling(true)} busy={busy} error={error} />;
+  if (!status.appRole) return error ? <main className="grid min-h-screen place-items-center p-10"><ErrorBanner message={error} /></main> : <RoleScreen onChoose={role => void chooseRole(role)} busy={busy} />;
+  if (status.appRole === "manager") return <ManagerWorkspace status={status} signOut={signOut} exitRole={exitRole} />;
   if (!status.profile) return <SetupScreen status={status} onSaved={saveProfile} />;
   if (!status.destination || editingDestination) return <DestinationSetupScreen initial={status.destination} initialAutoSync={status.autoSync} initialAutoSyncTime={status.autoSyncTime} initialAutomationMode={status.automationMode} bridgeMode={status.sourceMode === "power_automate_folder"} onSave={saveDestination} onCancel={status.destination ? () => setEditingDestination(false) : undefined} />;
-  return <Workspace status={status} refreshStatus={refresh} signOut={signOut} editMicrosoft={() => setInstalling(true)} editDestination={() => setEditingDestination(true)} />;
+  return <Workspace status={status} refreshStatus={refresh} signOut={signOut} editMicrosoft={() => setInstalling(true)} editDestination={() => setEditingDestination(true)} exitRole={exitRole} />;
 }
 
 export default function App() {

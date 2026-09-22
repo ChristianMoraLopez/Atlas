@@ -17,7 +17,7 @@ mod tracker_writer;
 use crate::{
     error::{AppError, Context, Result},
     models::{
-        AiInstructions, AppStatus, AutomationMode, ExportResult, ExtractionResult, Interaction,
+        AiInstructions, AppRole, AppStatus, AutomationMode, ExportResult, ExtractionResult, Interaction,
         QaCase, QaConfig, QaExportResult, QaExtractionResult, QaWatchStatus, SourceKind,
         SourceMode, TrackerDestination, TrackerDestinationKind, UserProfile,
     },
@@ -125,7 +125,27 @@ async fn build_status(state: &AppState) -> Result<AppStatus> {
         ai_instructions: settings.ai_instructions,
         scheduled_launch: state.background_launch,
         log_path: diagnostics::path(),
+        app_role: settings.app_role,
     })
+}
+
+#[tauri::command]
+async fn save_app_role(
+    state: tauri::State<'_, AppState>,
+    role: Option<String>,
+) -> Result<AppStatus> {
+    let parsed = match role.as_deref() {
+        None => None,
+        Some("cs") => Some(AppRole::Cs),
+        Some("manager") => Some(AppRole::Manager),
+        Some(other) => {
+            return Err(AppError::Message(format!("Unknown Atlas role: {other}")));
+        }
+    };
+    state.update_settings(|settings| {
+        settings.app_role = parsed;
+    })?;
+    build_status(&state).await
 }
 
 #[tauri::command]
@@ -1147,7 +1167,8 @@ pub fn run() {
             qa_check_new_mail,
             qa_export_cases,
             qa_open_output_folder,
-            qa_load_last_run
+            qa_load_last_run,
+            save_app_role
         ])
         .build(tauri::generate_context!())
         .expect("error while building Atlas");

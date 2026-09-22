@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
-  AlertCircle, Bell, Bot, Check, ChevronDown, Clock, FileSpreadsheet, FolderOpen,
-  History, Loader2, Mail, Plus, RefreshCw, Save, Search, Trash2, UserRound, X
+  AlertCircle, Bot, Check, ChevronDown, Clock, FileSpreadsheet, FolderOpen,
+  History, Loader2, Mail, Plus, Save, Search, Trash2, UserRound, X
 } from "lucide-react";
 import { api, formatDateTime } from "./lib";
 import { useT } from "./i18n";
+import LottieIcon from "./LottieIcon";
 import type { QaAuditee, QaCase, QaConfig, QaScheduleMode } from "./types";
 
 const YNA = ["Y", "N", "N/A"];
@@ -21,12 +22,18 @@ const AUTO_FAILS: [string, string][] = [
 
 const emptyAuditee: QaAuditee = { name: "", email: "", customRules: "", watched: true, historicalDone: false };
 
-function Banner({ tone, message, onClose }: { tone: "error" | "info"; message: string; onClose?: () => void }) {
+function Banner({ tone, message, onClose }: { tone: "error" | "info" | "success"; message: string; onClose?: () => void }) {
   const styles = tone === "error"
     ? "border-red-200 bg-red-50 text-red-800"
-    : "border-pine/15 bg-mint/55 text-pine";
-  return <div className={`flex items-start gap-3 rounded-xl border px-4 py-3 text-sm ${styles}`}>
-    {tone === "error" ? <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /> : <Check className="mt-0.5 h-4 w-4 shrink-0" />}
+    : tone === "success"
+      ? "border-pine/20 bg-mint/70 text-pine"
+      : "border-pine/15 bg-mint/55 text-pine";
+  return <div className={`pop flex items-start gap-3 rounded-xl border px-4 py-3 text-sm ${styles}`}>
+    {tone === "error"
+      ? <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+      : tone === "success"
+        ? <LottieIcon name="trophy" loop={false} className="h-10 w-10 shrink-0" />
+        : <Check className="mt-0.5 h-4 w-4 shrink-0" />}
     <span className="flex-1 whitespace-pre-line">{message}</span>
     {onClose && <button onClick={onClose}><X className="h-4 w-4" /></button>}
   </div>;
@@ -193,11 +200,13 @@ export function useQaScheduler() {
 
 export default function QaPanel() {
   const t = useT();
+  useQaScheduler();
   const [config, setConfig] = useState<QaConfig>();
   const [cases, setCases] = useState<QaCase[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [noticeTone, setNoticeTone] = useState<"info" | "success">("info");
   const [busy, setBusy] = useState<"" | "save" | "extract" | "historical" | "export" | "watch">("");
   const [configSaved, setConfigSaved] = useState(true);
   const [keywordsText, setKeywordsText] = useState("");
@@ -256,6 +265,7 @@ export default function QaPanel() {
         subjectKeywords: keywordsText.split(",").map(k => k.trim()).filter(Boolean),
       });
       setConfigSaved(true);
+      setNoticeTone("info");
       setNotice(t("QA configuration saved."));
       await refreshConfig();
     } catch (e) { setError(String(e)); }
@@ -275,7 +285,10 @@ export default function QaPanel() {
         await api.qaSaveConfig({ ...config, pendingWatch: [] }).catch(() => undefined);
         await refreshConfig();
       }
-      if (!result.cases.length) setNotice(t("No QA cases were found in the manager mailbox for the configured period."));
+      if (!result.cases.length) {
+        setNoticeTone("info");
+        setNotice(t("No QA cases were found in the manager mailbox for the configured period."));
+      }
     } catch (e) { setError(String(e)); }
     finally { setBusy(""); }
   };
@@ -292,6 +305,7 @@ export default function QaPanel() {
     setBusy("export"); setError(""); setNotice("");
     try {
       const result = await api.qaExport(cases);
+      setNoticeTone("success");
       setNotice(t("QA export complete: {count} row(s) written into {files} workbook(s).", { count: result.written, files: result.files.length }));
     } catch (e) { setError(String(e)); }
     finally { setBusy(""); }
@@ -308,7 +322,7 @@ export default function QaPanel() {
   ];
 
   return <div className="space-y-6">
-    <div className="mb-1 flex items-end justify-between">
+    <div className="rise mb-1 flex items-end justify-between">
       <div>
         <p className="text-xs font-bold uppercase tracking-[.18em] text-pine">{t("QA Audit")}</p>
         <h1 className="mt-2 font-display text-4xl">{t("Audit your team's cases.")}</h1>
@@ -321,16 +335,16 @@ export default function QaPanel() {
     </div>
 
     {error && <Banner tone="error" message={error} onClose={() => setError("")} />}
-    {notice && <Banner tone="info" message={notice} onClose={() => setNotice("")} />}
+    {notice && <Banner tone={noticeTone} message={notice} onClose={() => setNotice("")} />}
     {warnings.map((w, i) => <Banner key={i} tone="error" message={w} />)}
-    {config.pendingWatch.length > 0 && <div className="flex items-center gap-3 rounded-xl border border-[#e89969]/40 bg-[#fff0df] px-4 py-3 text-sm text-[#9a5a1e]">
-      <Bell className="h-4 w-4 shrink-0" />
+    {config.pendingWatch.length > 0 && <div className="watch-ring pop flex items-center gap-3 rounded-xl border border-[#e89969]/40 bg-[#fff0df] px-4 py-3 text-sm text-[#9a5a1e]">
+      <LottieIcon name="mailDelivery" className="h-12 w-12 shrink-0" />
       <span className="flex-1">{t("New mail arrived from: {names}. Run the QA analysis to audit it.", { names: config.pendingWatch.join(", ") })}</span>
       <button className="font-bold underline" disabled={busy !== ""} onClick={() => void extract(false)}>{t("Run now")}</button>
       <button onClick={() => void dismissWatch()}><X className="h-4 w-4" /></button>
     </div>}
 
-    <div className="card p-5">
+    <div className="card card-lift rise rise-1 p-5">
       <div className="flex items-center justify-between">
         <h2 className="font-display text-xl">{t("People to audit")}</h2>
         <button className="btn-secondary" onClick={() => updateConfig({ auditees: [...config.auditees, { ...emptyAuditee }] })}>
@@ -340,7 +354,7 @@ export default function QaPanel() {
       <p className="mt-1 text-xs text-ink/45">{t("Atlas watches your mailbox for mail from these people. You can adjust the evaluation rules per person (for example, when response-time ranges do not apply to their role).")}</p>
       <div className="mt-4 space-y-3">
         {config.auditees.length === 0 && <p className="rounded-xl border border-dashed border-ink/15 p-4 text-center text-xs text-ink/40">{t("No one on the list yet. Add the first person to audit.")}</p>}
-        {config.auditees.map((a, i) => <div key={i} className="rounded-xl border border-ink/8 bg-white p-4">
+        {config.auditees.map((a, i) => <div key={i} className="pop rounded-xl border border-ink/8 bg-white p-4">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_1fr_auto]">
             <label><span className="label">{t("Name")}</span>
               <input className="field" value={a.name} placeholder="Christian Rey Mora Lopez"
@@ -421,11 +435,16 @@ export default function QaPanel() {
       </div>
     </div>
 
-    <div className="card p-5">
+    <div className="card card-lift rise rise-2 p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="font-display text-xl">{t("Find and evaluate cases")}</h2>
-          <p className="mt-1 text-xs text-ink/45">{t("Searches your mailbox for QA conversations with the people on the list and evaluates them with the bundled local AI. Nothing leaves this computer.")}</p>
+        <div className="flex items-center gap-4">
+          <div className="lottie-frame h-20 w-20 shrink-0">
+            <LottieIcon name="robotHello" className="h-16 w-16" />
+          </div>
+          <div>
+            <h2 className="font-display text-xl">{t("Find and evaluate cases")}</h2>
+            <p className="mt-1 max-w-xl text-xs text-ink/45">{t("Searches your mailbox for QA conversations with the people on the list and evaluates them with the bundled local AI. Nothing leaves this computer.")}</p>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           {pendingHistorical.length > 0 && <button className="btn-secondary h-[46px]" disabled={busy !== ""} onClick={() => void extract(true)}
@@ -443,8 +462,13 @@ export default function QaPanel() {
     </div>
 
     {cases.length > 0 && <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="font-display text-2xl">{t("Review before exporting")}</h2>
+      <div className="rise flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="lottie-frame h-12 w-12">
+            <LottieIcon name="clipboard" className="h-10 w-10" />
+          </div>
+          <h2 className="font-display text-2xl">{t("Review before exporting")}</h2>
+        </div>
         <div className="flex items-center gap-2">
           <button className="btn-secondary" disabled={busy !== ""} onClick={() => void api.qaOpenFolder().catch(e => setError(String(e)))}>
             <FolderOpen className="h-4 w-4" />{t("Open folder")}
@@ -456,13 +480,17 @@ export default function QaPanel() {
         </div>
       </div>
       {!config.outputFolder && <Banner tone="error" message={t("Choose an output folder above before exporting.")} />}
-      {cases.map(item => <CaseCard key={item.caseId} item={item}
-        onChange={next => setCases(old => old.map(c => c.caseId === next.caseId ? next : c))} />)}
+      {cases.map((item, i) => <div key={item.caseId} className="rise" style={{ animationDelay: `${Math.min(i, 6) * 70}ms` }}>
+        <CaseCard item={item}
+          onChange={next => setCases(old => old.map(c => c.caseId === next.caseId ? next : c))} />
+      </div>)}
     </div>}
 
-    {cases.length === 0 && busy === "" && <div className="card grid min-h-48 place-items-center p-10 text-center">
+    {cases.length === 0 && busy === "" && <div className="card rise rise-3 grid min-h-48 place-items-center p-10 text-center">
       <div>
-        <div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-mint text-pine"><RefreshCw /></div>
+        <div className="lottie-frame mx-auto h-36 w-36">
+          <LottieIcon name="mailHello" className="h-32 w-32" />
+        </div>
         <h3 className="mt-4 font-display text-xl">{t("Set up the list and run the analysis")}</h3>
         <p className="mt-2 max-w-md text-xs leading-5 text-ink/45">{t("Each conversation becomes a draft QA audit with the form fields ready to review. The manager always has the last word before anything is exported.")}</p>
       </div>
