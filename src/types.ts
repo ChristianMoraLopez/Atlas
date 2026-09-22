@@ -112,3 +112,68 @@ export interface AutomationRequest {
   runKey: string;
   reason: string;
 }
+
+// ---------------------------------------------------------------------------
+// QA Audit module types
+// ---------------------------------------------------------------------------
+
+export interface QaAuditee {
+  name: string;
+  email: string;
+  customRules: string;
+  watched: boolean;
+}
+
+export interface QaConfig {
+  auditees: QaAuditee[];
+  outputFolder?: string;
+  lookbackDays: number;
+  vertical: string;
+  watchEnabled: boolean;
+  lastMailCheck?: string;
+}
+
+export interface QaEvidenceRef {
+  messageId: string;
+  label: string;
+  excerpt: string;
+}
+
+export interface QaCase {
+  caseId: string;
+  analystName: string;
+  analystEmail: string;
+  auditDate: string;
+  requestId: string;
+  requestDate: string;
+  requestSource: string;
+  initialResponse: string;
+  initialResponseNotes: string;
+  customerSentiment: string;
+  customerSentimentNotes: string;
+  adherence: string;
+  adherenceNotes: string;
+  status: string;
+  statusNotes: string;
+  updateFollowUp: string;
+  updateFollowUpNotes: string;
+  autoFail: string;
+  evidence: QaEvidenceRef[];
+  selected: boolean;
+  reviewed: boolean;
+}
+
+export interface QaExtractionResult {
+  cases: QaCase[];
+  warnings: string[];
+}
+
+export interface QaExportResult {
+  files: string[];
+  written: number;
+}
+
+export interface QaWatchStatus {
+  newSenders: string[];
+  checkedAt: string;
+}

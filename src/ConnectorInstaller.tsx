@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { Check, ExternalLink, FolderOpen, RotateCcw, ShieldCheck, X } from 'lucide-react';
 import AtlasLoader from './AtlasLoader';
-import { useT } from './i18n';
+import { useI18n, useT } from './i18n';
 
 type Phase = 'checking_requirements' | 'waiting_sign_in' | 'finding_environment' | 'finding_connections' | 'importing_solution' | 'activating_flow' | 'verifying_file' | 'completed' | 'blocked_by_policy';
 interface Session { phase: Phase; installationId: string; folder?: string; calendarName: string; environmentId?: string; diagnostic: string; lastCheckedAt?: string; lastCheckedFile?: string }
@@ -51,6 +51,12 @@ const diagnostics: Record<string, string> = {
 
 export default function ConnectorInstaller({ onClose, onUseFolder }: { onClose?: () => void; onUseFolder: (folder: string) => Promise<void> }) {
   const t = useT();
+  const { lang, setLang } = useI18n();
+  const switchLanguage = async () => {
+    const next = lang === 'es' ? 'en' : 'es';
+    setLang(next);
+    try { await invoke('save_language', { language: next }); } catch { void invoke('log_frontend_error', { context: 'save-language', message: `save_language failed for ${next}` }).catch(() => undefined); }
+  };
   const [snapshot, setSnapshot] = useState<Snapshot>();
   const [root, setRoot] = useState('');
   const [ownConnections, setOwnConnections] = useState(false);
@@ -111,7 +117,7 @@ export default function ConnectorInstaller({ onClose, onUseFolder }: { onClose?:
     if (typeof folder === 'string') { setRoot(folder); setSyncAccount(false); }
   }, 'Abriendo tu OneDrive corporativo');
   return <main className="mx-auto min-h-screen max-w-6xl px-10 py-8" aria-busy={busy || !snapshot}>
-    <header className="flex items-center justify-between"><span className="chip bg-mint text-pine"><ShieldCheck className="h-4 w-4" />{t('Sin instalaciones de sistema')}</span>{onClose && <button className="btn-secondary" onClick={onClose} disabled={busy}><X className="h-4 w-4" />{t('Cerrar y conservar progreso')}</button>}</header>
+    <header className="flex items-center justify-between"><span className="chip bg-mint text-pine"><ShieldCheck className="h-4 w-4" />{t('Sin instalaciones de sistema')}</span><span className="flex items-center gap-2"><button title={t('Switch language')} className="rounded-xl border border-ink/10 bg-white px-2.5 py-2.5 text-[11px] font-extrabold tracking-wide hover:bg-mint" onClick={() => void switchLanguage()}>{lang === 'es' ? 'ES' : 'EN'}</button>{onClose && <button className="btn-secondary" onClick={onClose} disabled={busy}><X className="h-4 w-4" />{t('Cerrar y conservar progreso')}</button>}</span></header>
     <h1 className="mt-7 font-display text-4xl">{t('Instalar conector de Microsoft 365')}</h1>
     <p className="mt-3 max-w-4xl text-sm leading-6 text-ink/65">{t('Inicia sesión con tu cuenta Circana en el portal oficial, vincula tus conexiones e importa el paquete una sola vez. El flujo se entrega activo y se ejecuta cada cinco minutos; no necesitas abrir el diseñador ni copiar identificadores.')}</p>
     <div className="mt-7 grid grid-cols-[280px_1fr] gap-6">

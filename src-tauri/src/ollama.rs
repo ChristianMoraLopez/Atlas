@@ -492,6 +492,59 @@ impl ManagedRuntime {
         Ok(result)
     }
 
+    /// Runs a single structured-generation request against the bundled model
+    /// and returns the raw JSON text produced by the model. Used by modules
+    /// (like QA auditing) that need their own prompt and JSON schema.
+    pub(crate) async fn generate_structured(
+        &self,
+        client: &Client,
+        model: &str,
+        prompt: String,
+        format: serde_json::Value,
+        num_predict: u32,
+    ) -> Result<String> {
+        if model != BUNDLED_MODEL {
+            return Err(AppError::Message(
+                "Refused to use an unbundled Local AI model.".into(),
+            ));
+        }
+        self.ensure_ready(client).await?;
+        let port = self
+            .port
+            .lock()
+            .map_err(|_| AppError::Message("Local AI port lock was poisoned".into()))?
+            .ok_or_else(|| AppError::Message("Local AI did not select a port".into()))?;
+        let url = runtime_url(port, "api/generate")?;
+        let response = client
+            .post(url)
+            .timeout(Duration::from_secs(180))
+            .json(&GenerateRequest {
+                model,
+                prompt,
+                stream: false,
+                format,
+                options: GenerateOptions {
+                    temperature: 0.0,
+                    num_ctx: 8192,
+                    num_predict,
+                },
+            })
+            .send()
+            .await
+            .context("The bundled Local AI request failed")?;
+        if !response.status().is_success() {
+            return Err(AppError::Message(format!(
+                "Bundled Local AI returned {}.",
+                response.status()
+            )));
+        }
+        let raw: GenerateResponse = response
+            .json()
+            .await
+            .context("Bundled Local AI returned an invalid response envelope")?;
+        Ok(raw.response.trim().to_string())
+    }
+
     fn interpretation_cache_path(
         &self,
         model: &str,

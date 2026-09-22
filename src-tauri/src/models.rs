@@ -135,6 +135,8 @@ pub struct Settings {
     pub language: String,
     #[serde(default)]
     pub ai_instructions: AiInstructions,
+    #[serde(default)]
+    pub qa: QaConfig,
 }
 
 fn default_auto_sync() -> bool {
@@ -163,6 +165,7 @@ impl Default for Settings {
             automation_mode: AutomationMode::default(),
             language: default_language(),
             ai_instructions: AiInstructions::default(),
+            qa: QaConfig::default(),
         }
     }
 }
@@ -225,4 +228,122 @@ pub struct ExportResult {
     pub skipped: usize,
     #[serde(default)]
     pub queued: bool,
+}
+
+// ---------------------------------------------------------------------------
+// QA Audit module models
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct QaAuditee {
+    pub name: String,
+    pub email: String,
+    /// Per-person manager rules injected into the AI prompt for this auditee
+    /// (e.g. "response-time ranges do not apply, this CSA works ticket-based").
+    #[serde(default)]
+    pub custom_rules: String,
+    /// Whether new mail from this person triggers a QA check notification.
+    #[serde(default = "default_true")]
+    pub watched: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_qa_lookback_days() -> u32 {
+    7
+}
+
+fn default_qa_vertical() -> String {
+    "320 - CLIENT SERVICE BEAUTY, HEALTH & WELLNESS".into()
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct QaConfig {
+    #[serde(default)]
+    pub auditees: Vec<QaAuditee>,
+    #[serde(default)]
+    pub output_folder: Option<String>,
+    #[serde(default = "default_qa_lookback_days")]
+    pub lookback_days: u32,
+    #[serde(default = "default_qa_vertical")]
+    pub vertical: String,
+    /// When enabled, Atlas watches the manager mailbox for new mail from
+    /// watched auditees and notifies the manager to run a QA analysis.
+    #[serde(default)]
+    pub watch_enabled: bool,
+    /// RFC3339 timestamp of the last mailbox watch check.
+    #[serde(default)]
+    pub last_mail_check: Option<String>,
+}
+
+impl Default for QaConfig {
+    fn default() -> Self {
+        Self {
+            auditees: Vec::new(),
+            output_folder: None,
+            lookback_days: default_qa_lookback_days(),
+            vertical: default_qa_vertical(),
+            watch_enabled: false,
+            last_mail_check: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QaWatchStatus {
+    pub new_senders: Vec<String>,
+    pub checked_at: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QaEvidenceRef {
+    pub message_id: String,
+    pub label: String,
+    pub excerpt: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QaCase {
+    pub case_id: String,
+    pub analyst_name: String,
+    pub analyst_email: String,
+    pub audit_date: String,
+    pub request_id: String,
+    pub request_date: String,
+    pub request_source: String,
+    pub initial_response: String,
+    pub initial_response_notes: String,
+    pub customer_sentiment: String,
+    pub customer_sentiment_notes: String,
+    pub adherence: String,
+    pub adherence_notes: String,
+    pub status: String,
+    pub status_notes: String,
+    pub update_follow_up: String,
+    pub update_follow_up_notes: String,
+    pub auto_fail: String,
+    pub evidence: Vec<QaEvidenceRef>,
+    pub selected: bool,
+    pub reviewed: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QaExtractionResult {
+    pub cases: Vec<QaCase>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QaExportResult {
+    pub files: Vec<String>,
+    pub written: usize,
 }

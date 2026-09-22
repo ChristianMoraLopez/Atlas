@@ -1,6 +1,6 @@
 [package]
 name = "atlas-tracker"
-version = "0.2.26"
+version = "0.2.27"
 description = "Circana Interactions Tracker"
 authors = ["Christian Mora Lopez"]
 edition = "2021"
@@ -23,6 +23,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "nat
 oauth2 = { version = "5", default-features = false, features = ["reqwest", "native-tls"] }
 keyring = { version = "3", features = ["windows-native"] }
 umya-spreadsheet = "2.3"
+pdf-extract = "0.9"
 quick-xml = "0.37"
 zip = { version = "2.4", default-features = false, features = ["deflate"] }
 chrono = { version = "0.4", features = ["serde"] }

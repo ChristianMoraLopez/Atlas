@@ -9,15 +9,17 @@ mod excel;
 mod graph;
 mod models;
 mod ollama;
+mod qa;
 mod sharepoint;
 mod state;
 mod tracker_writer;
 
 use crate::{
-    error::{AppError, Result},
+    error::{AppError, Context, Result},
     models::{
         AiInstructions, AppStatus, AutomationMode, ExportResult, ExtractionResult, Interaction,
-        SourceKind, SourceMode, TrackerDestination, TrackerDestinationKind, UserProfile,
+        QaCase, QaConfig, QaExportResult, QaExtractionResult, QaWatchStatus, SourceKind,
+        SourceMode, TrackerDestination, TrackerDestinationKind, UserProfile,
     },
     state::AppState,
 };
@@ -922,6 +924,85 @@ async fn export_configured_tracker(
     Ok(result)
 }
 
+// ---------------------------------------------------------------------------
+// QA Audit commands (additive module; does not touch the tracker pipeline)
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+fn qa_get_config(state: tauri::State<'_, AppState>) -> Result<QaConfig> {
+    Ok(state.read_settings()?.qa)
+}
+
+#[tauri::command]
+fn qa_save_config(state: tauri::State<'_, AppState>, config: QaConfig) -> Result<()> {
+    for auditee in &config.auditees {
+        if auditee.name.trim().is_empty() || !auditee.email.contains('@') {
+            return Err(AppError::Message(
+                "Each person on the QA list needs a name and a valid email.".into(),
+            ));
+        }
+    }
+    if let Some(folder) = config.output_folder.as_deref() {
+        if !folder.trim().is_empty() {
+            std::fs::create_dir_all(folder)
+                .context("Unable to create the QA output folder")?;
+        }
+    }
+    state.update_settings(|settings| {
+        settings.qa = config;
+    })
+}
+
+#[tauri::command]
+async fn qa_extract_cases(state: tauri::State<'_, AppState>) -> Result<QaExtractionResult> {
+    let settings = state.read_settings()?;
+    if settings.source_mode != SourceMode::MicrosoftGraph {
+        return Err(AppError::Message(
+            "QA audit needs the Microsoft Graph source mode (the manager mailbox).".into(),
+        ));
+    }
+    let token = auth::access_token(&state).await?;
+    qa::extract(&state, &token, ollama::BUNDLED_MODEL).await
+}
+
+#[tauri::command]
+async fn qa_check_new_mail(state: tauri::State<'_, AppState>) -> Result<QaWatchStatus> {
+    let settings = state.read_settings()?;
+    if settings.source_mode != SourceMode::MicrosoftGraph {
+        return Ok(QaWatchStatus {
+            new_senders: Vec::new(),
+            checked_at: chrono::Utc::now().to_rfc3339(),
+        });
+    }
+    let token = auth::access_token(&state).await?;
+    qa::check_new_mail(&state, &token).await
+}
+
+#[tauri::command]
+async fn qa_export_cases(
+    state: tauri::State<'_, AppState>,
+    cases: Vec<QaCase>,
+) -> Result<QaExportResult> {
+    let config = state.read_settings()?.qa;
+    tauri::async_runtime::spawn_blocking(move || qa::export(&config, &cases))
+        .await
+        .map_err(|e| AppError::Message(format!("QA export task failed: {e}")))?
+}
+
+#[tauri::command]
+fn qa_open_output_folder(state: tauri::State<'_, AppState>) -> Result<()> {
+    let config = state.read_settings()?.qa;
+    let folder = qa::output_folder(&config)
+        .ok_or_else(|| AppError::Message("Configure the QA output folder first.".into()))?;
+    if !folder.is_dir() {
+        return Err(AppError::Message(
+            "The configured QA output folder no longer exists.".into(),
+        ));
+    }
+    open::that_detached(&folder)
+        .map_err(|error| AppError::Message(format!("Windows could not open the folder: {error}")))
+}
+
 #[tauri::command]
 fn open_tracker_destination(state: tauri::State<'_, AppState>) -> Result<()> {
     let destination = state
@@ -1037,7 +1118,13 @@ pub fn run() {
             extract_interactions,
             load_cached_day,
             save_day_preview,
-            export_configured_tracker
+            export_configured_tracker,
+            qa_get_config,
+            qa_save_config,
+            qa_extract_cases,
+            qa_check_new_mail,
+            qa_export_cases,
+            qa_open_output_folder
         ])
         .build(tauri::generate_context!())
         .expect("error while building Atlas");
