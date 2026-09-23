@@ -1,0 +1,291 @@
+{
+  "properties": {
+    "connectionReferences": {
+      "shared_office365": {
+        "runtimeSource": "embedded",
+        "connection": {
+          "connectionReferenceLogicalName": "atlas_qa_office365"
+        },
+        "api": {
+          "name": "shared_office365"
+        }
+      },
+      "shared_onedriveforbusiness": {
+        "runtimeSource": "embedded",
+        "connection": {
+          "connectionReferenceLogicalName": "atlas_qa_onedriveforbusiness"
+        },
+        "api": {
+          "name": "shared_onedriveforbusiness"
+        }
+      }
+    },
+    "definition": {
+      "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+      "contentVersion": "1.0.0.0",
+      "parameters": {
+        "$connections": {
+          "defaultValue": {},
+          "type": "Object"
+        },
+        "$authentication": {
+          "defaultValue": {},
+          "type": "SecureObject"
+        }
+      },
+      "triggers": {
+        "Every_5_minutes": {
+          "type": "Recurrence",
+          "recurrence": {
+            "frequency": "Minute",
+            "interval": 5
+          },
+          "runtimeConfiguration": {
+            "concurrency": {
+              "runs": 1
+            }
+          }
+        }
+      },
+      "actions": {
+        "AtlasInstallationId": {
+          "type": "Compose",
+          "inputs": "unconfigured",
+          "runAfter": {}
+        },
+        "Read_QA_request": {
+          "type": "OpenApiConnection",
+          "inputs": {
+            "host": {
+              "apiId": "/providers/Microsoft.PowerApps/apis/shared_onedriveforbusiness",
+              "connectionName": "shared_onedriveforbusiness",
+              "operationId": "GetFileContentByPath"
+            },
+            "parameters": {
+              "path": "/AtlasBridge/qa/requests/qa-request.txt",
+              "inferContentType": true
+            },
+            "authentication": "@parameters('$authentication')"
+          },
+          "runAfter": {
+            "AtlasInstallationId": [
+              "Succeeded"
+            ]
+          }
+        },
+        "QA_request": {
+          "type": "Compose",
+          "inputs": "@json(trim(base64ToString(body('Read_QA_request'))))",
+          "runAfter": {
+            "Read_QA_request": [
+              "Succeeded"
+            ]
+          }
+        },
+        "Request_is_for_this_installation": {
+          "type": "If",
+          "expression": {
+            "and": [
+              {
+                "equals": [
+                  "@coalesce(outputs('QA_request')?['installationId'],'')",
+                  "@outputs('AtlasInstallationId')"
+                ]
+              },
+              {
+                "not": {
+                  "equals": [
+                    "@coalesce(outputs('QA_request')?['requestId'],'')",
+                    ""
+                  ]
+                }
+              }
+            ]
+          },
+          "actions": {
+            "Find_previous_answer": {
+              "type": "OpenApiConnection",
+              "inputs": {
+                "host": {
+                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_onedriveforbusiness",
+                  "connectionName": "shared_onedriveforbusiness",
+                  "operationId": "GetFileMetadataByPath"
+                },
+                "parameters": {
+                  "path": "@concat('/AtlasBridge/qa/inbox/atlas-qa-',outputs('AtlasInstallationId'),'-',outputs('QA_request')?['requestId'],'-done.json')"
+                },
+                "authentication": "@parameters('$authentication')"
+              },
+              "runAfter": {}
+            },
+            "Answer_request": {
+              "type": "Scope",
+              "actions": {
+                "For_each_query": {
+                  "type": "Foreach",
+                  "foreach": "@coalesce(outputs('QA_request')?['queries'],json('[]'))",
+                  "runtimeConfiguration": {
+                    "concurrency": {
+                      "repetitions": 1
+                    }
+                  },
+                  "actions": {
+                    "Query_mailbox": {
+                      "type": "Scope",
+                      "actions": {
+                        "Get_QA_emails": {
+                          "type": "OpenApiConnection",
+                          "inputs": {
+                            "host": {
+                              "apiId": "/providers/Microsoft.PowerApps/apis/shared_office365",
+                              "connectionName": "shared_office365",
+                              "operationId": "GetEmailsV3"
+                            },
+                            "parameters": {
+                              "folderPath": "@items('For_each_query')?['folder']",
+                              "fetchOnlyUnread": false,
+                              "includeAttachments": false,
+                              "searchQuery": "@items('For_each_query')?['search']",
+                              "top": "@items('For_each_query')?['top']"
+                            },
+                            "authentication": "@parameters('$authentication')"
+                          },
+                          "runAfter": {}
+                        },
+                        "Select_QA_fields": {
+                          "type": "Select",
+                          "inputs": {
+                            "from": "@coalesce(body('Get_QA_emails')?['value'],json('[]'))",
+                            "select": {
+                              "id": "@item()?['id']",
+                              "conversationId": "@coalesce(item()?['conversationId'],'')",
+                              "subject": "@coalesce(item()?['subject'],'')",
+                              "receivedDateTime": "@coalesce(item()?['receivedDateTime'],item()?['sentDateTime'],'')",
+                              "from": "@coalesce(item()?['from'],'')",
+                              "toRecipients": "@coalesce(item()?['toRecipients'],'')",
+                              "ccRecipients": "@coalesce(item()?['ccRecipients'],'')",
+                              "hasAttachments": "@coalesce(item()?['hasAttachments'],false)",
+                              "bodyPreview": "@coalesce(item()?['bodyPreview'],'')",
+                              "body": "@substring(coalesce(item()?['body'],''),0,min(length(coalesce(item()?['body'],'')),20000))"
+                            }
+                          },
+                          "runAfter": {
+                            "Get_QA_emails": [
+                              "Succeeded"
+                            ]
+                          }
+                        },
+                        "Compose_QA_page": {
+                          "type": "Compose",
+                          "inputs": {
+                            "contract": "atlas-qa-v1",
+                            "installationId": "@outputs('AtlasInstallationId')",
+                            "requestId": "@outputs('QA_request')?['requestId']",
+                            "queryId": "@items('For_each_query')?['id']",
+                            "status": "ok",
+                            "exportedAt": "@utcNow()",
+                            "count": "@length(body('Select_QA_fields'))",
+                            "messages": "@body('Select_QA_fields')"
+                          },
+                          "runAfter": {
+                            "Select_QA_fields": [
+                              "Succeeded"
+                            ]
+                          }
+                        },
+                        "Write_QA_page": {
+                          "type": "OpenApiConnection",
+                          "inputs": {
+                            "host": {
+                              "apiId": "/providers/Microsoft.PowerApps/apis/shared_onedriveforbusiness",
+                              "connectionName": "shared_onedriveforbusiness",
+                              "operationId": "CreateFile"
+                            },
+                            "parameters": {
+                              "folderPath": "/AtlasBridge/qa/inbox",
+                              "name": "@concat('atlas-qa-',outputs('AtlasInstallationId'),'-',outputs('QA_request')?['requestId'],'-',items('For_each_query')?['id'],'.json')",
+                              "body": "@string(outputs('Compose_QA_page'))"
+                            },
+                            "authentication": "@parameters('$authentication')"
+                          },
+                          "runAfter": {
+                            "Compose_QA_page": [
+                              "Succeeded"
+                            ]
+                          }
+                        }
+                      },
+                      "runAfter": {}
+                    },
+                    "Write_QA_failure": {
+                      "type": "OpenApiConnection",
+                      "inputs": {
+                        "host": {
+                          "apiId": "/providers/Microsoft.PowerApps/apis/shared_onedriveforbusiness",
+                          "connectionName": "shared_onedriveforbusiness",
+                          "operationId": "CreateFile"
+                        },
+                        "parameters": {
+                          "folderPath": "/AtlasBridge/qa/inbox",
+                          "name": "@concat('atlas-qa-',outputs('AtlasInstallationId'),'-',outputs('QA_request')?['requestId'],'-',items('For_each_query')?['id'],'.json')",
+                          "body": "@string(json(concat('{\"contract\":\"atlas-qa-v1\",\"status\":\"failed\",\"installationId\":\"',outputs('AtlasInstallationId'),'\",\"requestId\":\"',outputs('QA_request')?['requestId'],'\",\"queryId\":\"',items('For_each_query')?['id'],'\",\"exportedAt\":\"',utcNow(),'\",\"count\":0,\"messages\":[]}')))"
+                        },
+                        "authentication": "@parameters('$authentication')"
+                      },
+                      "runAfter": {
+                        "Query_mailbox": [
+                          "Failed",
+                          "TimedOut"
+                        ]
+                      }
+                    }
+                  },
+                  "runAfter": {}
+                },
+                "Write_done": {
+                  "type": "OpenApiConnection",
+                  "inputs": {
+                    "host": {
+                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_onedriveforbusiness",
+                      "connectionName": "shared_onedriveforbusiness",
+                      "operationId": "CreateFile"
+                    },
+                    "parameters": {
+                      "folderPath": "/AtlasBridge/qa/inbox",
+                      "name": "@concat('atlas-qa-',outputs('AtlasInstallationId'),'-',outputs('QA_request')?['requestId'],'-done.json')",
+                      "body": "@string(json(concat('{\"contract\":\"atlas-qa-v1\",\"status\":\"done\",\"installationId\":\"',outputs('AtlasInstallationId'),'\",\"requestId\":\"',outputs('QA_request')?['requestId'],'\",\"exportedAt\":\"',utcNow(),'\"}')))"
+                    },
+                    "authentication": "@parameters('$authentication')"
+                  },
+                  "runAfter": {
+                    "For_each_query": [
+                      "Succeeded",
+                      "Failed",
+                      "TimedOut"
+                    ]
+                  }
+                }
+              },
+              "runAfter": {
+                "Find_previous_answer": [
+                  "Failed"
+                ]
+              }
+            }
+          },
+          "else": {
+            "actions": {}
+          },
+          "runAfter": {
+            "QA_request": [
+              "Succeeded"
+            ]
+          }
+        }
+      },
+      "outputs": {}
+    },
+    "templateName": null
+  },
+  "schemaVersion": "1.0.0.0"
+}

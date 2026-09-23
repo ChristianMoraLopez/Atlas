@@ -71,6 +71,8 @@ export interface AppStatus {
   scheduledLaunch: boolean;
   logPath: string;
   appRole?: AppRole;
+  qaBridgeFolder?: string;
+  solutionOwner?: string;
 }
 
 export interface Interaction {
@@ -127,28 +129,50 @@ export interface QaAuditee {
   historicalDone: boolean;
 }
 
-export type QaScheduleMode = "manual" | "startup" | "daily_time";
-
 export interface QaConfig {
   auditees: QaAuditee[];
   outputFolder?: string;
   lookbackDays: number;
   vertical: string;
   watchEnabled: boolean;
-  lastMailCheck?: string;
-  scheduleMode: QaScheduleMode;
-  scheduleTime: string;
   checkMorning: string;
   checkAfternoon: string;
-  pendingWatch: string[];
   subjectKeywords: string[];
+  historyMonths: number;
+  autoExport: boolean;
 }
 
-export interface QaLastRun {
-  ranAt: string;
-  source: string;
-  historical: boolean;
-  result: QaExtractionResult;
+export type QaHistoricalStatus = "idle" | "running" | "done";
+
+export interface QaEngineStatus {
+  source: "power_automate" | "microsoft_graph" | "not_configured";
+  connected: boolean;
+  historicalStatus: QaHistoricalStatus;
+  historicalMonthsDone: number;
+  historicalMonthsPlanned: number;
+  historicalHorizonMonths: number;
+  historicalOldestMonth?: string;
+  historicalStartedAt?: string;
+  historicalCompletedAt?: string;
+  pendingRequestAt?: string;
+  queuedWindows: number;
+  lastIncrementalAt?: string;
+  nextCheck?: string;
+  messages: number;
+  conversations: number;
+  pendingEvaluation: number;
+  cases: number;
+  needsReview: number;
+  reviewed: number;
+  newEvidence: number;
+  unexported: number;
+  activity?: string;
+  lastError?: string;
+  warnings: string[];
+  lastExportAt?: string;
+  lastExportError?: string;
+  lastLiveSignalAt?: string;
+  consecutiveTimeouts: number;
 }
 
 export interface QaEvidenceRef {
@@ -179,11 +203,12 @@ export interface QaCase {
   evidence: QaEvidenceRef[];
   selected: boolean;
   reviewed: boolean;
+  newEvidence: boolean;
 }
 
-export interface QaExtractionResult {
-  cases: QaCase[];
-  warnings: string[];
+export interface QaCaseEntry extends QaCase {
+  exported: boolean;
+  lastMessageAt: string;
 }
 
 export interface QaExportResult {
@@ -191,7 +216,25 @@ export interface QaExportResult {
   written: number;
 }
 
-export interface QaWatchStatus {
-  newSenders: string[];
-  checkedAt: string;
+export type InstallerPhase = "checking_requirements" | "waiting_sign_in" | "finding_environment" | "finding_connections" | "importing_solution" | "activating_flow" | "verifying_file" | "completed" | "blocked_by_policy";
+
+export interface InstallerSession {
+  phase: InstallerPhase;
+  installationId: string;
+  folder?: string;
+  calendarName: string;
+  environmentId?: string;
+  diagnostic: string;
+  lastCheckedAt?: string;
+  lastCheckedFile?: string;
+  ownerName?: string;
+  solutionDisplayName?: string;
+}
+
+export interface InstallerSnapshot {
+  session: InstallerSession;
+  kind: "tracker" | "qa";
+  packagePath: string;
+  oneDriveRoot?: string;
+  pacDetected: boolean;
 }

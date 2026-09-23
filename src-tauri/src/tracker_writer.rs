@@ -7,16 +7,11 @@ use serde::Serialize;
 use serde_json::Value;
 use std::{
     fs,
-    io::{Cursor, Read, Write},
     path::{Path, PathBuf},
 };
-use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
-const SOLUTION: &[u8] =
-    include_bytes!("../../power-automate-writer/AtlasTrackerWriter_1_0_0_0.zip");
 const OFFICE_SCRIPT: &[u8] =
     include_bytes!("../../power-automate-writer/office-script/Atlas Write Tracker.osts");
-const WORKFLOW: &str = "Workflows/AtlasWriteDailyTracker-4d6c39b7-cac8-4d19-a12e-95af49503b7f.json";
 
 pub struct PreparedWriter {
     pub package_path: String,
@@ -94,47 +89,34 @@ fn flow_target(sharing_url: &str) -> Result<(String, String)> {
     Ok((site, parsed.to_string()))
 }
 
-fn personalized_solution(site: &str, file_id: &str) -> Result<Vec<u8>> {
-    let mut source = ZipArchive::new(Cursor::new(SOLUTION))
-        .map_err(|_| AppError::Message("The bundled tracker writer is invalid.".into()))?;
-    let mut output = ZipWriter::new(Cursor::new(Vec::new()));
-    let mut changed = false;
-    for index in 0..source.len() {
-        let mut entry = source
-            .by_index(index)
-            .map_err(|_| AppError::Message("The bundled tracker writer is invalid.".into()))?;
-        let name = entry.name().to_string();
-        let mut bytes = Vec::new();
-        entry
-            .read_to_end(&mut bytes)
-            .map_err(|_| AppError::Message("The bundled tracker writer is invalid.".into()))?;
-        if name == WORKFLOW {
-            let mut flow: Value = serde_json::from_slice(&bytes)?;
+/// The writer solution is personalized like every Atlas solution: unique
+/// name, connection references and workflow id derive from the tracker
+/// installation id and carry the owner name, so colleagues in the same
+/// environment never overwrite each other.
+fn personalized_solution(
+    site: &str,
+    file_id: &str,
+    installation_id: &str,
+    owner: Option<&str>,
+) -> Result<Vec<u8>> {
+    let site = site.to_string();
+    let file_id = file_id.to_string();
+    crate::connector_installer::personalized_package(
+        &crate::connector_installer::WRITER,
+        installation_id,
+        owner,
+        &move |flow: &mut Value| {
             let actions = &mut flow["properties"]["definition"]["actions"];
-            actions["AtlasTargetSite"]["inputs"] = Value::String(site.into());
-            actions["AtlasTargetFileId"]["inputs"] = Value::String(file_id.into());
-            bytes = serde_json::to_vec_pretty(&flow)?;
-            changed = true;
-        }
-        output
-            .start_file(
-                name,
-                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated),
-            )
-            .map_err(|_| AppError::Message("Unable to generate the tracker writer ZIP.".into()))?;
-        output
-            .write_all(&bytes)
-            .map_err(|_| AppError::Message("Unable to generate the tracker writer ZIP.".into()))?;
-    }
-    if !changed {
-        return Err(AppError::Message(
-            "The bundled tracker writer workflow is missing.".into(),
-        ));
-    }
-    Ok(output
-        .finish()
-        .map_err(|_| AppError::Message("Unable to finish the tracker writer ZIP.".into()))?
-        .into_inner())
+            for (action, value) in [("AtlasTargetSite", &site), ("AtlasTargetFileId", &file_id)] {
+                actions
+                    .get_mut(action)
+                    .ok_or_else(|| {
+                        AppError::Message("The bundled tracker writer workflow is invalid.".into())
+                    })?["inputs"] = Value::String(value.clone());
+            }
+            Ok(())
+        },
+    )
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
@@ -162,6 +144,8 @@ pub fn prepare(
     config_dir: &Path,
     bridge_folder: &str,
     sharing_url: &str,
+    installation_id: &str,
+    owner: Option<&str>,
 ) -> Result<PreparedWriter> {
     let (site, file_id) = flow_target(sharing_url)?;
     let root = bridge_root(bridge_folder)?;
@@ -176,7 +160,10 @@ pub fn prepare(
     write_atomic(&script_path, OFFICE_SCRIPT)?;
     let writer_dir = config_dir.join("tracker-writer");
     let package_path = writer_dir.join("AtlasTrackerWriter_1_0_0_0.zip");
-    write_atomic(&package_path, &personalized_solution(&site, &file_id)?)?;
+    write_atomic(
+        &package_path,
+        &personalized_solution(&site, &file_id, installation_id, owner)?,
+    )?;
     Ok(PreparedWriter {
         package_path: package_path.to_string_lossy().into_owned(),
     })
@@ -244,6 +231,54 @@ mod tests {
             "https://example-my.sharepoint.com/personal/user_example_com"
         );
         assert_eq!(id, "665eb967-be4f-4bb8-bf7c-135380354e21");
+    }
+
+    #[test]
+    fn writer_package_is_personalized_per_installation_and_owner() {
+        let first = personalized_solution(
+            "https://example.sharepoint.com/sites/team",
+            "665eb967-be4f-4bb8-bf7c-135380354e21",
+            "user_test_a",
+            Some("Christian Mora"),
+        )
+        .unwrap();
+        let second = personalized_solution(
+            "https://example.sharepoint.com/sites/team",
+            "665eb967-be4f-4bb8-bf7c-135380354e21",
+            "user_test_b",
+            Some("Ana Test"),
+        )
+        .unwrap();
+        let read = |bytes: &[u8], name: &str| {
+            use std::io::Read;
+            let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+            let mut text = String::new();
+            zip.by_name(name).unwrap().read_to_string(&mut text).unwrap();
+            text
+        };
+        let solution = read(&first[..], "solution.xml");
+        assert!(solution.contains("<UniqueName>AtlasTrackerWriter_ChristianMora_user_test_a</UniqueName>"));
+        assert!(solution.contains("Atlas Tracker Writer - Christian Mora - user_tes"));
+        assert!(read(&second[..], "solution.xml").contains("AtlasTrackerWriter_AnaTest_user_test_b"));
+        let customizations = read(&first[..], "customizations.xml");
+        assert!(customizations.contains("atlas_writer_excel_user_test_a"));
+        assert!(customizations.contains("Atlas - Write daily tracker to SharePoint (Christian Mora)"));
+        assert!(!customizations.contains("4d6c39b7-cac8-4d19-a12e-95af49503b7f"));
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(first)).unwrap();
+        let workflow = (0..zip.len())
+            .map(|i| zip.by_index(i).unwrap().name().to_string())
+            .find(|name| name.starts_with("Workflows/"))
+            .unwrap();
+        let mut text = String::new();
+        {
+            use std::io::Read;
+            zip.by_name(&workflow).unwrap().read_to_string(&mut text).unwrap();
+        }
+        let flow: Value = serde_json::from_str(&text).unwrap();
+        let actions = &flow["properties"]["definition"]["actions"];
+        assert_eq!(actions["AtlasTargetSite"]["inputs"], "https://example.sharepoint.com/sites/team");
+        assert_eq!(actions["AtlasTargetFileId"]["inputs"], "665eb967-be4f-4bb8-bf7c-135380354e21");
+        assert!(actions.get("AtlasInstallationId").is_none());
     }
 
     #[test]

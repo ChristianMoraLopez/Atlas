@@ -58,6 +58,22 @@ flowchart LR
 5. Review or edit the rows, then export safely.
 6. Rerun without duplicate rows using stable source IDs and conflict protection.
 
+## 👥 Roles and personalized Power Automate solutions
+
+Setup starts by choosing a role. The role decides which Power Automate solution the connector assistant builds:
+
+| Role | Solution | Flows | Connectors |
+| --- | --- | --- | --- |
+| **Tracker · CS** | `AtlasBridge` | Export evidence to OneDrive (every 5 min), Capture Teams messages | Outlook, Teams, OneDrive |
+| **QA · Manager** | `AtlasQA` ([details](power-automate-qa/README.md)) | Export mailbox evidence on request (every 5 min), Watch analyst mail | Outlook, OneDrive |
+| Tracker, optional | `AtlasTrackerWriter` | Write daily tracker to SharePoint | OneDrive, SharePoint, Excel |
+
+Every bundled ZIP is a template. The assistant asks for the person's name and personalizes the package with that name and the persistent installation ID: unique name, display name, flow names, connection references and workflow GUIDs. For example, `AtlasQA_ChristianMora_<key>` is shown as *Atlas QA - Christian Mora - a84c12f9*. Colleagues in the same environment never collide, and a new Atlas version updates the same solution.
+
+**Tracker automation.** Atlas registers itself (Run key only, idempotent) to start hidden at Windows sign-in and processes the previous workday. It then stays in the notification area. If the PC was never restarted, it processes the previous workday at **09:30**. Failed runs retry after 45 minutes, up to four attempts.
+
+**QA automation.** Once people are added, Atlas imports their full QA history in monthly batches through the flow. After that it syncs at 09:00 and 15:00 and each time an audited analyst writes to the manager. It evaluates every changed conversation with local AI and fills one workbook per analyst, with one sheet per request week. Reviewed cases are never overwritten; new mail flags them for another look.
+
 ## 🧰 Stack
 
 <p align="center">

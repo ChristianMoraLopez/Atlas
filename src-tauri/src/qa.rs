@@ -1,426 +1,54 @@
-//! QA Audit module: pulls mail evidence from the manager mailbox for the
-//! configured auditees, evaluates each conversation against the QA rubric
-//! with the bundled local model, and writes cumulative per-analyst Excel
-//! workbooks (one sheet per audit date). Fully additive: it never touches
-//! the interactions tracker pipeline.
+//! QA Audit rubric: evaluates one mail conversation against the team QA
+//! framework with the bundled local model, and writes cumulative
+//! per-analyst Excel workbooks (one sheet per ISO week of the request).
+//! Mailbox collection, scheduling and the case store live in `qa_engine`.
+//! Fully additive: it never touches the interactions tracker pipeline.
 
 use crate::{
     diagnostics,
     error::{AppError, Context, Result},
-    models::{QaAuditee, QaCase, QaConfig, QaEvidenceRef, QaExtractionResult, QaExportResult, QaWatchStatus},
+    models::{QaAuditee, QaCase, QaConfig, QaEvidenceRef},
     state::AppState,
 };
-use base64::Engine;
-use chrono::{DateTime, Datelike, Duration, Utc};
-use regex::Regex;
+use chrono::{DateTime, Datelike, Utc};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::{collections::HashMap, fs, io::Read, path::{Path, PathBuf}};
-use url::Url;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::{Path, PathBuf},
+};
 
-const GRAPH_ROOT: &str = "https://graph.microsoft.com/v1.0";
-const MAX_CONVERSATIONS_PER_AUDITEE: usize = 10;
-const MAX_CONVERSATIONS_HISTORICAL: usize = 50;
-const MAX_MESSAGES_PER_CONVERSATION: usize = 40;
-const MAX_ATTACHMENT_BYTES: i64 = 8 * 1024 * 1024;
 const BODY_BUDGET: usize = 1200;
-const ATTACHMENT_BUDGET: usize = 1500;
 const TRANSCRIPT_BUDGET: usize = 6000;
+const QA_OUTPUT_TOKENS: u32 = 1400;
+const QA_RETRY_OUTPUT_TOKENS: u32 = 1800;
 
-// ---------------------------------------------------------------------------
-// Graph payloads
-// ---------------------------------------------------------------------------
-
-#[derive(Deserialize)]
-struct Page<T> {
-    value: Vec<T>,
-    #[serde(rename = "@odata.nextLink")]
-    next_link: Option<String>,
+pub(crate) struct MessageEvidence {
+    pub id: String,
+    pub author: String,
+    pub when: DateTime<Utc>,
+    pub subject: String,
+    pub text: String,
 }
 
-#[derive(Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-struct EmailAddress {
-    name: Option<String>,
-    address: Option<String>,
+pub(crate) struct ConversationEvidence {
+    pub conversation_id: String,
+    pub subject: String,
+    pub messages: Vec<MessageEvidence>,
 }
 
-#[derive(Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-struct Recipient {
-    email_address: EmailAddress,
-}
-
-#[derive(Deserialize)]
-struct ItemBody {
-    content: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct QaMailMessage {
-    id: String,
-    subject: Option<String>,
-    conversation_id: Option<String>,
-    received_date_time: Option<String>,
-    from: Option<Recipient>,
-    body: Option<ItemBody>,
-    has_attachments: Option<bool>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AttachmentMeta {
-    id: String,
-    name: Option<String>,
-    content_type: Option<String>,
-    size: Option<i64>,
-    #[serde(rename = "@odata.type")]
-    odata_type: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AttachmentFull {
-    content_bytes: Option<String>,
-}
-
-// ---------------------------------------------------------------------------
-// HTTP helpers (mirrors the safety rules in graph.rs)
-// ---------------------------------------------------------------------------
-
-fn qa_url(path: &str, pairs: &[(&str, String)]) -> Result<Url> {
-    let mut url =
-        Url::parse(&format!("{GRAPH_ROOT}{path}")).context("Invalid Microsoft Graph URL")?;
-    url.query_pairs_mut()
-        .extend_pairs(pairs.iter().map(|(k, v)| (*k, v.as_str())));
-    Ok(url)
-}
-
-fn validate_next_link(value: &str) -> Result<Url> {
-    let url = Url::parse(value).context("Microsoft Graph returned an invalid paging URL")?;
-    if url.scheme() != "https" || url.host_str() != Some("graph.microsoft.com") {
-        return Err(AppError::Message(
-            "Microsoft Graph returned an unsafe paging destination.".into(),
-        ));
-    }
-    Ok(url)
-}
-
-async fn graph_get<T: serde::de::DeserializeOwned>(
-    state: &AppState,
-    token: &str,
-    url: Url,
-) -> Result<T> {
-    let response = state
-        .http
-        .get(url)
-        .bearer_auth(token)
-        .header("Prefer", "outlook.timezone=\"UTC\"")
-        .send()
-        .await?;
-    let status = response.status();
-    if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
-        return Err(AppError::Message(format!(
-            "Microsoft Graph returned {status}: {}",
-            body.chars().take(350).collect::<String>()
-        )));
-    }
-    response
-        .json()
-        .await
-        .context("Microsoft Graph returned invalid data")
-}
-
-fn escape_filter(value: &str) -> String {
-    value.replace('\'', "''")
-}
-
-fn parse_time(value: &str) -> Result<DateTime<Utc>> {
-    crate::graph::parse_graph_time(value)
-}
-
-fn html_to_text(html: &str) -> String {
-    let tags = Regex::new(r"(?s)<[^>]*>").unwrap();
-    html_escape::decode_html_entities(&tags.replace_all(html, " "))
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-// ---------------------------------------------------------------------------
-// Evidence collection
-// ---------------------------------------------------------------------------
-
-struct MessageEvidence {
-    id: String,
-    author: String,
-    when: DateTime<Utc>,
-    subject: String,
-    text: String,
-    attachments: Vec<(String, String)>,
-}
-
-struct ConversationEvidence {
-    conversation_id: String,
-    subject: String,
-    messages: Vec<MessageEvidence>,
-}
-
-fn subject_matches(subject: &str, keywords: &[String]) -> bool {
-    let lower = subject.to_ascii_lowercase();
-    keywords
+pub(crate) fn subject_matches(subject: &str, keywords: &[String]) -> bool {
+    let lower = subject.to_lowercase();
+    let mut active = keywords
         .iter()
-        .map(|k| k.trim().to_ascii_lowercase())
+        .map(|k| k.trim().to_lowercase())
         .filter(|k| !k.is_empty())
-        .any(|k| lower.contains(&k))
-}
-
-async fn list_auditee_conversations(
-    state: &AppState,
-    token: &str,
-    auditee: &QaAuditee,
-    start: Option<DateTime<Utc>>,
-    cap: usize,
-    keywords: &[String],
-) -> Result<Vec<String>> {
-    let filter = match start {
-        Some(start) => format!(
-            "from/emailAddress/address eq '{}' and receivedDateTime ge {}",
-            escape_filter(&auditee.email),
-            start.to_rfc3339()
-        ),
-        None => format!(
-            "from/emailAddress/address eq '{}'",
-            escape_filter(&auditee.email)
-        ),
-    };
-    let mut url = qa_url(
-        "/me/messages",
-        &[
-            ("$filter", filter),
-            ("$select", "id,subject,conversationId,receivedDateTime".into()),
-            ("$orderby", "receivedDateTime desc".into()),
-            ("$top", "50".into()),
-        ],
-    )?;
-    let mut conversations = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    loop {
-        let page: Page<QaMailMessage> = graph_get(state, token, url).await?;
-        for message in page.value {
-            // Only QA-related topics are audited (e.g. subject mentions "QA").
-            if !subject_matches(message.subject.as_deref().unwrap_or(""), keywords) {
-                continue;
-            }
-            if let Some(id) = message.conversation_id {
-                if seen.insert(id.clone()) {
-                    conversations.push(id);
-                }
-            }
-        }
-        if conversations.len() >= cap {
-            break;
-        }
-        match page.next_link {
-            Some(next) => url = validate_next_link(&next)?,
-            None => break,
-        }
+        .peekable();
+    if active.peek().is_none() {
+        return true;
     }
-    conversations.truncate(cap);
-    Ok(conversations)
-}
-
-async fn fetch_conversation(
-    state: &AppState,
-    token: &str,
-    conversation_id: &str,
-    start: Option<DateTime<Utc>>,
-) -> Result<ConversationEvidence> {
-    let filter = match start {
-        Some(start) => format!(
-            "conversationId eq '{}' and receivedDateTime ge {}",
-            escape_filter(conversation_id),
-            start.to_rfc3339()
-        ),
-        None => format!("conversationId eq '{}'", escape_filter(conversation_id)),
-    };
-    let mut url = qa_url(
-        "/me/messages",
-        &[
-            ("$filter", filter),
-            (
-                "$select",
-                "id,subject,conversationId,receivedDateTime,from,body,hasAttachments".into(),
-            ),
-            ("$orderby", "receivedDateTime asc".into()),
-            ("$top", "50".into()),
-        ],
-    )?;
-    let mut raw = Vec::new();
-    loop {
-        let page: Page<QaMailMessage> = graph_get(state, token, url).await?;
-        raw.extend(page.value);
-        if raw.len() >= MAX_MESSAGES_PER_CONVERSATION {
-            break;
-        }
-        match page.next_link {
-            Some(next) => url = validate_next_link(&next)?,
-            None => break,
-        }
-    }
-    raw.truncate(MAX_MESSAGES_PER_CONVERSATION);
-    let mut messages = Vec::new();
-    let mut subject = String::new();
-    for message in raw {
-        let Some(received) = message.received_date_time.as_deref() else {
-            continue;
-        };
-        let when = parse_time(received)?;
-        let message_subject = message.subject.unwrap_or_else(|| "No subject".into());
-        if subject.is_empty() {
-            subject = message_subject.clone();
-        }
-        let author = message
-            .from
-            .as_ref()
-            .map(|r| {
-                let name = r.email_address.name.clone().unwrap_or_default();
-                let address = r.email_address.address.clone().unwrap_or_default();
-                if name.is_empty() {
-                    address
-                } else {
-                    format!("{name} <{address}>")
-                }
-            })
-            .unwrap_or_else(|| "Unknown sender".into());
-        let text = message
-            .body
-            .and_then(|b| b.content)
-            .map(|html| html_to_text(&html))
-            .unwrap_or_default();
-        let mut attachments = Vec::new();
-        if message.has_attachments.unwrap_or(false) {
-            attachments = fetch_attachment_texts(state, token, &message.id)
-                .await
-                .unwrap_or_else(|error| {
-                    diagnostics::error(
-                        "qa/attachments",
-                        &format!("Skipped attachments of a message: {error}"),
-                    );
-                    Vec::new()
-                });
-        }
-        messages.push(MessageEvidence {
-            id: message.id,
-            author,
-            when,
-            subject: message_subject,
-            text,
-            attachments,
-        });
-    }
-    Ok(ConversationEvidence {
-        conversation_id: conversation_id.into(),
-        subject,
-        messages,
-    })
-}
-
-async fn fetch_attachment_texts(
-    state: &AppState,
-    token: &str,
-    message_id: &str,
-) -> Result<Vec<(String, String)>> {
-    let encoded_id: String =
-        url::form_urlencoded::byte_serialize(message_id.as_bytes()).collect();
-    let url = qa_url(
-        &format!("/me/messages/{encoded_id}/attachments"),
-        &[
-            ("$select", "id,name,contentType,size".into()),
-            ("$top", "20".into()),
-        ],
-    )?;
-    let page: Page<AttachmentMeta> = graph_get(state, token, url).await?;
-    let mut texts = Vec::new();
-    for meta in page.value {
-        if meta
-            .odata_type
-            .as_deref()
-            .is_some_and(|kind| kind != "#microsoft.graph.fileAttachment")
-        {
-            continue;
-        }
-        let name = meta.name.unwrap_or_else(|| "attachment".into());
-        if meta.size.unwrap_or(0) > MAX_ATTACHMENT_BYTES {
-            texts.push((name, "[Attachment too large to read]".into()));
-            continue;
-        }
-        if !supported_attachment(&name, meta.content_type.as_deref()) {
-            continue;
-        }
-        let attachment_id: String =
-            url::form_urlencoded::byte_serialize(meta.id.as_bytes()).collect();
-        let url = qa_url(
-            &format!("/me/messages/{encoded_id}/attachments/{attachment_id}"),
-            &[("$select", "contentBytes".into())],
-        )?;
-        let full: AttachmentFull = graph_get(state, token, url).await?;
-        let Some(bytes_b64) = full.content_bytes else {
-            continue;
-        };
-        let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(bytes_b64) else {
-            continue;
-        };
-        if let Some(text) = extract_attachment_text(&name, &bytes) {
-            let trimmed: String = text.chars().take(ATTACHMENT_BUDGET).collect();
-            if !trimmed.trim().is_empty() {
-                texts.push((name, trimmed));
-            }
-        } else {
-            texts.push((name, "[Attachment format could not be read as text]".into()));
-        }
-    }
-    Ok(texts)
-}
-
-fn supported_attachment(name: &str, content_type: Option<&str>) -> bool {
-    let lower = name.to_ascii_lowercase();
-    lower.ends_with(".pdf")
-        || lower.ends_with(".docx")
-        || lower.ends_with(".txt")
-        || lower.ends_with(".csv")
-        || lower.ends_with(".md")
-        || content_type
-            .map(|kind| kind.starts_with("text/"))
-            .unwrap_or(false)
-}
-
-fn extract_attachment_text(name: &str, bytes: &[u8]) -> Option<String> {
-    let lower = name.to_ascii_lowercase();
-    if lower.ends_with(".pdf") {
-        return pdf_extract::extract_text_from_mem(bytes).ok();
-    }
-    if lower.ends_with(".docx") {
-        return docx_text(bytes);
-    }
-    Some(String::from_utf8_lossy(bytes).into_owned())
-}
-
-fn docx_text(bytes: &[u8]) -> Option<String> {
-    let cursor = std::io::Cursor::new(bytes);
-    let mut archive = zip::ZipArchive::new(cursor).ok()?;
-    let mut xml = String::new();
-    archive
-        .by_name("word/document.xml")
-        .ok()?
-        .read_to_string(&mut xml)
-        .ok()?;
-    let xml = xml.replace("</w:p>", "\n");
-    let tags = Regex::new(r"<[^>]+>").unwrap();
-    let text = html_escape::decode_html_entities(&tags.replace_all(&xml, "")).into_owned();
-    Some(text)
+    active.any(|k| lower.contains(&k))
 }
 
 // ---------------------------------------------------------------------------
@@ -460,26 +88,27 @@ struct QaAiOutput {
     auto_fail: String,
 }
 
-fn qa_json_schema() -> serde_json::Value {
+fn qa_json_schema(note_limit: u32) -> serde_json::Value {
     let criterion = |description: &str| {
         serde_json::json!({ "type": "string", "enum": ["Y", "N", "N/A"], "description": description })
     };
+    let note = serde_json::json!({ "type": "string", "maxLength": note_limit });
     serde_json::json!({
         "type": "object",
         "properties": {
-            "request_id": { "type": "string", "maxLength": 200 },
+            "request_id": { "type": "string", "maxLength": 160 },
             "request_date": { "type": "string", "maxLength": 10 },
             "request_source": { "type": "string", "enum": ["Email", "IRIS"] },
             "initial_response": criterion("Y/N/N/A initial response evaluation"),
-            "initial_response_notes": { "type": "string", "maxLength": 500 },
+            "initial_response_notes": note,
             "customer_sentiment": { "type": "string", "enum": ["Positive", "Neutral", "Negative"] },
-            "customer_sentiment_notes": { "type": "string", "maxLength": 500 },
+            "customer_sentiment_notes": note,
             "adherence": criterion("Y/N/N/A adherence evaluation"),
-            "adherence_notes": { "type": "string", "maxLength": 500 },
+            "adherence_notes": note,
             "status": criterion("Y/N/N/A status communication evaluation"),
-            "status_notes": { "type": "string", "maxLength": 500 },
+            "status_notes": note,
             "update_follow_up": criterion("Y/N/N/A update and follow-up evaluation"),
-            "update_follow_up_notes": { "type": "string", "maxLength": 500 },
+            "update_follow_up_notes": note,
             "auto_fail": {
                 "type": "string",
                 "enum": ["none", "no_initial_response", "missed_priority", "no_status_updates", "non_adherence_sops"]
@@ -515,19 +144,11 @@ fn build_transcript(conversation: &ConversationEvidence) -> String {
             return out;
         }
         out.push_str(&chunk);
-        for (name, text) in &message.attachments {
-            let chunk = format!("--- Attachment of message {index}: {name} ---\n{text}\n\n", index = index + 1);
-            if out.len() + chunk.len() > TRANSCRIPT_BUDGET {
-                out.push_str("[Remaining attachments truncated for length]\n");
-                return out;
-            }
-            out.push_str(&chunk);
-        }
     }
     out
 }
 
-fn build_prompt(auditee: &QaAuditee, transcript: &str) -> String {
+fn build_prompt(auditee: &QaAuditee, transcript: &str, note_limit: u32) -> String {
     let custom_rules = if auditee.custom_rules.trim().is_empty() {
         String::new()
     } else {
@@ -567,9 +188,9 @@ FIELD RULES:\n\
 - initial_response_notes: include the date and time the request was made and the date and time \
 it was acknowledged.\n\
 - update_follow_up_notes: document the follow-up timelines.\n\
-- Every note must cite concrete evidence from the conversation (a short quote or a timestamp). \
-Never invent facts. If the evidence is insufficient for a criterion, mark it \"N/A\" and say why \
-in its notes.\n\n\
+- Every note must cite concrete evidence from the conversation (a short quote or a timestamp) \
+and stay under {note_limit} characters. Never invent facts. If the evidence is insufficient for \
+a criterion, mark it \"N/A\" and say why in its notes.\n\n\
 {custom_rules}\
 CONVERSATION (chronological):\n{transcript}",
         name = auditee.name,
@@ -603,43 +224,87 @@ fn normalize_auto_fail(value: &str) -> String {
     }
 }
 
-async fn evaluate_conversation(
+fn valid_request_date(value: &str) -> bool {
+    chrono::NaiveDate::parse_from_str(value.trim(), "%Y-%m-%d").is_ok()
+}
+
+pub(crate) fn case_id(conversation_id: &str, analyst_email: &str) -> String {
+    let digest = hex::encode(Sha256::digest(
+        format!("{}|{}", conversation_id, analyst_email.to_lowercase()).as_bytes(),
+    ));
+    format!("qa:{}", &digest[..16])
+}
+
+async fn run_model(
+    state: &AppState,
+    model: &str,
+    prompt: String,
+    note_limit: u32,
+    tokens: u32,
+) -> Result<QaAiOutput> {
+    let raw = state
+        .local_ai
+        .generate_structured(&state.http, model, prompt, qa_json_schema(note_limit), tokens)
+        .await?;
+    serde_json::from_str(&raw).map_err(|error| {
+        diagnostics::error(
+            "qa/analysis",
+            &format!(
+                "Bundled Local AI returned invalid QA JSON ({} bytes): {error}",
+                raw.len()
+            ),
+        );
+        AppError::Message("Bundled Local AI did not return valid structured JSON".into())
+    })
+}
+
+pub(crate) async fn evaluate_conversation(
     state: &AppState,
     model: &str,
     auditee: &QaAuditee,
     conversation: &ConversationEvidence,
 ) -> Result<QaCase> {
     let transcript = build_transcript(conversation);
-    let prompt = build_prompt(auditee, &transcript);
     diagnostics::info(
         "qa/analysis",
         &format!(
-            "Evaluating QA conversation '{}' for {} ({} messages)",
-            conversation.subject,
+            "Evaluating QA conversation for {} ({} messages)",
             auditee.email,
             conversation.messages.len()
         ),
     );
-    let raw = state
-        .local_ai
-        .generate_structured(&state.http, model, prompt, qa_json_schema(), 900)
-        .await?;
-    let output: QaAiOutput = serde_json::from_str(&raw).map_err(|error| {
-        diagnostics::error(
-            "qa/analysis",
-            &format!("Bundled Local AI returned invalid QA JSON: {error}"),
-        );
-        AppError::Message("Bundled Local AI did not return valid structured JSON".into())
-    })?;
+    // A truncated structured answer is retried once with shorter notes and a
+    // larger output budget before the conversation is reported as failed.
+    let output = match run_model(
+        state,
+        model,
+        build_prompt(auditee, &transcript, 300),
+        300,
+        QA_OUTPUT_TOKENS,
+    )
+    .await
+    {
+        Ok(output) => output,
+        Err(_) => {
+            run_model(
+                state,
+                model,
+                build_prompt(auditee, &transcript, 150),
+                150,
+                QA_RETRY_OUTPUT_TOKENS,
+            )
+            .await?
+        }
+    };
     let first_date = conversation
         .messages
         .first()
         .map(|m| m.when.format("%Y-%m-%d").to_string())
         .unwrap_or_default();
-    let request_date = if output.request_date.trim().is_empty() {
-        first_date
-    } else {
+    let request_date = if valid_request_date(&output.request_date) {
         output.request_date.trim().to_string()
+    } else {
+        first_date
     };
     let request_id = if output.request_id.trim().is_empty() {
         conversation.subject.clone()
@@ -650,9 +315,6 @@ async fn evaluate_conversation(
         "iris" => "IRIS".into(),
         _ => "Email".into(),
     };
-    let digest = hex::encode(Sha256::digest(
-        format!("{}|{}", conversation.conversation_id, auditee.email).as_bytes(),
-    ));
     let evidence = conversation
         .messages
         .iter()
@@ -668,9 +330,9 @@ async fn evaluate_conversation(
         })
         .collect();
     Ok(QaCase {
-        case_id: format!("qa:{}", &digest[..16]),
-        analyst_name: auditee.name.clone(),
-        analyst_email: auditee.email.clone(),
+        case_id: case_id(&conversation.conversation_id, &auditee.email),
+        analyst_name: auditee.name.trim().to_string(),
+        analyst_email: auditee.email.trim().to_lowercase(),
         audit_date: Utc::now().format("%Y-%m-%d").to_string(),
         request_id,
         request_date,
@@ -689,250 +351,12 @@ async fn evaluate_conversation(
         evidence,
         selected: true,
         reviewed: false,
-    })
-}
-
-fn no_cases_case(auditee: &QaAuditee) -> QaCase {
-    let digest = hex::encode(Sha256::digest(
-        format!("no-cases|{}|{}", auditee.email, Utc::now().format("%Y-%m-%d")).as_bytes(),
-    ));
-    QaCase {
-        case_id: format!("qa:{}", &digest[..16]),
-        analyst_name: auditee.name.clone(),
-        analyst_email: auditee.email.clone(),
-        audit_date: Utc::now().format("%Y-%m-%d").to_string(),
-        request_id: String::new(),
-        request_date: String::new(),
-        request_source: "Email".into(),
-        initial_response: "N/A".into(),
-        initial_response_notes: String::new(),
-        customer_sentiment: "Neutral".into(),
-        customer_sentiment_notes: String::new(),
-        adherence: "N/A".into(),
-        adherence_notes: String::new(),
-        status: "N/A".into(),
-        status_notes: String::new(),
-        update_follow_up: "N/A".into(),
-        update_follow_up_notes: String::new(),
-        auto_fail: "no_cases".into(),
-        evidence: Vec::new(),
-        selected: false,
-        reviewed: false,
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Public entry points
-// ---------------------------------------------------------------------------
-
-pub async fn extract(
-    state: &AppState,
-    token: &str,
-    model: &str,
-    historical: bool,
-) -> Result<QaExtractionResult> {
-    let config = state.read_settings()?.qa;
-    if config.auditees.is_empty() {
-        return Err(AppError::Message(
-            "Add at least one person to the QA audit list first.".into(),
-        ));
-    }
-    // Historical mode audits everything QA-related the person has ever sent
-    // (only for people whose historical audit is still pending). Weekly mode
-    // covers the configured lookback window for everyone.
-    let auditees: Vec<&QaAuditee> = if historical {
-        config.auditees.iter().filter(|a| !a.historical_done).collect()
-    } else {
-        config.auditees.iter().collect()
-    };
-    if auditees.is_empty() {
-        return Err(AppError::Message(
-            "Everyone on the list already has their historical audit. To redo one, mark it as pending from the person's menu.".into(),
-        ));
-    }
-    let start = (!historical).then(|| Utc::now() - Duration::days(config.lookback_days.max(1) as i64));
-    let cap = if historical {
-        MAX_CONVERSATIONS_HISTORICAL
-    } else {
-        MAX_CONVERSATIONS_PER_AUDITEE
-    };
-    let mut cases = Vec::new();
-    let mut warnings = Vec::new();
-    for auditee in &auditees {
-        let conversations =
-            match list_auditee_conversations(state, token, auditee, start, cap, &config.subject_keywords).await {
-                Ok(ids) => ids,
-                Err(error) => {
-                    warnings.push(format!(
-                        "Could not search mail from {}: {error}",
-                        auditee.email
-                    ));
-                    continue;
-                }
-            };
-        if conversations.is_empty() {
-            warnings.push(if historical {
-                format!(
-                    "No historical QA conversations found for {}.",
-                    auditee.name
-                )
-            } else {
-                format!(
-                    "No QA cases found for {} in the last {} days.",
-                    auditee.name, config.lookback_days
-                )
-            });
-            cases.push(no_cases_case(auditee));
-            continue;
-        }
-        if conversations.len() >= cap {
-            warnings.push(format!(
-                "{} has more than {cap} QA conversations; only the {cap} most recent were audited.",
-                auditee.name
-            ));
-        }
-        for conversation_id in conversations {
-            let conversation =
-                match fetch_conversation(state, token, &conversation_id, start).await {
-                    Ok(value) => value,
-                    Err(error) => {
-                        warnings.push(format!(
-                            "A conversation of {} could not be read: {error}",
-                            auditee.email
-                        ));
-                        continue;
-                    }
-                };
-            if conversation.messages.is_empty() {
-                continue;
-            }
-            match evaluate_conversation(state, model, auditee, &conversation).await {
-                Ok(case) => cases.push(case),
-                Err(error) => warnings.push(format!(
-                    "Local AI could not evaluate '{}' ({}): {error}",
-                    conversation.subject, auditee.name
-                )),
-            }
-        }
-    }
-    cases.sort_by(|a, b| {
-        a.analyst_name
-            .cmp(&b.analyst_name)
-            .then(a.request_date.cmp(&b.request_date))
-    });
-    Ok(QaExtractionResult { cases, warnings })
-}
-
-/// Cheap mailbox watch: reports which watched auditees sent mail since the
-/// last check, without running any AI analysis.
-pub async fn check_new_mail(state: &AppState, token: &str) -> Result<QaWatchStatus> {
-    let config = state.read_settings()?.qa;
-    let since = config
-        .last_mail_check
-        .as_deref()
-        .and_then(|value| parse_time(value).ok())
-        .unwrap_or_else(|| Utc::now() - Duration::days(1));
-    let mut new_senders = Vec::new();
-    for auditee in config.auditees.iter().filter(|a| a.watched) {
-        let filter = format!(
-            "from/emailAddress/address eq '{}' and receivedDateTime gt {}",
-            escape_filter(&auditee.email),
-            since.to_rfc3339()
-        );
-        let url = qa_url(
-            "/me/messages",
-            &[
-                ("$filter", filter),
-                ("$select", "id".into()),
-                ("$top", "1".into()),
-            ],
-        )?;
-        let page: Page<QaMailMessage> = match graph_get(state, token, url).await {
-            Ok(page) => page,
-            Err(error) => {
-                diagnostics::error(
-                    "qa/watch",
-                    &format!("Mailbox watch failed for {}: {error}", auditee.email),
-                );
-                continue;
-            }
-        };
-        if !page.value.is_empty() {
-            new_senders.push(auditee.name.clone());
-        }
-    }
-    let checked_at = Utc::now();
-    state.update_settings(|settings| {
-        settings.qa.last_mail_check = Some(checked_at.to_rfc3339());
-        for name in &new_senders {
-            if !settings.qa.pending_watch.contains(name) {
-                settings.qa.pending_watch.push(name.clone());
-            }
-        }
-    })?;
-    Ok(QaWatchStatus {
-        new_senders,
-        checked_at: checked_at.to_rfc3339(),
+        new_evidence: false,
     })
 }
 
 // ---------------------------------------------------------------------------
-// Last-run cache (so scheduled/background runs can be reviewed later)
-// ---------------------------------------------------------------------------
-
-fn last_run_path(state: &AppState) -> PathBuf {
-    state.config_dir.join("qa-last-run.json")
-}
-
-pub fn save_last_run(
-    state: &AppState,
-    result: &QaExtractionResult,
-    source: &str,
-    historical: bool,
-) -> Result<()> {
-    let snapshot = crate::models::QaLastRun {
-        ran_at: Utc::now().to_rfc3339(),
-        source: source.into(),
-        historical,
-        result: result.clone(),
-    };
-    let path = last_run_path(state);
-    let temp = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
-    fs::write(&temp, serde_json::to_vec_pretty(&snapshot)?)
-        .context("Unable to save the QA run snapshot")?;
-    fs::rename(&temp, &path).context("Unable to commit the QA run snapshot")?;
-    Ok(())
-}
-
-pub fn load_last_run(state: &AppState) -> Result<Option<crate::models::QaLastRun>> {
-    let path = last_run_path(state);
-    if !path.is_file() {
-        return Ok(None);
-    }
-    let snapshot = fs::read(&path)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok());
-    if snapshot.is_none() {
-        diagnostics::error(
-            "qa/cache",
-            &format!("Ignored an invalid QA run snapshot at {}", path.display()),
-        );
-    }
-    Ok(snapshot)
-}
-
-/// ISO week label (e.g. "2026-W39") used for the per-week Excel sheets.
-fn week_label(date: &str) -> String {
-    chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
-        .map(|d| {
-            let week = d.iso_week();
-            format!("{}-W{:02}", week.year(), week.week())
-        })
-        .unwrap_or_else(|_| date.to_string())
-}
-
-// ---------------------------------------------------------------------------
-// Excel export (cumulative per analyst, one sheet per audit week)
+// Excel export (cumulative per analyst, one sheet per request week)
 // ---------------------------------------------------------------------------
 
 pub const AUTO_FAIL_LABELS: [(&str, &str); 6] = [
@@ -950,6 +374,24 @@ pub fn auto_fail_label(value: &str) -> String {
         .find(|(key, _)| *key == value)
         .map(|(_, label)| label.to_string())
         .unwrap_or_else(|| "No Autofail".into())
+}
+
+/// ISO week label (e.g. "2026-W39") used for the per-week Excel sheets.
+fn week_label(date: &str) -> Option<String> {
+    chrono::NaiveDate::parse_from_str(date.trim(), "%Y-%m-%d")
+        .ok()
+        .map(|d| {
+            let week = d.iso_week();
+            format!("{}-W{:02}", week.year(), week.week())
+        })
+}
+
+/// Cases are filed under the week the customer request happened, so a
+/// historical import spreads over the weeks it really covers.
+pub fn case_week(case: &QaCase) -> String {
+    week_label(&case.request_date)
+        .or_else(|| week_label(&case.audit_date))
+        .unwrap_or_else(|| "Undated".into())
 }
 
 fn sanitize_name(value: &str) -> String {
@@ -984,86 +426,94 @@ const QA_HEADERS: [&str; 17] = [
     "QA Auto fail?",
 ];
 
-pub fn export(config: &QaConfig, cases: &[QaCase]) -> Result<QaExportResult> {
-    let root = config.output_folder.as_deref().ok_or_else(|| {
-        AppError::Message("Configure the QA output folder before exporting.".into())
-    })?;
-    let selected: Vec<&QaCase> = cases.iter().filter(|case| case.selected).collect();
-    if selected.is_empty() {
-        return Err(AppError::Message(
-            "Select at least one reviewed QA case before exporting.".into(),
-        ));
-    }
-    let mut by_analyst: HashMap<&str, Vec<&QaCase>> = HashMap::new();
-    for case in &selected {
-        by_analyst
-            .entry(case.analyst_email.as_str())
-            .or_default()
-            .push(case);
-    }
-    let mut files = Vec::new();
-    let mut written = 0usize;
-    for analyst_cases in by_analyst.values() {
-        let name = sanitize_name(&analyst_cases[0].analyst_name);
-        let dir = Path::new(root).join(&name);
-        fs::create_dir_all(&dir).context("Unable to create the QA analyst folder")?;
-        let file = dir.join(format!("QA_{name}.xlsx"));
-        let mut book = if file.is_file() {
-            umya_spreadsheet::reader::xlsx::read(&file)
-                .context("The existing QA workbook could not be opened. Close it in Excel and try again.")?
-        } else {
-            umya_spreadsheet::new_file()
-        };
-        // Group this analyst's cases by ISO week; each week gets (or
-        // replaces) its own sheet so same-week reruns stay idempotent.
-        let mut by_week: HashMap<String, Vec<&QaCase>> = HashMap::new();
-        for case in analyst_cases {
-            by_week.entry(week_label(&case.audit_date)).or_default().push(case);
-        }
-        let mut weeks: Vec<String> = by_week.keys().cloned().collect();
-        weeks.sort();
-        let mut first_sheet_of_new_book = !file.is_file();
-        for week in weeks {
-            let week = week.as_str();
-            if book.get_sheet_by_name(week).is_some() {
-                book.remove_sheet_by_name(week)
-                    .context("Unable to refresh the QA sheet for the audit week")?;
-            }
-            let reused_default = first_sheet_of_new_book
-                && book.get_sheet_by_name("Sheet1").is_some()
-                && book.get_sheet_collection().len() == 1;
-            let sheet = if reused_default {
-                let sheet = book.get_sheet_by_name_mut("Sheet1").ok_or_else(|| {
-                    AppError::Message("Unable to prepare the QA worksheet.".into())
-                })?;
-                sheet.set_name(week);
-                sheet
-            } else {
-                book.new_sheet(week)
-                    .context("Unable to create the QA worksheet")?
-            };
-            first_sheet_of_new_book = false;
-            write_sheet(sheet, config, &by_week[week]);
-            written += by_week[week].len();
-        }
-        let temp = file.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
-        umya_spreadsheet::writer::xlsx::write(&book, &temp)
-            .context("Unable to save the QA workbook. Close it in Excel and try again.")?;
-        fs::rename(&temp, &file).context("Unable to commit the QA workbook")?;
-        files.push(file.display().to_string());
-    }
-    diagnostics::info(
-        "qa/export",
-        &format!("QA export completed: {written} rows into {} workbook(s)", files.len()),
-    );
-    Ok(QaExportResult { files, written })
+pub fn workbook_path(config: &QaConfig, analyst_name: &str) -> Result<PathBuf> {
+    let root = config
+        .output_folder
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            AppError::Message("Configure the QA output folder before exporting.".into())
+        })?;
+    let name = sanitize_name(analyst_name);
+    Ok(Path::new(root).join(&name).join(format!("QA_{name}.xlsx")))
 }
 
-fn write_sheet(
-    sheet: &mut umya_spreadsheet::Worksheet,
+/// Rewrites the listed week sheets of one analyst workbook from `cases`
+/// (every exportable case of that analyst). Weeks without cases lose their
+/// sheet; other sheets and workbooks are untouched.
+pub fn export_analyst(
     config: &QaConfig,
+    analyst_name: &str,
     cases: &[&QaCase],
-) {
+    weeks: &BTreeSet<String>,
+) -> Result<(PathBuf, usize)> {
+    let file = workbook_path(config, analyst_name)?;
+    let dir = file
+        .parent()
+        .ok_or_else(|| AppError::Message("The QA workbook has no folder.".into()))?;
+    fs::create_dir_all(dir).context("Unable to create the QA analyst folder")?;
+    let existed = file.is_file();
+    let mut book = if existed {
+        umya_spreadsheet::reader::xlsx::read(&file).context(
+            "The existing QA workbook could not be opened. Close it in Excel and try again.",
+        )?
+    } else {
+        umya_spreadsheet::new_file()
+    };
+    let mut by_week: BTreeMap<String, Vec<&QaCase>> = BTreeMap::new();
+    for case in cases {
+        by_week.entry(case_week(case)).or_default().push(case);
+    }
+    let mut written = 0usize;
+    let mut first_sheet_of_new_book = !existed;
+    for week in weeks {
+        let week = week.as_str();
+        if book.get_sheet_by_name(week).is_some() {
+            book.remove_sheet_by_name(week)
+                .context("Unable to refresh the QA sheet for the audit week")?;
+        }
+        let Some(rows) = by_week.get_mut(week) else {
+            continue;
+        };
+        rows.sort_by(|a, b| {
+            a.request_date
+                .cmp(&b.request_date)
+                .then(a.request_id.cmp(&b.request_id))
+        });
+        let reused_default = first_sheet_of_new_book
+            && book.get_sheet_by_name("Sheet1").is_some()
+            && book.get_sheet_collection().len() == 1;
+        let sheet = if reused_default {
+            let sheet = book.get_sheet_by_name_mut("Sheet1").ok_or_else(|| {
+                AppError::Message("Unable to prepare the QA worksheet.".into())
+            })?;
+            sheet.set_name(week);
+            sheet
+        } else {
+            book.new_sheet(week)
+                .context("Unable to create the QA worksheet")?
+        };
+        first_sheet_of_new_book = false;
+        write_sheet(sheet, config, rows);
+        written += rows.len();
+    }
+    if !existed && first_sheet_of_new_book {
+        // Nothing to write into a brand new workbook.
+        return Ok((file, 0));
+    }
+    let temp = file.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+    umya_spreadsheet::writer::xlsx::write(&book, &temp)
+        .context("Unable to save the QA workbook. Close it in Excel and try again.")?;
+    if let Err(error) = fs::rename(&temp, &file) {
+        let _ = fs::remove_file(&temp);
+        return Err(AppError::Message(format!(
+            "Unable to replace the QA workbook. Close it in Excel and try again: {error}"
+        )));
+    }
+    Ok((file, written))
+}
+
+fn write_sheet(sheet: &mut umya_spreadsheet::Worksheet, config: &QaConfig, cases: &[&QaCase]) {
     for (col, header) in QA_HEADERS.iter().enumerate() {
         let coordinate = format!("{}1", (b'A' + col as u8) as char);
         let cell = sheet.get_cell_mut(coordinate.as_str());
@@ -1095,9 +545,12 @@ fn write_sheet(
             sheet.get_cell_mut(coordinate.as_str()).set_value(value.clone());
         }
     }
-    for (col, width) in [12.0, 42.0, 24.0, 30.0, 12.0, 14.0, 16.0, 46.0, 18.0, 46.0, 11.0, 46.0, 9.0, 46.0, 16.0, 46.0, 30.0]
-        .iter()
-        .enumerate()
+    for (col, width) in [
+        12.0, 42.0, 24.0, 30.0, 12.0, 14.0, 16.0, 46.0, 18.0, 46.0, 11.0, 46.0, 9.0, 46.0, 16.0,
+        46.0, 30.0,
+    ]
+    .iter()
+    .enumerate()
     {
         let letter = ((b'A' + col as u8) as char).to_string();
         sheet.get_column_dimension_mut(&letter).set_width(*width);
@@ -1106,4 +559,72 @@ fn write_sheet(
 
 pub fn output_folder(config: &QaConfig) -> Option<PathBuf> {
     config.output_folder.as_deref().map(PathBuf::from)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn case(request_date: &str, audit_date: &str) -> QaCase {
+        QaCase {
+            case_id: "qa:1".into(),
+            analyst_name: "Ana Test".into(),
+            analyst_email: "ana@example.com".into(),
+            audit_date: audit_date.into(),
+            request_id: "QA request".into(),
+            request_date: request_date.into(),
+            request_source: "Email".into(),
+            initial_response: "Y".into(),
+            initial_response_notes: String::new(),
+            customer_sentiment: "Neutral".into(),
+            customer_sentiment_notes: String::new(),
+            adherence: "Y".into(),
+            adherence_notes: String::new(),
+            status: "Y".into(),
+            status_notes: String::new(),
+            update_follow_up: "Y".into(),
+            update_follow_up_notes: String::new(),
+            auto_fail: "none".into(),
+            evidence: Vec::new(),
+            selected: true,
+            reviewed: false,
+            new_evidence: false,
+        }
+    }
+
+    #[test]
+    fn historical_cases_are_filed_under_their_request_week() {
+        assert_eq!(case_week(&case("2025-01-06", "2026-09-23")), "2025-W02");
+        assert_eq!(case_week(&case("not a date", "2026-09-23")), "2026-W39");
+    }
+
+    #[test]
+    fn empty_keyword_list_matches_every_subject() {
+        assert!(subject_matches("Anything", &[]));
+        assert!(subject_matches("Weekly qa review", &["QA".into()]));
+        assert!(!subject_matches("Invoice", &["QA".into()]));
+    }
+
+    #[test]
+    fn export_rewrites_only_requested_weeks() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = QaConfig {
+            output_folder: Some(dir.path().to_string_lossy().into()),
+            ..QaConfig::default()
+        };
+        let first = case("2026-09-01", "2026-09-23");
+        let second = case("2026-09-15", "2026-09-23");
+        let all = vec![&first, &second];
+        let weeks: BTreeSet<String> = all.iter().map(|c| case_week(c)).collect();
+        let (file, written) = export_analyst(&config, "Ana Test", &all, &weeks).unwrap();
+        assert_eq!(written, 2);
+        let book = umya_spreadsheet::reader::xlsx::read(&file).unwrap();
+        assert!(book.get_sheet_by_name("2026-W36").is_some());
+        assert!(book.get_sheet_by_name("2026-W38").is_some());
+        let only_first: BTreeSet<String> = [case_week(&first)].into_iter().collect();
+        let (_, written) = export_analyst(&config, "Ana Test", &all, &only_first).unwrap();
+        assert_eq!(written, 1);
+        let book = umya_spreadsheet::reader::xlsx::read(&file).unwrap();
+        assert!(book.get_sheet_by_name("2026-W38").is_some());
+    }
 }

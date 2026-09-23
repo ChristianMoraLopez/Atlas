@@ -21,6 +21,14 @@ pub struct AppState {
     pub cached_access_token: Mutex<Option<CachedAccessToken>>,
     pub local_ai: ManagedRuntime,
     pub connector_installer: Arc<crate::connector_installer::Installer>,
+    pub qa_connector_installer: Arc<crate::connector_installer::Installer>,
+    /// Serializes QA engine ticks (collection, evaluation, export).
+    pub qa_engine: tokio::sync::Mutex<()>,
+    /// Guards read-modify-write of the QA store files.
+    pub qa_files: Mutex<()>,
+    pub qa_activity: Mutex<Option<String>>,
+    /// The running automatic tracker started while the window was hidden.
+    pub hidden_run: AtomicBool,
     pub config_dir: PathBuf,
     pub automation_pending: AtomicBool,
     pub frontend_ready: AtomicBool,
@@ -84,7 +92,16 @@ impl AppState {
             ),
             connector_installer: Arc::new(crate::connector_installer::Installer::new(
                 config_dir.join("connector-installer"),
+                &crate::connector_installer::TRACKER,
             )),
+            qa_connector_installer: Arc::new(crate::connector_installer::Installer::new(
+                config_dir.join("connector-installer-qa"),
+                &crate::connector_installer::QA,
+            )),
+            qa_engine: tokio::sync::Mutex::new(()),
+            qa_files: Mutex::new(()),
+            qa_activity: Mutex::new(None),
+            hidden_run: AtomicBool::new(false),
             config_dir,
             automation_pending: AtomicBool::new(false),
             frontend_ready: AtomicBool::new(false),
