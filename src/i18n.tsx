@@ -624,6 +624,8 @@ const en: Record<string, string> = {
   "Esperando la respuesta de tu flujo QA": "Waiting for your QA flow to answer",
   "No se puede crear la carpeta AtlasBridge en esa ubicación. Revisa el acceso de tu usuario.": "AtlasBridge cannot be created in that location. Check your user's access.",
   "La carpeta AtlasBridge apunta fuera de la carpeta seleccionada. Elige una carpeta sincronizada sin ese enlace.": "The AtlasBridge folder points outside the selected folder. Choose a synced folder without that link.",
+  "Office 365 Outlook y OneDrive for Business": "Office 365 Outlook and OneDrive for Business",
+  "Office 365 Outlook, Microsoft Teams y OneDrive for Business": "Office 365 Outlook, Microsoft Teams and OneDrive for Business",
   "Escribe tu nombre con letras (máximo 80 caracteres).": "Type your name using letters (80 characters maximum).",
   "Esto reinicia solo el asistente y genera un nuevo identificador de instalación. El flujo existente seguirá en Microsoft y el nuevo ZIP creará una solución independiente; elimina la anterior en el portal si ya no la necesitas para evitar duplicados.": "This only restarts the assistant and creates a new installation ID. The existing flow stays in Microsoft and the new ZIP creates a separate solution; delete the old one in the portal if you no longer need it to avoid duplicates.",
 };
