@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AiPromptInfo, AppRole, AppStatus, AutomationMode, ExportResult, ExtractionResult, Interaction, QaConfig, QaCase, QaExportResult, QaExtractionResult, QaLastRun, QaWatchStatus, TrackerDestination, UserProfile } from "./types";
+import type { AiPromptInfo, AppRole, AppStatus, AutomationMode, ExportResult, ExtractionResult, InstallerSnapshot, Interaction, QaCase, QaCaseEntry, QaConfig, QaEngineStatus, QaExportResult, TrackerDestination, UserProfile } from "./types";
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   try {
@@ -36,13 +36,27 @@ export const api = {
     call<void>("complete_scheduled_launch", { runKey, successful, needsAttention }),
   backgroundReady: () => call<void>("background_frontend_ready"),
   logError: (context: string, message: string) => invoke<void>("log_frontend_error", { context, message }),
+  saveQaBridgeFolder: (folder: string) => call<AppStatus>("save_qa_bridge_folder", { folder }),
+  openLog: () => call<void>("open_log_file"),
+  openExternal: (url: string) => call<void>("open_external_url", { url }),
+  revealTracker: () => call<void>("reveal_tracker_folder"),
+  installer: {
+    status: (role: AppRole) => call<InstallerSnapshot>("connector_installer_status", { role }),
+    action: (role: AppRole, action: Record<string, unknown>) => call<InstallerSnapshot>("connector_installer_action", { role, action }),
+    openPortal: (role: AppRole) => call<void>("connector_installer_open_portal", { role }),
+    showPackage: (role: AppRole) => call<void>("connector_installer_show_package", { role }),
+    openInbox: (role: AppRole) => call<void>("connector_installer_open_inbox", { role }),
+  },
   qaGetConfig: () => call<QaConfig>("qa_get_config"),
   qaSaveConfig: (config: QaConfig) => call<void>("qa_save_config", { config }),
-  qaExtract: (historical: boolean, source: string) => call<QaExtractionResult>("qa_extract_cases", { historical, source }),
-  qaCheckNewMail: () => call<QaWatchStatus>("qa_check_new_mail"),
-  qaExport: (cases: QaCase[]) => call<QaExportResult>("qa_export_cases", { cases }),
+  qaStatus: () => call<QaEngineStatus>("qa_engine_status"),
+  qaCases: () => call<QaCaseEntry[]>("qa_list_cases"),
+  qaUpdateCase: (qaCase: QaCase) => call<void>("qa_update_case", { case: qaCase }),
+  qaReevaluate: (caseId: string) => call<void>("qa_reevaluate_case", { caseId }),
+  qaSyncNow: () => call<void>("qa_sync_now"),
+  qaRestartHistory: () => call<void>("qa_restart_history"),
+  qaExportNow: (full: boolean) => call<QaExportResult>("qa_export_now", { full }),
   qaOpenFolder: () => call<void>("qa_open_output_folder"),
-  qaLoadLastRun: () => call<QaLastRun | null>("qa_load_last_run"),
   saveAppRole: (role: AppRole | null) => call<AppStatus>("save_app_role", { role })
 };
 

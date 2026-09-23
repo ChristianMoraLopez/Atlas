@@ -10,6 +10,7 @@ mod graph;
 mod models;
 mod ollama;
 mod qa;
+mod qa_engine;
 mod sharepoint;
 mod state;
 mod tracker_writer;
@@ -17,13 +18,13 @@ mod tracker_writer;
 use crate::{
     error::{AppError, Context, Result},
     models::{
-        AiInstructions, AppRole, AppStatus, AutomationMode, ExportResult, ExtractionResult, Interaction,
-        QaCase, QaConfig, QaExportResult, QaExtractionResult, QaWatchStatus, SourceKind,
-        SourceMode, TrackerDestination, TrackerDestinationKind, UserProfile,
+        AiInstructions, AppRole, AppStatus, AutomationMode, ExportResult, ExtractionResult,
+        Interaction, QaCase, QaConfig, QaExportResult, SourceKind, SourceMode, TrackerDestination,
+        TrackerDestinationKind, UserProfile,
     },
     state::AppState,
 };
-use std::{collections::HashSet, path::Path};
+use std::{collections::HashSet, path::Path, sync::atomic::Ordering};
 use tauri::{Emitter, Manager};
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -89,27 +90,39 @@ async fn build_status(state: &AppState) -> Result<AppStatus> {
             false
         }
     };
-    let connector_ready = state.connector_installer.snapshot()?.session.phase
-        == connector_installer::Phase::Completed;
-    let configured = match settings.source_mode {
-        SourceMode::MicrosoftGraph => {
-            !microsoft_config.client_id.is_empty() && !microsoft_config.tenant_id.is_empty()
-        }
-        SourceMode::PowerAutomateFolder => {
-            settings
-                .bridge_folder
-                .as_deref()
-                .is_some_and(|folder| Path::new(folder).is_dir())
-                && connector_ready
-        }
+    let manager = settings.app_role == Some(AppRole::Manager);
+    // Each role has its own personalized Power Automate solution; the role
+    // decides which installation must be complete. A manager already signed
+    // in with Microsoft Graph keeps using Graph.
+    let bridge_mode = if manager {
+        !(settings.source_mode == SourceMode::MicrosoftGraph && settings.account.is_some())
+    } else {
+        settings.source_mode == SourceMode::PowerAutomateFolder
+    };
+    let (installer, folder) = if manager {
+        (&state.qa_connector_installer, settings.qa_bridge_folder.as_deref())
+    } else {
+        (&state.connector_installer, settings.bridge_folder.as_deref())
+    };
+    let installer_session = installer.snapshot()?.session;
+    let connector_ready = installer_session.phase == connector_installer::Phase::Completed;
+    let configured = if bridge_mode {
+        folder.is_some_and(|folder| Path::new(folder).is_dir()) && connector_ready
+    } else {
+        !microsoft_config.client_id.is_empty() && !microsoft_config.tenant_id.is_empty()
     };
     Ok(AppStatus {
         configured,
-        signed_in: match settings.source_mode {
-            SourceMode::MicrosoftGraph => token_available && settings.account.is_some(),
-            SourceMode::PowerAutomateFolder => configured,
+        signed_in: if bridge_mode {
+            configured
+        } else {
+            token_available && settings.account.is_some()
         },
-        source_mode: settings.source_mode,
+        source_mode: if bridge_mode {
+            SourceMode::PowerAutomateFolder
+        } else {
+            settings.source_mode
+        },
         bridge_folder: settings.bridge_folder,
         account: settings.account,
         profile: settings.profile,
@@ -126,7 +139,31 @@ async fn build_status(state: &AppState) -> Result<AppStatus> {
         scheduled_launch: state.background_launch,
         log_path: diagnostics::path(),
         app_role: settings.app_role,
+        qa_bridge_folder: settings.qa_bridge_folder,
+        solution_owner: installer_session.owner_name,
     })
+}
+
+/// Atlas keeps running in the tray when an automatic job depends on it.
+fn resident(state: &AppState) -> bool {
+    state.read_settings().is_ok_and(|settings| match settings.app_role {
+        Some(AppRole::Cs) => {
+            settings.auto_sync && settings.destination.is_some() && settings.profile.is_some()
+        }
+        Some(AppRole::Manager) => true,
+        None => false,
+    })
+}
+
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(state) = app.try_state::<AppState>() {
+        state.foreground_requested.store(true, Ordering::SeqCst);
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
 }
 
 #[tauri::command]
@@ -164,38 +201,82 @@ async fn sign_in(state: tauri::State<'_, AppState>) -> Result<AppStatus> {
     build_status(&state).await
 }
 
+fn installer_for(
+    state: &AppState,
+    role: Option<&str>,
+) -> Result<std::sync::Arc<connector_installer::Installer>> {
+    match role.unwrap_or("cs") {
+        "cs" | "tracker" => Ok(state.connector_installer.clone()),
+        "manager" | "qa" => Ok(state.qa_connector_installer.clone()),
+        other => Err(AppError::Message(format!("Unknown Atlas role: {other}"))),
+    }
+}
+
 #[tauri::command]
 fn connector_installer_status(
     state: tauri::State<'_, AppState>,
+    role: Option<String>,
 ) -> Result<connector_installer::Snapshot> {
-    state.connector_installer.snapshot()
+    installer_for(&state, role.as_deref())?.snapshot()
 }
 
 #[tauri::command]
 async fn connector_installer_action(
     state: tauri::State<'_, AppState>,
+    role: Option<String>,
     action: connector_installer::Action,
 ) -> Result<connector_installer::Snapshot> {
     // Package generation and bounded inbox reads stay off the UI thread.
-    let installer = state.connector_installer.clone();
+    let installer = installer_for(&state, role.as_deref())?;
     tauri::async_runtime::spawn_blocking(move || installer.action(action))
         .await
         .map_err(|_| AppError::Message("Atlas connector: worker_failed".into()))?
 }
 
 #[tauri::command]
-fn connector_installer_open_portal(state: tauri::State<'_, AppState>) -> Result<()> {
-    state.connector_installer.open_portal()
+fn connector_installer_open_portal(
+    state: tauri::State<'_, AppState>,
+    role: Option<String>,
+) -> Result<()> {
+    installer_for(&state, role.as_deref())?.open_portal()
 }
 
 #[tauri::command]
-fn connector_installer_show_package(state: tauri::State<'_, AppState>) -> Result<()> {
-    state.connector_installer.show_package()
+fn connector_installer_show_package(
+    state: tauri::State<'_, AppState>,
+    role: Option<String>,
+) -> Result<()> {
+    installer_for(&state, role.as_deref())?.show_package()
 }
 
 #[tauri::command]
-fn connector_installer_open_inbox(state: tauri::State<'_, AppState>) -> Result<()> {
-    state.connector_installer.open_inbox()
+fn connector_installer_open_inbox(
+    state: tauri::State<'_, AppState>,
+    role: Option<String>,
+) -> Result<()> {
+    installer_for(&state, role.as_deref())?.open_inbox()
+}
+
+#[tauri::command]
+async fn save_qa_bridge_folder(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    folder: String,
+) -> Result<AppStatus> {
+    let folder = normalize_bridge_folder(folder)?;
+    state.update_settings(|settings| {
+        settings.source_mode = SourceMode::PowerAutomateFolder;
+        settings.qa_bridge_folder = Some(folder);
+    })?;
+    diagnostics::info("settings", "Power Automate QA connector enabled");
+    if let Err(error) = automation::configure(true, automation::DEFAULT_DAILY_TIME) {
+        diagnostics::error("automation/setup", &error.to_string());
+    }
+    if let Err(error) = qa_engine::sync_watch_list(&state) {
+        diagnostics::error("qa/watch", &error.to_string());
+    }
+    tauri::async_runtime::spawn(qa_engine::tick(app));
+    build_status(&state).await
 }
 
 fn normalize_bridge_folder(value: String) -> Result<String> {
@@ -449,7 +530,14 @@ async fn save_tracker_destination(
             let bridge_folder = current.bridge_folder.as_deref().ok_or_else(|| {
                 AppError::Message("Configure the Power Automate inbox folder first.".into())
             })?;
-            let prepared = tracker_writer::prepare(&state.config_dir, bridge_folder, &value)?;
+            let tracker_session = state.connector_installer.snapshot()?.session;
+            let prepared = tracker_writer::prepare(
+                &state.config_dir,
+                bridge_folder,
+                &value,
+                &tracker_session.installation_id,
+                tracker_session.owner_name.as_deref(),
+            )?;
             TrackerDestination {
                 kind: TrackerDestinationKind::SharePointFlow,
                 value,
@@ -501,27 +589,70 @@ fn complete_scheduled_launch(
     successful: bool,
     needs_attention: bool,
 ) -> Result<()> {
-    use std::sync::atomic::Ordering;
-
     if successful {
         automation::complete(&state.config_dir, &run_key)?;
-        state.automation_pending.store(false, Ordering::SeqCst);
     }
-    if !state.background_launch || state.foreground_requested.load(Ordering::SeqCst) {
+    // Always release the run so a deferred or failed attempt can be retried
+    // by the scheduler after its cooldown.
+    state.automation_pending.store(false, Ordering::SeqCst);
+    let foreground = state.foreground_requested.load(Ordering::SeqCst);
+    if run_key.trim().is_empty() {
+        // Startup acknowledgement without a run: surface incomplete setup.
+        if needs_attention && state.background_launch && !foreground {
+            show_main_window(&app);
+        }
+        return Ok(());
+    }
+    let hidden_run = state.hidden_run.swap(false, Ordering::SeqCst);
+    if !hidden_run || foreground {
         return Ok(());
     }
     if needs_attention || !successful {
-        let window = app
-            .get_webview_window("main")
-            .ok_or_else(|| AppError::Message("Atlas main window is unavailable.".into()))?;
-        window
-            .show()
-            .map_err(|error| AppError::Message(format!("Unable to show Atlas: {error}")))?;
-        let _ = window.set_focus();
+        show_main_window(&app);
     } else {
-        app.exit(0);
+        // Stay resident in the tray for the next run; free the AI memory.
+        state.local_ai.stop();
     }
     Ok(())
+}
+
+#[tauri::command]
+fn open_log_file() -> Result<()> {
+    let path = diagnostics::path();
+    if !Path::new(&path).is_file() {
+        return Err(AppError::Message("The Atlas log has not been created yet.".into()));
+    }
+    open::that_detached(&path)
+        .map_err(|error| AppError::Message(format!("Windows could not open the log: {error}")))
+}
+
+#[tauri::command]
+fn open_external_url(url: String) -> Result<()> {
+    let parsed = url::Url::parse(url.trim())
+        .map_err(|_| AppError::Message("Atlas can only open valid web links.".into()))?;
+    if parsed.scheme() != "https" || !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(AppError::Message("Atlas only opens secure https links.".into()));
+    }
+    open::that_detached(parsed.as_str())
+        .map_err(|error| AppError::Message(format!("Windows could not open the link: {error}")))
+}
+
+#[tauri::command]
+fn reveal_tracker_folder(state: tauri::State<'_, AppState>) -> Result<()> {
+    let destination = state
+        .read_settings()?
+        .destination
+        .ok_or_else(|| AppError::Message("Configure the tracker destination first.".into()))?;
+    let path = destination
+        .local_path
+        .unwrap_or(destination.value);
+    let path = Path::new(path.strip_prefix(r"\\?\").unwrap_or(&path)).to_path_buf();
+    let folder = path
+        .parent()
+        .filter(|folder| folder.is_dir())
+        .ok_or_else(|| AppError::Message("The tracker folder is not available.".into()))?;
+    open::that_detached(folder)
+        .map_err(|error| AppError::Message(format!("Windows could not open the folder: {error}")))
 }
 
 #[tauri::command]
@@ -954,14 +1085,39 @@ fn qa_get_config(state: tauri::State<'_, AppState>) -> Result<QaConfig> {
 }
 
 #[tauri::command]
-fn qa_save_config(state: tauri::State<'_, AppState>, config: QaConfig) -> Result<()> {
-    for auditee in &config.auditees {
-        if auditee.name.trim().is_empty() || !auditee.email.contains('@') {
+fn qa_save_config(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    mut config: QaConfig,
+) -> Result<()> {
+    let mut seen = HashSet::new();
+    for auditee in &mut config.auditees {
+        auditee.name = auditee.name.trim().to_string();
+        auditee.email = auditee.email.trim().to_lowercase();
+        if auditee.name.is_empty() || qa_engine::addresses(&auditee.email) != [auditee.email.clone()]
+        {
             return Err(AppError::Message(
                 "Each person on the QA list needs a name and a valid email.".into(),
             ));
         }
+        if !seen.insert(auditee.email.clone()) {
+            return Err(AppError::Message(format!(
+                "{} appears twice on the QA list.",
+                auditee.email
+            )));
+        }
     }
+    for time in [&mut config.check_morning, &mut config.check_afternoon] {
+        *time = automation::normalize_time(time)?;
+    }
+    config.history_months = config.history_months.clamp(1, 120);
+    config.lookback_days = config.lookback_days.clamp(1, 90);
+    config.subject_keywords = config
+        .subject_keywords
+        .iter()
+        .map(|keyword| keyword.trim().to_string())
+        .filter(|keyword| !keyword.is_empty())
+        .collect();
     if let Some(folder) = config.output_folder.as_deref() {
         if !folder.trim().is_empty() {
             std::fs::create_dir_all(folder)
@@ -970,65 +1126,60 @@ fn qa_save_config(state: tauri::State<'_, AppState>, config: QaConfig) -> Result
     }
     state.update_settings(|settings| {
         settings.qa = config;
-    })
+    })?;
+    if let Err(error) = qa_engine::sync_watch_list(&state) {
+        diagnostics::error("qa/watch", &error.to_string());
+    }
+    tauri::async_runtime::spawn(qa_engine::tick(app));
+    Ok(())
 }
 
 #[tauri::command]
-async fn qa_extract_cases(
+fn qa_engine_status(state: tauri::State<'_, AppState>) -> Result<qa_engine::QaEngineStatus> {
+    qa_engine::status(&state)
+}
+
+#[tauri::command]
+fn qa_list_cases(state: tauri::State<'_, AppState>) -> Result<Vec<qa_engine::QaCaseEntry>> {
+    qa_engine::list_cases(&state)
+}
+
+#[tauri::command]
+fn qa_update_case(state: tauri::State<'_, AppState>, case: QaCase) -> Result<()> {
+    qa_engine::update_case(&state, case)
+}
+
+#[tauri::command]
+fn qa_reevaluate_case(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
-    historical: bool,
-    source: String,
-) -> Result<QaExtractionResult> {
-    let settings = state.read_settings()?;
-    if settings.source_mode != SourceMode::MicrosoftGraph {
-        return Err(AppError::Message(
-            "QA audit needs the Microsoft Graph source mode (the manager mailbox).".into(),
-        ));
-    }
-    let token = auth::access_token(&state).await?;
-    let result = qa::extract(&state, &token, ollama::BUNDLED_MODEL, historical).await?;
-    if historical {
-        // The historical audit ran: everyone currently on the list is
-        // considered covered (the manager can re-mark a person as pending).
-        state.update_settings(|settings| {
-            for auditee in &mut settings.qa.auditees {
-                auditee.historical_done = true;
-            }
-        })?;
-    }
-    if let Err(error) = qa::save_last_run(&state, &result, &source, historical) {
-        diagnostics::error("qa/cache", &format!("Could not save the QA run snapshot: {error}"));
-    }
-    Ok(result)
+    case_id: String,
+) -> Result<()> {
+    qa_engine::reevaluate_case(&state, &case_id)?;
+    tauri::async_runtime::spawn(qa_engine::tick(app));
+    Ok(())
 }
 
 #[tauri::command]
-fn qa_load_last_run(state: tauri::State<'_, AppState>) -> Result<Option<crate::models::QaLastRun>> {
-    qa::load_last_run(&state)
+fn qa_sync_now(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<()> {
+    qa_engine::request_sync(&state)?;
+    tauri::async_runtime::spawn(qa_engine::tick(app));
+    Ok(())
 }
 
 #[tauri::command]
-async fn qa_check_new_mail(state: tauri::State<'_, AppState>) -> Result<QaWatchStatus> {
-    let settings = state.read_settings()?;
-    if settings.source_mode != SourceMode::MicrosoftGraph {
-        return Ok(QaWatchStatus {
-            new_senders: Vec::new(),
-            checked_at: chrono::Utc::now().to_rfc3339(),
-        });
-    }
-    let token = auth::access_token(&state).await?;
-    qa::check_new_mail(&state, &token).await
+fn qa_restart_history(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<()> {
+    qa_engine::restart_historical(&state)?;
+    tauri::async_runtime::spawn(qa_engine::tick(app));
+    Ok(())
 }
 
 #[tauri::command]
-async fn qa_export_cases(
+async fn qa_export_now(
     state: tauri::State<'_, AppState>,
-    cases: Vec<QaCase>,
+    full: bool,
 ) -> Result<QaExportResult> {
-    let config = state.read_settings()?.qa;
-    tauri::async_runtime::spawn_blocking(move || qa::export(&config, &cases))
-        .await
-        .map_err(|e| AppError::Message(format!("QA export task failed: {e}")))?
+    qa_engine::export_now(&state, full)
 }
 
 #[tauri::command]
@@ -1107,17 +1258,21 @@ pub fn run() {
             diagnostics::install_panic_hook();
             let background_launch = scheduled_launch || startup_launch;
             let state = AppState::new(config_dir.clone(), background_launch)?;
-            if let Ok(settings) = state.read_settings() {
-                if settings.auto_sync
-                    && settings.destination.is_some()
-                    && settings.profile.is_some()
-                {
-                    if let Err(error) = automation::configure(true, &settings.auto_sync_time) {
-                        diagnostics::error("automation/setup", &error.to_string());
-                    }
+            if resident(&state) {
+                let time = state
+                    .read_settings()
+                    .map(|settings| settings.auto_sync_time)
+                    .unwrap_or_else(|_| automation::DEFAULT_DAILY_TIME.into());
+                if let Err(error) = automation::configure(true, &time) {
+                    diagnostics::error("automation/setup", &error.to_string());
                 }
             }
+            let spanish = state
+                .read_settings()
+                .map(|settings| settings.language != "en")
+                .unwrap_or(true);
             app.manage(state);
+            build_tray(app, spanish)?;
             automation::start_background_scheduler(app.handle().clone(), config_dir);
             if scheduled_launch || startup_launch {
                 if let Some(window) = app.get_webview_window("main") {
@@ -1161,31 +1316,103 @@ pub fn run() {
             load_cached_day,
             save_day_preview,
             export_configured_tracker,
+            open_log_file,
+            open_external_url,
+            reveal_tracker_folder,
+            save_qa_bridge_folder,
             qa_get_config,
             qa_save_config,
-            qa_extract_cases,
-            qa_check_new_mail,
-            qa_export_cases,
+            qa_engine_status,
+            qa_list_cases,
+            qa_update_case,
+            qa_reevaluate_case,
+            qa_sync_now,
+            qa_restart_history,
+            qa_export_now,
             qa_open_output_folder,
-            qa_load_last_run,
             save_app_role
         ])
         .build(tauri::generate_context!())
         .expect("error while building Atlas");
-    app.run(|app_handle, event| {
-        let closing = matches!(
-            event,
-            tauri::RunEvent::ExitRequested { .. }
-                | tauri::RunEvent::Exit
-                | tauri::RunEvent::WindowEvent {
-                    event: tauri::WindowEvent::CloseRequested { .. },
-                    ..
+    app.run(|app_handle, event| match event {
+        tauri::RunEvent::WindowEvent {
+            event: tauri::WindowEvent::CloseRequested { api, .. },
+            label,
+            ..
+        } => {
+            let Some(state) = app_handle.try_state::<AppState>() else {
+                return;
+            };
+            if resident(&state) {
+                // Keep the scheduler alive: the tracker's 09:30 run and the
+                // QA engine need Atlas running. The tray icon reopens or quits.
+                api.prevent_close();
+                if let Some(window) = app_handle.get_webview_window(&label) {
+                    let _ = window.hide();
                 }
-        );
-        if closing {
+                state.foreground_requested.store(false, Ordering::SeqCst);
+                diagnostics::info("window", "Atlas keeps running in the notification area");
+            } else {
+                state.local_ai.stop();
+            }
+        }
+        tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit => {
             if let Some(state) = app_handle.try_state::<AppState>() {
                 state.local_ai.stop();
             }
         }
+        _ => {}
     });
+}
+
+fn build_tray(app: &mut tauri::App, spanish: bool) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    use tauri::{
+        menu::{Menu, MenuItem},
+        tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    };
+    let open_item = MenuItem::with_id(
+        app,
+        "open",
+        if spanish { "Abrir Atlas" } else { "Open Atlas" },
+        true,
+        None::<&str>,
+    )?;
+    let quit_item = MenuItem::with_id(
+        app,
+        "quit",
+        if spanish { "Salir de Atlas" } else { "Quit Atlas" },
+        true,
+        None::<&str>,
+    )?;
+    let menu = Menu::with_items(app, &[&open_item, &quit_item])?;
+    let mut builder = TrayIconBuilder::with_id("atlas")
+        .tooltip("Atlas")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "open" => show_main_window(app),
+            "quit" => {
+                if let Some(state) = app.try_state::<AppState>() {
+                    state.local_ai.stop();
+                }
+                diagnostics::info("window", "Atlas was closed from the notification area");
+                app.exit(0);
+            }
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                show_main_window(tray.app_handle());
+            }
+        });
+    if let Some(icon) = app.default_window_icon() {
+        builder = builder.icon(icon.clone());
+    }
+    builder.build(app)?;
+    Ok(())
 }

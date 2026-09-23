@@ -121,6 +121,11 @@ pub struct AppStatus {
     pub log_path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub app_role: Option<AppRole>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub qa_bridge_folder: Option<String>,
+    /// Name captured for the personalized Power Automate solution.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub solution_owner: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -150,6 +155,10 @@ pub struct Settings {
     pub qa: QaConfig,
     #[serde(default)]
     pub app_role: Option<AppRole>,
+    /// Local OneDrive folder synced with the personalized AtlasQA flows
+    /// (`<OneDrive>\AtlasBridge\qa`).
+    #[serde(default)]
+    pub qa_bridge_folder: Option<String>,
 }
 
 fn default_auto_sync() -> bool {
@@ -180,6 +189,7 @@ impl Default for Settings {
             ai_instructions: AiInstructions::default(),
             qa: QaConfig::default(),
             app_role: None,
+            qa_bridge_folder: None,
         }
     }
 }
@@ -277,28 +287,16 @@ fn default_qa_vertical() -> String {
     "320 - CLIENT SERVICE BEAUTY, HEALTH & WELLNESS".into()
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum QaScheduleMode {
-    /// The manager runs the analysis by hand (default).
-    #[default]
-    Manual,
-    /// The weekly analysis runs when the PC/app starts.
-    Startup,
-    /// The weekly analysis runs at a chosen time while the app is running.
-    DailyTime,
-}
-
-fn default_qa_schedule_time() -> String {
-    "09:00".into()
-}
-
 fn default_qa_check_morning() -> String {
     "09:00".into()
 }
 
 fn default_qa_check_afternoon() -> String {
     "15:00".into()
+}
+
+fn default_qa_history_months() -> u32 {
+    36
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -308,36 +306,32 @@ pub struct QaConfig {
     pub auditees: Vec<QaAuditee>,
     #[serde(default)]
     pub output_folder: Option<String>,
+    /// Days covered by the first incremental sync when no historical import
+    /// has run yet.
     #[serde(default = "default_qa_lookback_days")]
     pub lookback_days: u32,
     #[serde(default = "default_qa_vertical")]
     pub vertical: String,
-    /// When enabled, Atlas watches the manager mailbox for new mail from
-    /// watched auditees and notifies the manager to run a QA analysis.
-    #[serde(default)]
+    /// When enabled, new mail from a watched analyst triggers an immediate
+    /// sync and evaluation.
+    #[serde(default = "default_true")]
     pub watch_enabled: bool,
-    /// RFC3339 timestamp of the last mailbox watch check.
-    #[serde(default)]
-    pub last_mail_check: Option<String>,
-    /// How the weekly QA analysis is activated. Manual by default.
-    #[serde(default)]
-    pub schedule_mode: QaScheduleMode,
-    /// Chosen analysis time (HH:MM) when schedule_mode is daily_time.
-    #[serde(default = "default_qa_schedule_time")]
-    pub schedule_time: String,
-    /// Mailbox check times (HH:MM): the watch fires twice a day.
+    /// Twice-daily sync times (HH:MM, local time).
     #[serde(default = "default_qa_check_morning")]
     pub check_morning: String,
     #[serde(default = "default_qa_check_afternoon")]
     pub check_afternoon: String,
-    /// Auditee names with new mail waiting for a QA run (persisted so the
-    /// notification survives app restarts and tab switches).
-    #[serde(default)]
-    pub pending_watch: Vec<String>,
     /// Subject keywords: only conversations whose topic mentions one of
     /// these (case-insensitive) are audited. Default: ["QA"].
     #[serde(default = "default_qa_subject_keywords")]
     pub subject_keywords: Vec<String>,
+    /// Oldest month the historical import may reach. The import also stops
+    /// earlier after six consecutive empty months.
+    #[serde(default = "default_qa_history_months")]
+    pub history_months: u32,
+    /// Write evaluated cases into the per-analyst workbooks automatically.
+    #[serde(default = "default_true")]
+    pub auto_export: bool,
 }
 
 fn default_qa_subject_keywords() -> Vec<String> {
@@ -351,34 +345,14 @@ impl Default for QaConfig {
             output_folder: None,
             lookback_days: default_qa_lookback_days(),
             vertical: default_qa_vertical(),
-            watch_enabled: false,
-            last_mail_check: None,
-            schedule_mode: QaScheduleMode::default(),
-            schedule_time: default_qa_schedule_time(),
+            watch_enabled: true,
             check_morning: default_qa_check_morning(),
             check_afternoon: default_qa_check_afternoon(),
-            pending_watch: Vec::new(),
             subject_keywords: default_qa_subject_keywords(),
+            history_months: default_qa_history_months(),
+            auto_export: true,
         }
     }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct QaWatchStatus {
-    pub new_senders: Vec<String>,
-    pub checked_at: String,
-}
-
-/// Persisted snapshot of the most recent QA run so scheduled/background
-/// analyses can be reviewed when the manager opens the QA tab.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct QaLastRun {
-    pub ran_at: String,
-    pub source: String,
-    pub historical: bool,
-    pub result: QaExtractionResult,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -413,13 +387,9 @@ pub struct QaCase {
     pub evidence: Vec<QaEvidenceRef>,
     pub selected: bool,
     pub reviewed: bool,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct QaExtractionResult {
-    pub cases: Vec<QaCase>,
-    pub warnings: Vec<String>,
+    /// The conversation received new messages after the manager reviewed it.
+    #[serde(default)]
+    pub new_evidence: bool,
 }
 
 #[derive(Debug, Serialize)]

@@ -32,7 +32,12 @@ const MAX_AI_TOTAL_EVIDENCE_ITEMS: usize = 48;
 const MAX_AI_EVIDENCE_CHARS: usize = 4_200;
 const MAX_AI_TEXT_CHARS: usize = 700;
 const MAX_AI_INTERACTIONS: usize = 8;
-const MAX_AI_OUTPUT_TOKENS: u32 = 512;
+// 512 tokens truncated the JSON of busy six-message batches ("EOF while
+// parsing a string" in the log); 900 leaves room for eight full answers.
+const MAX_AI_OUTPUT_TOKENS: u32 = 900;
+// Cold CPU runs of a full batch exceeded the former 90-second deadline.
+const TASK_REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
+const STRUCTURED_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 const INTERPRETATION_CACHE_VERSION: &str = "atlas-task-inference-v1";
 // Appended ahead of the USER RULES block whenever the user activates extra
 // instructions. The core prompt above stays immutable.
@@ -450,7 +455,7 @@ impl ManagedRuntime {
                     .lock()
                     .map_err(|_| AppError::Message("Local AI port lock was poisoned".into()))?
                     .ok_or_else(|| AppError::Message("Local AI did not select a port".into()))?;
-                let suggestions = summarize_at(
+                let suggestions = match summarize_at(
                     client,
                     model,
                     &aliased,
@@ -460,7 +465,39 @@ impl ManagedRuntime {
                     port,
                     &rules,
                 )
-                .await?;
+                .await
+                {
+                    Ok(value) => value,
+                    // A timeout or truncated answer usually means the batch
+                    // was too heavy for the CPU model: retry it in halves.
+                    Err(error) if bounded.len() > 1 => {
+                        diagnostics::error(
+                            "local-ai/analysis",
+                            &format!("Retrying the {source_label} batch in two halves after: {error}"),
+                        );
+                        let (first, second) = bounded.split_at(bounded.len() / 2);
+                        let mut combined = Vec::new();
+                        for half in [first, second] {
+                            let half_aliased = aliased_evidence(half);
+                            let half_lines = build_evidence_lines(&half_aliased);
+                            combined.extend(
+                                summarize_at(
+                                    client,
+                                    model,
+                                    &half_aliased,
+                                    &half_lines.join("\n"),
+                                    source_label,
+                                    actor,
+                                    port,
+                                    &rules,
+                                )
+                                .await?,
+                            );
+                        }
+                        combined
+                    }
+                    Err(error) => return Err(error),
+                };
                 self.write_interpretation_cache(
                     &cache_path,
                     model,
@@ -517,7 +554,7 @@ impl ManagedRuntime {
         let url = runtime_url(port, "api/generate")?;
         let response = client
             .post(url)
-            .timeout(Duration::from_secs(180))
+            .timeout(STRUCTURED_REQUEST_TIMEOUT)
             .json(&GenerateRequest {
                 model,
                 prompt,
@@ -958,7 +995,7 @@ async fn summarize_at(
     let prompt = build_prompt(actor, source_label, lines, user_rules);
     let response = client
         .post(url)
-        .timeout(Duration::from_secs(90))
+        .timeout(TASK_REQUEST_TIMEOUT)
         .json(&GenerateRequest {
             model,
             prompt,

@@ -1,0 +1,179 @@
+{
+  "properties": {
+    "connectionReferences": {
+      "shared_office365": {
+        "runtimeSource": "embedded",
+        "connection": {
+          "connectionReferenceLogicalName": "atlas_qa_office365"
+        },
+        "api": {
+          "name": "shared_office365"
+        }
+      },
+      "shared_onedriveforbusiness": {
+        "runtimeSource": "embedded",
+        "connection": {
+          "connectionReferenceLogicalName": "atlas_qa_onedriveforbusiness"
+        },
+        "api": {
+          "name": "shared_onedriveforbusiness"
+        }
+      }
+    },
+    "definition": {
+      "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+      "contentVersion": "1.0.0.0",
+      "parameters": {
+        "$connections": {
+          "defaultValue": {},
+          "type": "Object"
+        },
+        "$authentication": {
+          "defaultValue": {},
+          "type": "SecureObject"
+        }
+      },
+      "triggers": {
+        "When_a_new_email_arrives": {
+          "type": "OpenApiConnectionNotification",
+          "inputs": {
+            "host": {
+              "apiId": "/providers/Microsoft.PowerApps/apis/shared_office365",
+              "connectionName": "shared_office365",
+              "operationId": "OnNewEmailV3"
+            },
+            "parameters": {
+              "folderPath": "Inbox",
+              "importance": "Any",
+              "fetchOnlyWithAttachment": false,
+              "includeAttachments": false
+            },
+            "authentication": "@parameters('$authentication')"
+          },
+          "splitOn": "@triggerOutputs()?['body/value']"
+        }
+      },
+      "actions": {
+        "AtlasInstallationId": {
+          "type": "Compose",
+          "inputs": "unconfigured",
+          "runAfter": {}
+        },
+        "Read_QA_watch": {
+          "type": "OpenApiConnection",
+          "inputs": {
+            "host": {
+              "apiId": "/providers/Microsoft.PowerApps/apis/shared_onedriveforbusiness",
+              "connectionName": "shared_onedriveforbusiness",
+              "operationId": "GetFileContentByPath"
+            },
+            "parameters": {
+              "path": "/AtlasBridge/qa/requests/qa-watch.txt",
+              "inferContentType": true
+            },
+            "authentication": "@parameters('$authentication')"
+          },
+          "runAfter": {
+            "AtlasInstallationId": [
+              "Succeeded"
+            ]
+          }
+        },
+        "QA_watch": {
+          "type": "Compose",
+          "inputs": "@json(trim(base64ToString(body('Read_QA_watch'))))",
+          "runAfter": {
+            "Read_QA_watch": [
+              "Succeeded"
+            ]
+          }
+        },
+        "Sender": {
+          "type": "Compose",
+          "inputs": "@toLower(trim(coalesce(triggerOutputs()?['body/from'],'')))",
+          "runAfter": {
+            "QA_watch": [
+              "Succeeded"
+            ]
+          }
+        },
+        "Sender_is_audited": {
+          "type": "If",
+          "expression": {
+            "and": [
+              {
+                "equals": [
+                  "@coalesce(outputs('QA_watch')?['installationId'],'')",
+                  "@outputs('AtlasInstallationId')"
+                ]
+              },
+              {
+                "contains": [
+                  "@coalesce(outputs('QA_watch')?['auditees'],json('[]'))",
+                  "@outputs('Sender')"
+                ]
+              }
+            ]
+          },
+          "actions": {
+            "Compose_live_signal": {
+              "type": "Compose",
+              "inputs": {
+                "contract": "atlas-qa-live-v1",
+                "installationId": "@outputs('AtlasInstallationId')",
+                "exportedAt": "@utcNow()",
+                "messages": [
+                  {
+                    "id": "@triggerOutputs()?['body/id']",
+                    "conversationId": "@coalesce(triggerOutputs()?['body/conversationId'],'')",
+                    "subject": "@coalesce(triggerOutputs()?['body/subject'],'')",
+                    "receivedDateTime": "@coalesce(triggerOutputs()?['body/receivedDateTime'],utcNow())",
+                    "from": "@outputs('Sender')",
+                    "toRecipients": "@coalesce(triggerOutputs()?['body/toRecipients'],'')",
+                    "ccRecipients": "@coalesce(triggerOutputs()?['body/ccRecipients'],'')",
+                    "hasAttachments": "@coalesce(triggerOutputs()?['body/hasAttachments'],false)",
+                    "bodyPreview": "@coalesce(triggerOutputs()?['body/bodyPreview'],'')",
+                    "body": "@substring(coalesce(triggerOutputs()?['body/body'],''),0,min(length(coalesce(triggerOutputs()?['body/body'],'')),20000))"
+                  }
+                ]
+              },
+              "runAfter": {}
+            },
+            "Write_live_signal": {
+              "type": "OpenApiConnection",
+              "inputs": {
+                "host": {
+                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_onedriveforbusiness",
+                  "connectionName": "shared_onedriveforbusiness",
+                  "operationId": "CreateFile"
+                },
+                "parameters": {
+                  "folderPath": "/AtlasBridge/qa/inbox/live",
+                  "name": "@concat('atlas-qa-live-',outputs('AtlasInstallationId'),'-',formatDateTime(utcNow(),'yyyyMMddTHHmmssfff'),'-',substring(guid(),0,8),'.json')",
+                  "body": "@string(outputs('Compose_live_signal'))"
+                },
+                "authentication": "@parameters('$authentication')"
+              },
+              "runAfter": {
+                "Compose_live_signal": [
+                  "Succeeded"
+                ]
+              }
+            }
+          },
+          "else": {
+            "actions": {}
+          },
+          "runAfter": {
+            "Sender": [
+              "Succeeded"
+            ]
+          }
+        }
+      },
+      "outputs": {}
+    },
+    "templateName": null
+  },
+  "schemaVersion": "1.0.0.0"
+}

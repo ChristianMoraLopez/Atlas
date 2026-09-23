@@ -1,9 +1,14 @@
 //! Portal-assisted installation. This module never obtains Microsoft credentials,
 //! invokes PAC, controls a browser, or calls a tenant API.
+//!
+//! Each Atlas role ships its own solution template (tracker: calendar, mail
+//! and Teams evidence; QA: manager mailbox export and analyst watcher). The
+//! template is personalized per installation before the user imports it, so
+//! every person gets an independent solution named after them.
 use crate::{
     diagnostics,
     error::{AppError, Result},
-    evidence_validation,
+    evidence_validation, qa_engine,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -18,14 +23,135 @@ use std::{
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
 const SOLUTION: &[u8] = include_bytes!("../../power-automate/AtlasBridge_1_0_0_0.zip");
+const WRITER_SOLUTION: &[u8] =
+    include_bytes!("../../power-automate-writer/AtlasTrackerWriter_1_0_0_0.zip");
+const QA_SOLUTION: &[u8] = include_bytes!("../../power-automate-qa/AtlasQA_1_0_0_0.zip");
 const SCHEDULED_WORKFLOW: &str =
     "Workflows/AtlasExportEvidence-8e5c1f84-dcbb-4a2c-9d2f-62e9c38105d2.json";
 const TEAMS_EVENT_WORKFLOW: &str =
     "Workflows/AtlasCaptureTeamsMessages-7f7115e8-b821-4bb9-9b4e-5c7a5448610e.json";
-const WORKFLOWS: [&str; 2] = [SCHEDULED_WORKFLOW, TEAMS_EVENT_WORKFLOW];
 const MAX_FILE: u64 = 25 * 1024 * 1024;
 const PORTAL: &str = "https://make.powerautomate.com/";
 const SOLUTION_VERSION: &str = "1.13.0.0";
+const QA_SOLUTION_VERSION: &str = "1.0.0.0";
+const MAX_OWNER_CHARS: usize = 80;
+const MAX_OWNER_SLUG: usize = 20;
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SolutionKind {
+    Tracker,
+    Qa,
+    Writer,
+}
+
+pub struct TemplateWorkflow {
+    file: &'static str,
+    id: &'static str,
+    name: &'static str,
+}
+
+/// One bundled solution template and the identities it declares.
+pub struct Template {
+    kind: SolutionKind,
+    bytes: &'static [u8],
+    version: &'static str,
+    base_unique_name: &'static str,
+    /// Display name written in the template manifest.
+    manifest_display_name: &'static str,
+    legacy_display_name: &'static str,
+    display_prefix: &'static str,
+    package_file: &'static str,
+    workflows: &'static [TemplateWorkflow],
+    connection_references: &'static [&'static str],
+    connectors: &'static [&'static str],
+    /// Whether every flow carries an AtlasInstallationId compose action.
+    installation_action: bool,
+}
+
+pub static TRACKER: Template = Template {
+    kind: SolutionKind::Tracker,
+    bytes: SOLUTION,
+    version: SOLUTION_VERSION,
+    base_unique_name: "AtlasBridge",
+    manifest_display_name: "AtlasBridge",
+    legacy_display_name: "Atlas Bridge",
+    display_prefix: "Atlas Tracker",
+    package_file: "AtlasBridge_1_0_0_0.zip",
+    workflows: &[
+        TemplateWorkflow {
+            file: SCHEDULED_WORKFLOW,
+            id: SCHEDULED_WORKFLOW_ID,
+            name: "Atlas - Export evidence to OneDrive",
+        },
+        TemplateWorkflow {
+            file: TEAMS_EVENT_WORKFLOW,
+            id: TEAMS_EVENT_WORKFLOW_ID,
+            name: "Atlas - Capture Teams messages",
+        },
+    ],
+    connection_references: &CONNECTION_REFERENCES,
+    connectors: &[
+        "shared_office365",
+        "shared_teams",
+        "shared_onedriveforbusiness",
+    ],
+    installation_action: true,
+};
+
+pub static QA: Template = Template {
+    kind: SolutionKind::Qa,
+    bytes: QA_SOLUTION,
+    version: QA_SOLUTION_VERSION,
+    base_unique_name: "AtlasQA",
+    manifest_display_name: "AtlasQA",
+    legacy_display_name: "Atlas QA",
+    display_prefix: "Atlas QA",
+    package_file: "AtlasQA_1_0_0_0.zip",
+    workflows: &[
+        TemplateWorkflow {
+            file: "Workflows/AtlasQaExportMail-3b9d2e61-5c47-4f0a-9e2b-7a41c6d8f213.json",
+            id: "3b9d2e61-5c47-4f0a-9e2b-7a41c6d8f213",
+            name: "Atlas QA - Export mailbox evidence",
+        },
+        TemplateWorkflow {
+            file: "Workflows/AtlasQaWatchMail-c5a07f9e-2d18-4b63-8f4e-91e0b3d6a574.json",
+            id: "c5a07f9e-2d18-4b63-8f4e-91e0b3d6a574",
+            name: "Atlas QA - Watch analyst mail",
+        },
+    ],
+    connection_references: &["atlas_qa_office365", "atlas_qa_onedriveforbusiness"],
+    connectors: &["shared_office365", "shared_onedriveforbusiness"],
+    installation_action: true,
+};
+
+/// Optional second tracker solution that writes a SharePoint workbook.
+pub static WRITER: Template = Template {
+    kind: SolutionKind::Writer,
+    bytes: WRITER_SOLUTION,
+    version: "1.0.0.0",
+    base_unique_name: "AtlasTrackerWriter",
+    manifest_display_name: "Atlas Tracker Writer",
+    legacy_display_name: "Atlas Tracker Writer",
+    display_prefix: "Atlas Tracker Writer",
+    package_file: "AtlasTrackerWriter_1_0_0_0.zip",
+    workflows: &[TemplateWorkflow {
+        file: "Workflows/AtlasWriteDailyTracker-4d6c39b7-cac8-4d19-a12e-95af49503b7f.json",
+        id: "4d6c39b7-cac8-4d19-a12e-95af49503b7f",
+        name: "Atlas - Write daily tracker to SharePoint",
+    }],
+    connection_references: &[
+        "atlas_writer_onedrive",
+        "atlas_writer_sharepoint",
+        "atlas_writer_excel",
+    ],
+    connectors: &[
+        "shared_onedriveforbusiness",
+        "shared_sharepointonline",
+        "shared_excelonlinebusiness",
+    ],
+    installation_action: false,
+};
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -58,10 +184,20 @@ pub struct Session {
     pub last_checked_at: Option<String>,
     #[serde(default)]
     pub last_checked_file: Option<String>,
+    /// Person the personalized solution is named after. Absent for
+    /// installations prepared by older releases, which keep their names.
+    #[serde(default)]
+    pub owner_name: Option<String>,
+    /// Name of the solution the user must import (shown in the wizard).
+    #[serde(default)]
+    pub solution_display_name: Option<String>,
+    /// QA only: request the flow must answer to prove the installation.
+    #[serde(default)]
+    pub ping_request_id: Option<String>,
 }
 
-impl Default for Session {
-    fn default() -> Self {
+impl Session {
+    fn new(template: &Template) -> Self {
         Self {
             phase: Phase::CheckingRequirements,
             resume_phase: None,
@@ -71,10 +207,19 @@ impl Default for Session {
             calendar_name: "Calendar".into(),
             environment_id: None,
             diagnostic: "portal_required".into(),
-            solution_version: Some(SOLUTION_VERSION.into()),
+            solution_version: Some(template.version.into()),
             last_checked_at: None,
             last_checked_file: None,
+            owner_name: None,
+            solution_display_name: None,
+            ping_request_id: None,
         }
+    }
+}
+
+impl Default for Session {
+    fn default() -> Self {
+        Self::new(&TRACKER)
     }
 }
 
@@ -82,6 +227,7 @@ impl Default for Session {
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
     pub session: Session,
+    pub kind: SolutionKind,
     pub package_path: String,
     pub one_drive_root: Option<String>,
     pub pac_detected: bool,
@@ -89,6 +235,7 @@ pub struct Snapshot {
 
 pub struct Installer {
     directory: PathBuf,
+    template: &'static Template,
     session: Mutex<Session>,
 }
 
@@ -97,7 +244,7 @@ fn fail(code: &str) -> AppError {
 }
 
 impl Installer {
-    pub fn new(directory: PathBuf) -> Self {
+    pub fn new(directory: PathBuf, template: &'static Template) -> Self {
         let session = fs::read(directory.join("session.json"))
             .ok()
             .filter(|data| data.len() < 16_384)
@@ -105,17 +252,18 @@ impl Installer {
             .filter(|s| {
                 uuid::Uuid::parse_str(&s.installation_id).is_ok()
                     && DateTime::parse_from_rfc3339(&s.started_at).is_ok()
-                    && s.solution_version.as_deref() == Some(SOLUTION_VERSION)
+                    && s.solution_version.as_deref() == Some(template.version)
             })
-            .unwrap_or_default();
+            .unwrap_or_else(|| Session::new(template));
         Self {
             directory,
+            template,
             session: Mutex::new(session),
         }
     }
 
     fn package_path(&self) -> PathBuf {
-        self.directory.join("AtlasBridge_1_0_0_0.zip")
+        self.directory.join(self.template.package_file)
     }
 
     fn persist(&self, next: &Session) -> Result<()> {
@@ -135,6 +283,7 @@ impl Installer {
                 .lock()
                 .map_err(|_| fail("installer_busy"))?
                 .clone(),
+            kind: self.template.kind,
             package_path: self.package_path().to_string_lossy().into_owned(),
             one_drive_root: std::env::var("OneDriveCommercial")
                 .ok()
@@ -151,6 +300,7 @@ impl Installer {
             Action::Prepare {
                 one_drive_root,
                 calendar_name,
+                owner_name,
             } => {
                 if next.phase != Phase::CheckingRequirements {
                     return Err(fail("invalid_transition"));
@@ -160,18 +310,30 @@ impl Installer {
                 {
                     return Err(fail("invalid_calendar_name"));
                 }
-                next.folder = Some(
-                    prepare_inbox(Path::new(&one_drive_root))?
-                        .to_string_lossy()
-                        .into_owned(),
-                );
+                next.owner_name = normalize_owner(&owner_name)?;
+                let folder = prepare_inbox(Path::new(&one_drive_root), self.template.kind)?;
+                next.folder = Some(folder.to_string_lossy().into_owned());
                 next.calendar_name = calendar_name.trim().to_string();
                 fs::create_dir_all(&self.directory).map_err(|_| fail("settings_not_writable"))?;
-                let bytes = personalized_solution(&next)?;
+                let identity = instance_identity(
+                    self.template,
+                    &next.installation_id,
+                    next.owner_name.as_deref(),
+                )?;
+                let bytes = personalized_solution(self.template, &next)?;
                 let staging = self.directory.join("solution.pending.zip");
                 fs::write(&staging, bytes).map_err(|_| fail("package_not_writable"))?;
                 replace_file(&staging, &self.package_path())
                     .map_err(|_| fail("package_not_writable"))?;
+                if self.template.kind == SolutionKind::Qa {
+                    let ping = qa_engine::ping_request(&next.installation_id);
+                    qa_engine::write_request(&folder, &ping)
+                        .map_err(|_| fail("inbox_not_writable"))?;
+                    qa_engine::write_watch(&folder, &next.installation_id, &[])
+                        .map_err(|_| fail("inbox_not_writable"))?;
+                    next.ping_request_id = Some(ping.request_id);
+                }
+                next.solution_display_name = Some(identity.display_name);
                 next.phase = Phase::WaitingSignIn;
                 next.diagnostic = "portal_required".into();
             }
@@ -209,22 +371,29 @@ impl Installer {
                 if next.phase != Phase::VerifyingFile {
                     return Err(fail("invalid_transition"));
                 }
-                let verification = verify_inbox(&next);
+                let verification = match self.template.kind {
+                    SolutionKind::Qa => verify_qa(&mut next),
+                    SolutionKind::Tracker | SolutionKind::Writer => verify_inbox(&next),
+                };
                 next.last_checked_at = Some(Utc::now().to_rfc3339());
                 next.last_checked_file = verification.file_name.clone();
+                // The wizard polls every 15 seconds; log only real changes.
+                if next.diagnostic != verification.diagnostic {
+                    diagnostics::info(
+                        "connector/verify",
+                        &format!(
+                            "{:?}: {}{}",
+                            self.template.kind,
+                            verification.diagnostic,
+                            verification
+                                .file_name
+                                .as_deref()
+                                .map(|name| format!(" ({name})"))
+                                .unwrap_or_default()
+                        ),
+                    );
+                }
                 next.diagnostic = verification.diagnostic.into();
-                diagnostics::info(
-                    "connector/verify",
-                    &format!(
-                        "{}{}",
-                        verification.diagnostic,
-                        verification
-                            .file_name
-                            .as_deref()
-                            .map(|name| format!(" ({name})"))
-                            .unwrap_or_default()
-                    ),
-                );
                 match verification.state {
                     VerificationState::Valid => {
                         next.phase = Phase::Completed;
@@ -258,7 +427,7 @@ impl Installer {
                 next.diagnostic = "portal_required".into();
             }
             Action::Reset {} => {
-                next = Session::default();
+                next = Session::new(self.template);
             }
         }
         self.persist(&next)?;
@@ -300,6 +469,8 @@ pub enum Action {
     Prepare {
         one_drive_root: String,
         calendar_name: String,
+        #[serde(default)]
+        owner_name: String,
     },
     ConfirmSignIn {},
     ConfirmEnvironment {
@@ -386,7 +557,17 @@ fn parse_environment(input: &str) -> Option<String> {
     })
 }
 
-fn prepare_inbox(root: &Path) -> Result<PathBuf> {
+/// Drops the Windows verbatim prefix (`\\?\C:\...`) that canonicalize adds,
+/// so stored and displayed folders stay readable. UNC paths are kept as-is.
+pub fn readable_path(path: PathBuf) -> PathBuf {
+    let text = path.to_string_lossy();
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if !rest.starts_with("UNC\\") => PathBuf::from(rest),
+        _ => path,
+    }
+}
+
+fn prepare_inbox(root: &Path, kind: SolutionKind) -> Result<PathBuf> {
     if !root.is_absolute() || !root.is_dir() {
         return Err(fail("choose_onedrive_root"));
     }
@@ -406,9 +587,13 @@ fn prepare_inbox(root: &Path) -> Result<PathBuf> {
             }
         }
     }
+    let leaf = match kind {
+        SolutionKind::Qa => "qa",
+        SolutionKind::Tracker | SolutionKind::Writer => "inbox",
+    };
     // Do not follow a junction or symlink out of the user-selected sync root.
     let mut folder = root.clone();
-    for part in ["AtlasBridge", "inbox"] {
+    for part in ["AtlasBridge", leaf] {
         folder.push(part);
         if folder.exists() {
             let canonical = fs::canonicalize(&folder).map_err(|_| fail("inbox_unavailable"))?;
@@ -418,6 +603,19 @@ fn prepare_inbox(root: &Path) -> Result<PathBuf> {
         } else {
             fs::create_dir(&folder).map_err(|_| fail("inbox_not_writable"))?;
         }
+    }
+    if kind == SolutionKind::Qa {
+        qa_engine::prepare_folders(&folder).map_err(|_| fail("inbox_not_writable"))?;
+        for path in [
+            qa_engine::requests_dir(&folder),
+            qa_engine::inbox_dir(&folder),
+        ] {
+            let canonical = fs::canonicalize(&path).map_err(|_| fail("inbox_unavailable"))?;
+            if !canonical.starts_with(&root) || !canonical.is_dir() {
+                return Err(fail("unsafe_inbox_link"));
+            }
+        }
+        return Ok(readable_path(folder));
     }
     for path in [
         folder.join("scheduled"),
@@ -441,14 +639,15 @@ fn prepare_inbox(root: &Path) -> Result<PathBuf> {
     if !request.exists() {
         fs::write(&request, "").map_err(|_| fail("inbox_not_writable"))?;
     }
-    Ok(folder)
+    Ok(readable_path(folder))
 }
 
-// Identity of one logical AtlasBridge installation. The same persistent
-// installation id always derives the same solution unique name, connection
-// reference logical names and workflow ids, so Power Platform imports a new
-// Atlas version as an update of that installation instead of colliding with
-// components owned by another user of the same environment.
+// Identity of one logical installation. The same persistent installation id
+// (and the owner name captured when it was prepared) always derives the same
+// solution unique name, connection reference logical names and workflow ids,
+// so Power Platform imports a new Atlas version as an update of that
+// installation instead of colliding with components owned by another user of
+// the same environment.
 const CONNECTION_REFERENCES: [&str; 3] = [
     "atlas_office365",
     "atlas_teams",
@@ -456,6 +655,7 @@ const CONNECTION_REFERENCES: [&str; 3] = [
 ];
 const SCHEDULED_WORKFLOW_ID: &str = "8e5c1f84-dcbb-4a2c-9d2f-62e9c38105d2";
 const TEAMS_EVENT_WORKFLOW_ID: &str = "7f7115e8-b821-4bb9-9b4e-5c7a5448610e";
+#[cfg(test)]
 const WORKFLOW_IDS: [&str; 2] = [SCHEDULED_WORKFLOW_ID, TEAMS_EVENT_WORKFLOW_ID];
 
 #[derive(Debug, PartialEq)]
@@ -463,8 +663,9 @@ struct InstanceIdentity {
     key: String,
     unique_name: String,
     display_name: String,
-    connection_references: [String; 3],
-    workflows: [(String, String); 2],
+    owner: Option<String>,
+    connection_references: Vec<String>,
+    workflows: Vec<(String, String)>,
 }
 
 /// Deterministic Power Platform-safe key derived from the persistent
@@ -482,6 +683,68 @@ fn instance_key(installation_id: &str) -> Result<String> {
     Ok(key)
 }
 
+fn normalize_owner(value: &str) -> Result<Option<String>> {
+    let owner = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if owner.is_empty() {
+        return Ok(None);
+    }
+    if owner.chars().count() > MAX_OWNER_CHARS
+        || owner.chars().any(char::is_control)
+        || owner_slug(&owner).is_empty()
+    {
+        return Err(fail("invalid_owner_name"));
+    }
+    Ok(Some(owner))
+}
+
+fn fold_accent(c: char) -> char {
+    match c {
+        'á' | 'à' | 'ä' | 'â' | 'ã' | 'å' => 'a',
+        'Á' | 'À' | 'Ä' | 'Â' | 'Ã' | 'Å' => 'A',
+        'é' | 'è' | 'ë' | 'ê' => 'e',
+        'É' | 'È' | 'Ë' | 'Ê' => 'E',
+        'í' | 'ì' | 'ï' | 'î' => 'i',
+        'Í' | 'Ì' | 'Ï' | 'Î' => 'I',
+        'ó' | 'ò' | 'ö' | 'ô' | 'õ' => 'o',
+        'Ó' | 'Ò' | 'Ö' | 'Ô' | 'Õ' => 'O',
+        'ú' | 'ù' | 'ü' | 'û' => 'u',
+        'Ú' | 'Ù' | 'Ü' | 'Û' => 'U',
+        'ñ' => 'n',
+        'Ñ' => 'N',
+        'ç' => 'c',
+        'Ç' => 'C',
+        other => other,
+    }
+}
+
+/// "Christian Mora López" -> "ChristianMoraLopez": ASCII letters and digits
+/// only, so it is valid inside a solution unique name.
+fn owner_slug(owner: &str) -> String {
+    let folded: String = owner.chars().map(fold_accent).collect();
+    let slug: String = folded
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(|word| {
+            let mut chars = word.chars();
+            let first = chars.next().map(|c| c.to_ascii_uppercase());
+            first
+                .into_iter()
+                .chain(chars.map(|c| c.to_ascii_lowercase()))
+                .collect::<String>()
+        })
+        .collect();
+    slug.chars().take(MAX_OWNER_SLUG).collect()
+}
+
+fn xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
 /// Deterministic workflow id: SHA-256 of installation id + original workflow
 /// id, encoded as an RFC 4122 version-5 style UUID. Never random per run.
 fn instance_workflow_id(installation_id: &str, original_workflow_id: &str) -> String {
@@ -495,13 +758,54 @@ fn instance_workflow_id(installation_id: &str, original_workflow_id: &str) -> St
     uuid::Uuid::from_bytes(bytes).to_string()
 }
 
-fn instance_identity(installation_id: &str) -> Result<InstanceIdentity> {
+fn instance_identity(
+    template: &Template,
+    installation_id: &str,
+    owner: Option<&str>,
+) -> Result<InstanceIdentity> {
     let key = instance_key(installation_id)?;
+    let owner = owner.map(str::to_string);
+    let (unique_name, display_name) = match owner.as_deref() {
+        Some(name) => (
+            format!(
+                "{}_{}_{key}",
+                template.base_unique_name,
+                // Solution unique names are limited to 65 characters.
+                owner_slug(name)
+                    .chars()
+                    .take(64usize.saturating_sub(template.base_unique_name.len() + key.len() + 2))
+                    .collect::<String>()
+            ),
+            format!(
+                "{} - {name} - {}",
+                template.display_prefix,
+                &key[..key.len().min(8)]
+            ),
+        ),
+        None => (
+            format!("{}_{key}", template.base_unique_name),
+            format!("{} [{key}]", template.legacy_display_name),
+        ),
+    };
     Ok(InstanceIdentity {
-        unique_name: format!("AtlasBridge_{key}"),
-        display_name: format!("Atlas Bridge [{key}]"),
-        connection_references: CONNECTION_REFERENCES.map(|name| format!("{name}_{key}")),
-        workflows: WORKFLOW_IDS.map(|id| (id.to_string(), instance_workflow_id(installation_id, id))),
+        unique_name,
+        display_name,
+        owner,
+        connection_references: template
+            .connection_references
+            .iter()
+            .map(|name| format!("{name}_{key}"))
+            .collect(),
+        workflows: template
+            .workflows
+            .iter()
+            .map(|workflow| {
+                (
+                    workflow.id.to_string(),
+                    instance_workflow_id(installation_id, workflow.id),
+                )
+            })
+            .collect(),
         key,
     })
 }
@@ -513,20 +817,27 @@ fn replace_required(content: String, from: &str, to: &str) -> Result<String> {
     Ok(content.replace(from, to))
 }
 
-fn personalize_solution_manifest(bytes: &[u8], identity: &InstanceIdentity) -> Result<Vec<u8>> {
+fn personalize_solution_manifest(
+    bytes: &[u8],
+    template: &Template,
+    identity: &InstanceIdentity,
+) -> Result<Vec<u8>> {
     let mut xml =
         String::from_utf8(bytes.to_vec()).map_err(|_| fail("invalid_bundled_solution"))?;
     xml = replace_required(
         xml,
-        "<UniqueName>AtlasBridge</UniqueName>",
+        &format!("<UniqueName>{}</UniqueName>", template.base_unique_name),
         &format!("<UniqueName>{}</UniqueName>", identity.unique_name),
     )?;
     xml = replace_required(
         xml,
-        "<LocalizedName description=\"AtlasBridge\" languagecode=\"1033\" />",
         &format!(
             "<LocalizedName description=\"{}\" languagecode=\"1033\" />",
-            identity.display_name
+            template.manifest_display_name
+        ),
+        &format!(
+            "<LocalizedName description=\"{}\" languagecode=\"1033\" />",
+            xml_escape(&identity.display_name)
         ),
     )?;
     for (original, derived) in &identity.workflows {
@@ -535,14 +846,18 @@ fn personalize_solution_manifest(bytes: &[u8], identity: &InstanceIdentity) -> R
     Ok(xml.into_bytes())
 }
 
-fn personalize_customizations(bytes: &[u8], identity: &InstanceIdentity) -> Result<Vec<u8>> {
+fn personalize_customizations(
+    bytes: &[u8],
+    template: &Template,
+    identity: &InstanceIdentity,
+) -> Result<Vec<u8>> {
     let mut xml =
         String::from_utf8(bytes.to_vec()).map_err(|_| fail("invalid_bundled_solution"))?;
     for (original, derived) in &identity.workflows {
         xml = replace_required(xml, &format!("{{{original}}}"), &format!("{{{derived}}}"))?;
         xml = replace_required(xml, original, derived)?;
     }
-    for (position, original) in CONNECTION_REFERENCES.iter().enumerate() {
+    for (position, original) in template.connection_references.iter().enumerate() {
         xml = replace_required(
             xml,
             &format!("connectionreferencelogicalname=\"{original}\""),
@@ -552,18 +867,41 @@ fn personalize_customizations(bytes: &[u8], identity: &InstanceIdentity) -> Resu
             ),
         )?;
     }
+    if let Some(owner) = identity.owner.as_deref() {
+        // Flows show the person in the Power Automate list as well.
+        for workflow in template.workflows {
+            let personal = xml_escape(&format!("{} ({owner})", workflow.name));
+            xml = replace_required(
+                xml,
+                &format!("Name=\"{}\"", workflow.name),
+                &format!("Name=\"{personal}\""),
+            )?;
+            xml = replace_required(
+                xml,
+                &format!("description=\"{}\"", workflow.name),
+                &format!("description=\"{personal}\""),
+            )?;
+        }
+    }
     Ok(xml.into_bytes())
 }
 
 fn personalize_flow(
     bytes: &[u8],
+    template: &Template,
     identity: &InstanceIdentity,
     installation_id: &str,
+    patch: &dyn Fn(&mut Value) -> Result<()>,
 ) -> Result<Vec<u8>> {
     let mut flow: Value =
         serde_json::from_slice(bytes).map_err(|_| fail("invalid_bundled_solution"))?;
-    let actions = &mut flow["properties"]["definition"]["actions"];
-    actions["AtlasInstallationId"]["inputs"] = Value::String(installation_id.to_string());
+    if template.installation_action {
+        let action = flow["properties"]["definition"]["actions"]
+            .get_mut("AtlasInstallationId")
+            .ok_or_else(|| fail("invalid_bundled_solution"))?;
+        action["inputs"] = Value::String(installation_id.to_string());
+    }
+    patch(&mut flow)?;
     // The keys (shared_office365, shared_teams, shared_onedriveforbusiness)
     // identify the standard connectors and must stay intact. Only the logical
     // name of the connection reference becomes installation-specific.
@@ -575,7 +913,8 @@ fn personalize_flow(
             .as_str()
             .ok_or_else(|| fail("invalid_bundled_solution"))?
             .to_string();
-        let position = CONNECTION_REFERENCES
+        let position = template
+            .connection_references
             .iter()
             .position(|name| *name == logical)
             .ok_or_else(|| fail("invalid_bundled_solution"))?;
@@ -622,6 +961,7 @@ fn read_package_entry(package: &[u8], name: &str) -> Result<Vec<u8>> {
 /// identities and none of the template's global identities.
 fn validate_instance_package(
     package: &[u8],
+    template: &Template,
     identity: &InstanceIdentity,
     installation_id: &str,
 ) -> Result<()> {
@@ -633,11 +973,14 @@ fn validate_instance_package(
     let customizations =
         String::from_utf8(customizations).map_err(|_| fail("package_generation_failed"))?;
     if !solution.contains(&format!("<UniqueName>{}</UniqueName>", identity.unique_name))
-        || solution.contains("<UniqueName>AtlasBridge</UniqueName>")
+        || solution.contains(&format!(
+            "<UniqueName>{}</UniqueName>",
+            template.base_unique_name
+        ))
     {
         return Err(fail("package_generation_failed"));
     }
-    for (original, derived) in &identity.workflows {
+    for (workflow, (original, derived)) in template.workflows.iter().zip(&identity.workflows) {
         if solution.contains(original)
             || customizations.contains(original)
             || !customizations.contains(derived)
@@ -646,19 +989,20 @@ fn validate_instance_package(
         }
         let flow_bytes = read_package_entry(
             package,
-            &instance_workflow_file_name_for(original, identity),
+            &instance_workflow_file_name(workflow.file, identity),
         )?;
         let flow: Value =
             serde_json::from_slice(&flow_bytes).map_err(|_| fail("package_generation_failed"))?;
-        if flow["properties"]["definition"]["actions"]["AtlasInstallationId"]["inputs"]
-            != Value::String(installation_id.to_string())
+        if template.installation_action
+            && flow["properties"]["definition"]["actions"]["AtlasInstallationId"]["inputs"]
+                != Value::String(installation_id.to_string())
         {
             return Err(fail("package_generation_failed"));
         }
         let references = flow["properties"]["connectionReferences"]
             .as_object()
             .ok_or_else(|| fail("package_generation_failed"))?;
-        if references.len() != CONNECTION_REFERENCES.len() {
+        if references.len() != template.connection_references.len() {
             return Err(fail("package_generation_failed"));
         }
         for (connector, reference) in references {
@@ -673,7 +1017,7 @@ fn validate_instance_package(
             }
         }
     }
-    for (position, original) in CONNECTION_REFERENCES.iter().enumerate() {
+    for (position, original) in template.connection_references.iter().enumerate() {
         // No unsuffixed template reference may remain as an active identity.
         if customizations.contains(&format!("connectionreferencelogicalname=\"{original}\""))
             || !customizations.contains(&format!(
@@ -685,11 +1029,7 @@ fn validate_instance_package(
         }
     }
     // The standard Microsoft connector ids stay untouched.
-    for connector in [
-        "shared_office365",
-        "shared_teams",
-        "shared_onedriveforbusiness",
-    ] {
+    for connector in template.connectors {
         if !customizations.contains(connector) {
             return Err(fail("package_generation_failed"));
         }
@@ -697,19 +1037,26 @@ fn validate_instance_package(
     Ok(())
 }
 
-fn instance_workflow_file_name_for(original_workflow_id: &str, identity: &InstanceIdentity) -> String {
-    let template = if original_workflow_id == SCHEDULED_WORKFLOW_ID {
-        SCHEDULED_WORKFLOW
-    } else {
-        TEAMS_EVENT_WORKFLOW
-    };
-    instance_workflow_file_name(template, identity)
+fn personalized_solution(template: &Template, session: &Session) -> Result<Vec<u8>> {
+    personalized_package(
+        template,
+        &session.installation_id,
+        session.owner_name.as_deref(),
+        &|_| Ok(()),
+    )
 }
 
-fn personalized_solution(session: &Session) -> Result<Vec<u8>> {
-    let identity = instance_identity(&session.installation_id)?;
-    let mut source =
-        ZipArchive::new(Cursor::new(SOLUTION)).map_err(|_| fail("invalid_bundled_solution"))?;
+/// Personalizes any bundled template for one installation and owner.
+/// `patch` may set extra flow inputs (for example the writer target).
+pub fn personalized_package(
+    template: &Template,
+    installation_id: &str,
+    owner: Option<&str>,
+    patch: &dyn Fn(&mut Value) -> Result<()>,
+) -> Result<Vec<u8>> {
+    let identity = instance_identity(template, installation_id, owner)?;
+    let mut source = ZipArchive::new(Cursor::new(template.bytes))
+        .map_err(|_| fail("invalid_bundled_solution"))?;
     let mut output = ZipWriter::new(Cursor::new(Vec::new()));
     let mut changed = 0usize;
     for index in 0..source.len() {
@@ -723,15 +1070,15 @@ fn personalized_solution(session: &Session) -> Result<Vec<u8>> {
             .map_err(|_| fail("invalid_bundled_solution"))?;
         let out_name = match name.as_str() {
             "solution.xml" => {
-                bytes = personalize_solution_manifest(&bytes, &identity)?;
+                bytes = personalize_solution_manifest(&bytes, template, &identity)?;
                 name
             }
             "customizations.xml" => {
-                bytes = personalize_customizations(&bytes, &identity)?;
+                bytes = personalize_customizations(&bytes, template, &identity)?;
                 name
             }
-            name if WORKFLOWS.contains(&name) => {
-                bytes = personalize_flow(&bytes, &identity, &session.installation_id)?;
+            name if template.workflows.iter().any(|w| w.file == name) => {
+                bytes = personalize_flow(&bytes, template, &identity, installation_id, patch)?;
                 changed += 1;
                 instance_workflow_file_name(name, &identity)
             }
@@ -747,14 +1094,14 @@ fn personalized_solution(session: &Session) -> Result<Vec<u8>> {
             .write_all(&bytes)
             .map_err(|_| fail("package_generation_failed"))?;
     }
-    if changed != WORKFLOWS.len() {
+    if changed != template.workflows.len() {
         return Err(fail("invalid_bundled_solution"));
     }
     let package = output
         .finish()
         .map_err(|_| fail("package_generation_failed"))?
         .into_inner();
-    validate_instance_package(&package, &identity, &session.installation_id)?;
+    validate_instance_package(&package, template, &identity, installation_id)?;
     Ok(package)
 }
 
@@ -782,6 +1129,42 @@ fn verification(
         state,
         diagnostic,
         file_name,
+    }
+}
+
+/// QA verification: the personalized export flow must answer the ping
+/// request written when the package was prepared.
+fn verify_qa(session: &mut Session) -> Verification {
+    let Some(folder) = session.folder.clone().map(PathBuf::from) else {
+        return verification(VerificationState::Unavailable, "inbox_unavailable", None);
+    };
+    if !folder.is_dir() {
+        return verification(VerificationState::Unavailable, "inbox_unavailable", None);
+    }
+    let ping = match session.ping_request_id.clone() {
+        Some(ping) => ping,
+        None => {
+            let request = qa_engine::ping_request(&session.installation_id);
+            if qa_engine::write_request(&folder, &request).is_err() {
+                return verification(VerificationState::Unavailable, "inbox_unavailable", None);
+            }
+            session.ping_request_id = Some(request.request_id.clone());
+            request.request_id
+        }
+    };
+    match qa_engine::ping_state(&folder, &session.installation_id, &ping) {
+        qa_engine::PingState::Answered => {
+            verification(VerificationState::Valid, "file_verified", Some(ping))
+        }
+        qa_engine::PingState::Failed => {
+            verification(VerificationState::Invalid, "qa_mail_query_failed", Some(ping))
+        }
+        qa_engine::PingState::NotDownloaded => {
+            verification(VerificationState::Waiting, "evidence_not_downloaded", Some(ping))
+        }
+        qa_engine::PingState::Waiting => {
+            verification(VerificationState::Waiting, "waiting_for_sync", None)
+        }
     }
 }
 
@@ -1136,7 +1519,7 @@ mod tests {
     #[test]
     fn folder_preparation_is_idempotent_and_keeps_existing_evidence() {
         let dir = tempfile::tempdir().unwrap();
-        let folder = prepare_inbox(dir.path()).unwrap();
+        let folder = prepare_inbox(dir.path(), SolutionKind::Tracker).unwrap();
         for child in ["scheduled", "teams", "requested"] {
             assert!(folder.join(child).is_dir());
         }
@@ -1147,15 +1530,15 @@ mod tests {
             .join("selected-date.txt")
             .is_file());
         fs::write(folder.join("existing.json"), "keep me").unwrap();
-        assert_eq!(prepare_inbox(dir.path()).unwrap(), folder);
+        assert_eq!(prepare_inbox(dir.path(), SolutionKind::Tracker).unwrap(), folder);
         assert_eq!(
             fs::read_to_string(folder.join("existing.json")).unwrap(),
             "keep me"
         );
-        assert!(prepare_inbox(Path::new("relative")).is_err());
+        assert!(prepare_inbox(Path::new("relative"), SolutionKind::Tracker).is_err());
         let blocked = tempfile::tempdir().unwrap();
         fs::write(blocked.path().join("AtlasBridge"), "a file").unwrap();
-        assert!(prepare_inbox(blocked.path()).is_err());
+        assert!(prepare_inbox(blocked.path(), SolutionKind::Tracker).is_err());
     }
 
     #[test]
@@ -1202,7 +1585,7 @@ mod tests {
     fn package_preserves_connection_references_and_personalizes_installation() {
         let session = Session::default();
         let key = instance_key(&session.installation_id).unwrap();
-        let bytes = personalized_solution(&session).unwrap();
+        let bytes = personalized_solution(&TRACKER, &session).unwrap();
         let flow = flow_from(bytes.clone(), "Workflows/AtlasExportEvidence-");
         let actions = &flow["properties"]["definition"]["actions"];
         assert!(actions.get("AtlasCalendarName").is_none());
@@ -1266,16 +1649,24 @@ mod tests {
     fn all_stages_require_confirmation_and_retries_preserve_identity() {
         let dir = tempfile::tempdir().unwrap();
         let sync = tempfile::tempdir().unwrap();
-        let installer = Installer::new(dir.path().to_path_buf());
+        let installer = Installer::new(dir.path().to_path_buf(), &TRACKER);
         assert!(installer.action(Action::ConfirmImport {}).is_err());
         let prepared = installer
             .action(Action::Prepare {
                 one_drive_root: sync.path().to_string_lossy().into(),
                 calendar_name: "Calendar".into(),
+                owner_name: "Christian Mora".into(),
             })
             .unwrap();
         let id = prepared.session.installation_id.clone();
         assert_eq!(prepared.session.phase, Phase::WaitingSignIn);
+        assert_eq!(prepared.session.owner_name.as_deref(), Some("Christian Mora"));
+        assert!(prepared
+            .session
+            .solution_display_name
+            .as_deref()
+            .unwrap()
+            .starts_with("Atlas Tracker - Christian Mora - "));
         assert!(installer.action(Action::Verify {}).is_err());
         installer.action(Action::ConfirmSignIn {}).unwrap();
         let blocked = installer
@@ -1287,7 +1678,7 @@ mod tests {
         let persisted = fs::read_to_string(dir.path().join("session.json")).unwrap();
         assert!(!persisted.contains("do-not-store"));
         assert!(!persisted.contains("alice@example.com"));
-        let resumed = Installer::new(dir.path().to_path_buf());
+        let resumed = Installer::new(dir.path().to_path_buf(), &TRACKER);
         let retry = resumed.action(Action::Retry {}).unwrap();
         assert_eq!(retry.session.phase, Phase::FindingConnections);
         assert_eq!(retry.session.installation_id, id);
@@ -1435,8 +1826,8 @@ mod tests {
 
     #[test]
     fn separate_installations_get_independent_component_identities() {
-        let first = personalized_solution(&session_with_installation("user_test_a")).unwrap();
-        let second = personalized_solution(&session_with_installation("user_test_b")).unwrap();
+        let first = personalized_solution(&TRACKER, &session_with_installation("user_test_a")).unwrap();
+        let second = personalized_solution(&TRACKER, &session_with_installation("user_test_b")).unwrap();
 
         let solution_a = package_entry_text(&first, "solution.xml");
         let solution_b = package_entry_text(&second, "solution.xml");
@@ -1497,8 +1888,8 @@ mod tests {
 
     #[test]
     fn same_installation_keeps_identity_across_runs_and_versions() {
-        let first = personalized_solution(&session_with_installation("user_test_a")).unwrap();
-        let second = personalized_solution(&session_with_installation("user_test_a")).unwrap();
+        let first = personalized_solution(&TRACKER, &session_with_installation("user_test_a")).unwrap();
+        let second = personalized_solution(&TRACKER, &session_with_installation("user_test_a")).unwrap();
         // A new Atlas version changes <Version> only; the unique name, the
         // connection references and the workflow ids stay identical so Power
         // Platform updates the same solution instead of creating another one.
@@ -1525,8 +1916,145 @@ mod tests {
             .join("atlasbridge-identity-demo");
         fs::create_dir_all(&directory).unwrap();
         for id in ["user_test_a", "user_test_b"] {
-            let package = personalized_solution(&session_with_installation(id)).unwrap();
+            let package = personalized_solution(&TRACKER, &session_with_installation(id)).unwrap();
             fs::write(directory.join(format!("AtlasBridge_{id}.zip")), package).unwrap();
+            let mut owned = session_with_installation(id);
+            owned.owner_name = Some("Christian Mora López".into());
+            let package = personalized_solution(&QA, &owned).unwrap();
+            fs::write(directory.join(format!("AtlasQA_{id}.zip")), package).unwrap();
         }
+    }
+
+    fn owned_session(installation_id: &str, owner: &str) -> Session {
+        Session {
+            owner_name: Some(owner.into()),
+            ..session_with_installation(installation_id)
+        }
+    }
+
+    #[test]
+    fn owner_names_become_safe_unique_name_segments() {
+        assert_eq!(owner_slug("Christian Mora"), "ChristianMora");
+        assert_eq!(owner_slug("  maría-josé  NÚÑEZ "), "MariaJoseNunez");
+        assert_eq!(owner_slug("Christian Rey Mora López"), "ChristianReyMoraLope");
+        assert_eq!(normalize_owner("  Ana   Test ").unwrap().as_deref(), Some("Ana Test"));
+        assert_eq!(normalize_owner("   ").unwrap(), None);
+        assert!(normalize_owner("!!!").is_err());
+        assert!(normalize_owner(&"x".repeat(81)).is_err());
+    }
+
+    #[test]
+    fn every_role_package_is_named_after_its_owner_and_installation() {
+        let installation = "8e5c1f84-0000-4000-8000-000000000001";
+        let key = instance_key(installation).unwrap();
+        for template in [&TRACKER, &QA] {
+            let session = owned_session(installation, "Christian Mora & Co <QA>");
+            let package = personalized_solution(template, &session).unwrap();
+            let solution = package_entry_text(&package, "solution.xml");
+            let unique = format!(
+                "<UniqueName>{}_ChristianMoraCoQa_{key}</UniqueName>",
+                template.base_unique_name
+            );
+            assert!(solution.contains(&unique), "{solution}");
+            assert!(solution.contains(&format!(
+                "{} - Christian Mora &amp; Co &lt;QA&gt; - {}",
+                template.display_prefix,
+                &key[..8]
+            )));
+            let customizations = package_entry_text(&package, "customizations.xml");
+            for workflow in template.workflows {
+                assert!(customizations.contains(&format!(
+                    "Name=\"{} (Christian Mora &amp; Co &lt;QA&gt;)\"",
+                    workflow.name
+                )));
+            }
+            ensure_well_formed_xml(solution.as_bytes()).unwrap();
+            ensure_well_formed_xml(customizations.as_bytes()).unwrap();
+            assert!(unique.len() - "<UniqueName></UniqueName>".len() <= 65);
+        }
+    }
+
+    #[test]
+    fn qa_packages_are_independent_per_person() {
+        let first = personalized_solution(&QA, &owned_session("user_test_a", "Ana Test")).unwrap();
+        let second = personalized_solution(&QA, &owned_session("user_test_b", "Luis Test")).unwrap();
+        let customizations_a = package_entry_text(&first, "customizations.xml");
+        let customizations_b = package_entry_text(&second, "customizations.xml");
+        for reference in QA.connection_references {
+            assert!(customizations_a
+                .contains(&format!("connectionreferencelogicalname=\"{reference}_user_test_a\"")));
+            assert!(!customizations_a.contains(&format!("{reference}_user_test_b")));
+            assert!(customizations_b
+                .contains(&format!("connectionreferencelogicalname=\"{reference}_user_test_b\"")));
+        }
+        let workflows_a = package_workflow_names(&first);
+        let workflows_b = package_workflow_names(&second);
+        assert_eq!(workflows_a.len(), 2);
+        assert!(workflows_a.iter().all(|name| !workflows_b.contains(name)));
+        for workflow in QA.workflows {
+            assert!(workflows_a.iter().all(|name| !name.contains(workflow.id)));
+        }
+        let flow = flow_from(first, "Workflows/AtlasQaExportMail-");
+        assert_eq!(
+            flow["properties"]["definition"]["actions"]["AtlasInstallationId"]["inputs"],
+            "user_test_a"
+        );
+        assert_eq!(flow["properties"]["connectionReferences"].as_object().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn qa_bundled_solution_version_matches_installer_contract() {
+        let mut zip = ZipArchive::new(Cursor::new(QA_SOLUTION)).unwrap();
+        let mut solution = String::new();
+        zip.by_name("solution.xml")
+            .unwrap()
+            .read_to_string(&mut solution)
+            .unwrap();
+        assert!(solution.contains(&format!("<Version>{QA_SOLUTION_VERSION}</Version>")));
+    }
+
+    #[test]
+    fn qa_setup_writes_a_ping_and_completes_when_the_flow_answers() {
+        let dir = tempfile::tempdir().unwrap();
+        let sync = tempfile::tempdir().unwrap();
+        let installer = Installer::new(dir.path().to_path_buf(), &QA);
+        let prepared = installer
+            .action(Action::Prepare {
+                one_drive_root: sync.path().to_string_lossy().into(),
+                calendar_name: String::new(),
+                owner_name: "Ana Test".into(),
+            })
+            .unwrap();
+        assert_eq!(prepared.kind, SolutionKind::Qa);
+        assert!(prepared.package_path.ends_with("AtlasQA_1_0_0_0.zip"));
+        let session = prepared.session;
+        let folder = PathBuf::from(session.folder.clone().unwrap());
+        assert!(folder.ends_with(Path::new("AtlasBridge").join("qa")));
+        assert!(!folder.to_string_lossy().starts_with(r"\\?\"));
+        let request: qa_engine::BridgeRequest =
+            serde_json::from_slice(&fs::read(qa_engine::request_file(&folder)).unwrap()).unwrap();
+        assert_eq!(request.installation_id, session.installation_id);
+        assert_eq!(Some(request.request_id.clone()), session.ping_request_id);
+        installer.action(Action::ConfirmSignIn {}).unwrap();
+        installer.action(Action::ConfirmConnections {}).unwrap();
+        installer.action(Action::ConfirmImport {}).unwrap();
+        let waiting = installer.action(Action::Verify {}).unwrap();
+        assert_eq!(waiting.session.phase, Phase::VerifyingFile);
+        let inbox = qa_engine::inbox_dir(&folder);
+        let prefix = format!("atlas-qa-{}-{}", session.installation_id, request.request_id);
+        fs::write(
+            inbox.join(format!("{prefix}-ping.json")),
+            r#"{"contract":"atlas-qa-v1","status":"ok","count":1,"messages":[]}"#,
+        )
+        .unwrap();
+        fs::write(
+            inbox.join(format!("{prefix}-done.json")),
+            r#"{"contract":"atlas-qa-v1","status":"done"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            installer.action(Action::Verify {}).unwrap().session.phase,
+            Phase::Completed
+        );
     }
 }
