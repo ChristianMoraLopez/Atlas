@@ -85,7 +85,7 @@ export default function ConnectorInstaller({ role, defaultOwner, onClose, onChan
   const visibleIndex = Math.max(0, visibleSteps.findIndex(([key]) => key === phase));
   const diagnostic = session?.diagnostic ?? 'portal_required';
   const diagnosticText = (qa ? qaDiagnostics[diagnostic] : undefined) ?? diagnostics[diagnostic] ?? 'Revisa el diagnóstico del portal.';
-  const connectors = qa ? 'Office 365 Outlook y OneDrive for Business' : 'Office 365 Outlook, Microsoft Teams y OneDrive for Business';
+  const connectors = t(qa ? 'Office 365 Outlook y OneDrive for Business' : 'Office 365 Outlook, Microsoft Teams y OneDrive for Business');
   const solutionPreview = useMemo(() => {
     const name = owner.trim().replace(/\s+/g, ' ');
     const key = installationKey(session?.installationId ?? '');
