@@ -73,6 +73,7 @@ export interface AppStatus {
   appRole?: AppRole;
   qaBridgeFolder?: string;
   solutionOwner?: string;
+  connectorUpdateAvailable: boolean;
 }
 
 export interface Interaction {

@@ -126,6 +126,8 @@ pub struct AppStatus {
     /// Name captured for the personalized Power Automate solution.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub solution_owner: Option<String>,
+    /// The role's solution has a newer version to re-import.
+    pub connector_update_available: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

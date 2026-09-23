@@ -79,11 +79,20 @@
             ]
           }
         },
-        "QA_watch": {
+        "QA_watch_text": {
           "type": "Compose",
-          "inputs": "@json(trim(base64ToString(body('Read_QA_watch'))))",
+          "inputs": "@base64ToString(coalesce(json(if(startsWith(string(body('Read_QA_watch')),'{'),string(body('Read_QA_watch')),'{}'))?['$content'],base64(string(body('Read_QA_watch')))))",
           "runAfter": {
             "Read_QA_watch": [
+              "Succeeded"
+            ]
+          }
+        },
+        "QA_watch": {
+          "type": "Compose",
+          "inputs": "@json(if(empty(trim(outputs('QA_watch_text'))),'{}',outputs('QA_watch_text')))",
+          "runAfter": {
+            "QA_watch_text": [
               "Succeeded"
             ]
           }

@@ -52,7 +52,7 @@ try {
     [xml] $types = Read-Entry '[Content_Types].xml'
     if ($solution.ImportExportXml.SolutionManifest.UniqueName -ne 'AtlasBridge') { throw 'Unexpected solution identity.' }
     if ($solution.ImportExportXml.SolutionManifest.Managed -ne '0') { throw 'Expected unmanaged solution.' }
-    if ($solution.ImportExportXml.SolutionManifest.Version -ne '1.13.0.0') { throw 'Unexpected version.' }
+    if ($solution.ImportExportXml.SolutionManifest.Version -ne '1.14.0.0') { throw 'Unexpected version.' }
 
     $rootIds = @($solution.ImportExportXml.SolutionManifest.RootComponents.RootComponent | ForEach-Object id | Sort-Object)
     if (($rootIds -join ',') -ne ((@($scheduledId, $eventId) | Sort-Object) -join ',')) { throw 'Unexpected solution root components.' }
@@ -105,7 +105,7 @@ try {
     if ($actions.Read_Atlas_requested_date.inputs.host.operationId -ne 'GetFileContentByPath' -or $actions.Read_Atlas_requested_date.inputs.parameters.path -ne '/AtlasBridge/requests/selected-date.txt') { throw 'Selected-day request control is missing.' }
     if ($actions.Initialize_RequestedDate.type -ne 'InitializeVariable' -or $actions.Initialize_RequestedDate.inputs.variables[0].value -ne '') { throw 'Requested date must start empty so a missing file falls back to today.' }
     $requestStates = @($actions.RequestedDate.runAfter.Read_Atlas_requested_date | Sort-Object)
-    if ($actions.RequestedDate.type -ne 'SetVariable' -or ($requestStates -join ',') -ne 'Succeeded' -or $actions.RequestedDate.inputs.value -notmatch "base64ToString\(body\('Read_Atlas_requested_date'\)\)" -or $actions.RequestedDate.inputs.value -match '\$content') { throw 'Requested date must decode the connector string body only after a successful read.' }
+    if ($actions.RequestedDate.type -ne 'SetVariable' -or ($requestStates -join ',') -ne 'Succeeded' -or $actions.RequestedDate.inputs.value -notmatch "string\(body\('Read_Atlas_requested_date'\)\)" -or $actions.RequestedDate.inputs.value -notmatch 'coalesce\(') { throw 'Requested date must read the plain-text body (with a $content fallback) only after a successful read.' }
     $targetStates = @($actions.TargetDate.runAfter.RequestedDate | Sort-Object)
     if (($targetStates -join ',') -ne 'Failed,Skipped,Succeeded,TimedOut' -or $actions.TargetDate.inputs -notmatch "variables\('RequestedDate'\)" -or $actions.TargetDate.inputs -notmatch 'SA Pacific Standard Time') { throw 'Target date must use the requested day or local today.' }
     foreach ($sourceName in @('calendar', 'mail', 'teams')) {

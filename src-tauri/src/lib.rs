@@ -141,6 +141,7 @@ async fn build_status(state: &AppState) -> Result<AppStatus> {
         app_role: settings.app_role,
         qa_bridge_folder: settings.qa_bridge_folder,
         solution_owner: installer_session.owner_name,
+        connector_update_available: installer_session.update_available,
     })
 }
 

@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 
 const root = dirname(fileURLToPath(import.meta.url));
-const version = '1.13.0.0';
+const version = '1.14.0.0';
 const scheduled = {
   id: '8e5c1f84-dcbb-4a2c-9d2f-62e9c38105d2',
   name: 'Atlas - Export evidence to OneDrive',
@@ -66,7 +66,8 @@ a.RequestedDate = {
   type: 'SetVariable',
   inputs: {
     name: 'RequestedDate',
-    value: "@trim(base64ToString(body('Read_Atlas_requested_date')))",
+    // OneDrive returns a .txt body as plain text; this also accepts a $content wrapper or an empty file.
+    value: "@trim(base64ToString(coalesce(json(if(startsWith(string(body('Read_Atlas_requested_date')),'{'),string(body('Read_Atlas_requested_date')),'{}'))?['$content'],base64(string(body('Read_Atlas_requested_date'))))))",
   },
   runAfter: { Read_Atlas_requested_date: ['Succeeded'] },
 };

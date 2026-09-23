@@ -606,7 +606,7 @@
           "type": "SetVariable",
           "inputs": {
             "name": "RequestedDate",
-            "value": "@trim(base64ToString(body('Read_Atlas_requested_date')))"
+            "value": "@trim(base64ToString(coalesce(json(if(startsWith(string(body('Read_Atlas_requested_date')),'{'),string(body('Read_Atlas_requested_date')),'{}'))?['$content'],base64(string(body('Read_Atlas_requested_date'))))))"
           },
           "runAfter": {
             "Read_Atlas_requested_date": [

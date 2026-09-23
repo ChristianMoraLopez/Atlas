@@ -73,11 +73,20 @@
             ]
           }
         },
-        "QA_request": {
+        "QA_request_text": {
           "type": "Compose",
-          "inputs": "@json(trim(base64ToString(body('Read_QA_request'))))",
+          "inputs": "@base64ToString(coalesce(json(if(startsWith(string(body('Read_QA_request')),'{'),string(body('Read_QA_request')),'{}'))?['$content'],base64(string(body('Read_QA_request')))))",
           "runAfter": {
             "Read_QA_request": [
+              "Succeeded"
+            ]
+          }
+        },
+        "QA_request": {
+          "type": "Compose",
+          "inputs": "@json(if(empty(trim(outputs('QA_request_text'))),'{}',outputs('QA_request_text')))",
+          "runAfter": {
+            "QA_request_text": [
               "Succeeded"
             ]
           }
@@ -269,6 +278,20 @@
               "runAfter": {
                 "Find_previous_answer": [
                   "Failed"
+                ]
+              }
+            },
+            "Mark_run_succeeded": {
+              "type": "Terminate",
+              "inputs": {
+                "runStatus": "Succeeded"
+              },
+              "runAfter": {
+                "Answer_request": [
+                  "Succeeded",
+                  "Failed",
+                  "Skipped",
+                  "TimedOut"
                 ]
               }
             }
