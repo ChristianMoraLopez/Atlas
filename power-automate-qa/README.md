@@ -4,7 +4,7 @@
 
 | Component | Template | Personalized (example) |
 | --- | --- | --- |
-| Solution unique name | `AtlasQA` | `AtlasQA_ChristianMora_<installation key>` |
+| Solution unique name | `AtlasQA` | `AtlasQA_ChristianMora_<first 12 characters of the installation key>` (always under 50 characters, as Dataverse requires) |
 | Solution display name | `AtlasQA` | `Atlas QA - Christian Mora - a84c12f9` |
 | Flow names | `Atlas QA - Export mailbox evidence` | `Atlas QA - Export mailbox evidence (Christian Mora)` |
 | Connection references | `atlas_qa_office365`, `atlas_qa_onedriveforbusiness` | `atlas_qa_office365_<key>`, `atlas_qa_onedriveforbusiness_<key>` |
