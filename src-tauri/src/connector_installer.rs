@@ -36,6 +36,13 @@ const SOLUTION_VERSION: &str = "1.13.0.0";
 const QA_SOLUTION_VERSION: &str = "1.0.0.0";
 const MAX_OWNER_CHARS: usize = 80;
 const MAX_OWNER_SLUG: usize = 20;
+/// Dataverse rejects solutions whose UniqueName has 50 or more characters.
+const MAX_UNIQUE_NAME: usize = 49;
+/// Characters of the installation key kept in owner-named unique names:
+/// 48 random bits, unique per installation while leaving room for the name.
+const UNIQUE_NAME_KEY_CHARS: usize = 12;
+/// Dataverse process (flow) names hold at most 100 characters.
+const MAX_WORKFLOW_NAME: usize = 100;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -255,10 +262,64 @@ impl Installer {
                     && s.solution_version.as_deref() == Some(template.version)
             })
             .unwrap_or_else(|| Session::new(template));
-        Self {
+        let installer = Self {
             directory,
             template,
             session: Mutex::new(session),
+        };
+        installer.refresh_package();
+        installer
+    }
+
+    /// Rebuilds the personalized ZIP of an already prepared installation so
+    /// naming fixes in a new Atlas version reach it without a new setup.
+    /// The installation id and owner stay the same, so re-importing still
+    /// updates the same solution.
+    fn refresh_package(&self) {
+        let Ok(mut session) = self.session.lock() else {
+            return;
+        };
+        if session.folder.is_none() {
+            return;
+        }
+        let refreshed = instance_identity(
+            self.template,
+            &session.installation_id,
+            session.owner_name.as_deref(),
+        )
+        .and_then(|identity| {
+            let bytes = personalized_solution(self.template, &session)?;
+            Ok((identity.display_name, bytes))
+        });
+        let (display_name, bytes) = match refreshed {
+            Ok(value) => value,
+            Err(error) => {
+                diagnostics::error("connector/package", &error.to_string());
+                return;
+            }
+        };
+        let current = fs::read(self.package_path()).ok();
+        if current.as_deref() != Some(bytes.as_slice()) {
+            let staging = self.directory.join("solution.pending.zip");
+            let written = fs::create_dir_all(&self.directory)
+                .and_then(|_| fs::write(&staging, &bytes))
+                .and_then(|_| replace_file(&staging, &self.package_path()));
+            match written {
+                Ok(()) => diagnostics::info(
+                    "connector/package",
+                    &format!("Refreshed the personalized {:?} package", self.template.kind),
+                ),
+                Err(error) => {
+                    diagnostics::error("connector/package", &error.to_string());
+                    return;
+                }
+            }
+        }
+        if session.solution_display_name.as_deref() != Some(display_name.as_str()) {
+            session.solution_display_name = Some(display_name);
+            let snapshot = session.clone();
+            drop(session);
+            let _ = self.persist(&snapshot);
         }
     }
 
@@ -764,28 +825,35 @@ fn instance_identity(
     owner: Option<&str>,
 ) -> Result<InstanceIdentity> {
     let key = instance_key(installation_id)?;
+    let short_key = &key[..key.len().min(UNIQUE_NAME_KEY_CHARS)];
     let owner = owner.map(str::to_string);
     let (unique_name, display_name) = match owner.as_deref() {
-        Some(name) => (
-            format!(
-                "{}_{}_{key}",
-                template.base_unique_name,
-                // Solution unique names are limited to 65 characters.
-                owner_slug(name)
-                    .chars()
-                    .take(64usize.saturating_sub(template.base_unique_name.len() + key.len() + 2))
-                    .collect::<String>()
-            ),
-            format!(
-                "{} - {name} - {}",
-                template.display_prefix,
-                &key[..key.len().min(8)]
-            ),
-        ),
-        None => (
-            format!("{}_{key}", template.base_unique_name),
-            format!("{} [{key}]", template.legacy_display_name),
-        ),
+        Some(name) => {
+            let room = MAX_UNIQUE_NAME
+                .saturating_sub(template.base_unique_name.len() + short_key.len() + 2);
+            let slug: String = owner_slug(name).chars().take(room).collect();
+            (
+                format!("{}_{slug}_{short_key}", template.base_unique_name),
+                format!(
+                    "{} - {name} - {}",
+                    template.display_prefix,
+                    &key[..key.len().min(8)]
+                ),
+            )
+        }
+        None => {
+            // Installations prepared before owner names keep their exact
+            // unique name so a new version still updates them.
+            let legacy = format!("{}_{key}", template.base_unique_name);
+            (
+                if legacy.len() <= MAX_UNIQUE_NAME {
+                    legacy
+                } else {
+                    format!("{}_{short_key}", template.base_unique_name)
+                },
+                format!("{} [{key}]", template.legacy_display_name),
+            )
+        }
     };
     Ok(InstanceIdentity {
         unique_name,
@@ -808,6 +876,22 @@ fn instance_identity(
             .collect(),
         key,
     })
+}
+
+/// "Flow name (Owner)", shortened so it fits the Dataverse process name
+/// limit even for very long names.
+fn personal_workflow_name(workflow_name: &str, owner: &str) -> String {
+    let room = MAX_WORKFLOW_NAME.saturating_sub(workflow_name.chars().count() + 3);
+    let owner: String = owner.chars().take(room).collect();
+    format!("{workflow_name} ({})", owner.trim_end())
+}
+
+/// Dataverse solution unique names: a letter first, then letters, digits
+/// or underscores, fewer than 50 characters.
+fn valid_unique_name(name: &str) -> bool {
+    name.len() <= MAX_UNIQUE_NAME
+        && name.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 fn replace_required(content: String, from: &str, to: &str) -> Result<String> {
@@ -870,7 +954,7 @@ fn personalize_customizations(
     if let Some(owner) = identity.owner.as_deref() {
         // Flows show the person in the Power Automate list as well.
         for workflow in template.workflows {
-            let personal = xml_escape(&format!("{} ({owner})", workflow.name));
+            let personal = xml_escape(&personal_workflow_name(workflow.name, owner));
             xml = replace_required(
                 xml,
                 &format!("Name=\"{}\"", workflow.name),
@@ -972,6 +1056,10 @@ fn validate_instance_package(
     let solution = String::from_utf8(solution).map_err(|_| fail("package_generation_failed"))?;
     let customizations =
         String::from_utf8(customizations).map_err(|_| fail("package_generation_failed"))?;
+    // Never hand out a package Power Platform would refuse to import.
+    if !valid_unique_name(&identity.unique_name) {
+        return Err(fail("package_generation_failed"));
+    }
     if !solution.contains(&format!("<UniqueName>{}</UniqueName>", identity.unique_name))
         || solution.contains(&format!(
             "<UniqueName>{}</UniqueName>",
@@ -1947,13 +2035,14 @@ mod tests {
     fn every_role_package_is_named_after_its_owner_and_installation() {
         let installation = "8e5c1f84-0000-4000-8000-000000000001";
         let key = instance_key(installation).unwrap();
-        for template in [&TRACKER, &QA] {
+        for template in [&TRACKER, &QA, &WRITER] {
             let session = owned_session(installation, "Christian Mora & Co <QA>");
             let package = personalized_solution(template, &session).unwrap();
             let solution = package_entry_text(&package, "solution.xml");
             let unique = format!(
-                "<UniqueName>{}_ChristianMoraCoQa_{key}</UniqueName>",
-                template.base_unique_name
+                "<UniqueName>{}_ChristianMoraCoQa_{}</UniqueName>",
+                template.base_unique_name,
+                &key[..UNIQUE_NAME_KEY_CHARS]
             );
             assert!(solution.contains(&unique), "{solution}");
             assert!(solution.contains(&format!(
@@ -1970,8 +2059,86 @@ mod tests {
             }
             ensure_well_formed_xml(solution.as_bytes()).unwrap();
             ensure_well_formed_xml(customizations.as_bytes()).unwrap();
-            assert!(unique.len() - "<UniqueName></UniqueName>".len() <= 65);
+            assert!(unique.len() - "<UniqueName></UniqueName>".len() <= MAX_UNIQUE_NAME);
         }
+    }
+
+    #[test]
+    fn unique_names_import_for_every_person_and_template() {
+        // Dataverse: "The solution UniqueName must contain less than 50 characters".
+        let long_names = [
+            "Christian Mora",
+            "Christian Rey Mora López",
+            "María José de los Ángeles Fernández-Villavicencio Rodríguez",
+            "Ab",
+            "Jean-Luc O'Brien van der Berg III",
+            "Alexandra Maximiliana Konstantinopoulou-Papadopoulou de la Santísima Trinidad",
+        ];
+        for template in [&TRACKER, &QA, &WRITER] {
+            for _ in 0..25 {
+                let installation = uuid::Uuid::new_v4().to_string();
+                for name in long_names {
+                    let owner = normalize_owner(name).unwrap();
+                    let identity =
+                        instance_identity(template, &installation, owner.as_deref()).unwrap();
+                    assert!(
+                        valid_unique_name(&identity.unique_name),
+                        "{} is not importable",
+                        identity.unique_name
+                    );
+                    assert!(identity.unique_name.len() < 50);
+                    for workflow in template.workflows {
+                        let flow_name =
+                            personal_workflow_name(workflow.name, owner.as_deref().unwrap());
+                        assert!(flow_name.chars().count() <= MAX_WORKFLOW_NAME, "{flow_name}");
+                        assert!(flow_name.starts_with(workflow.name));
+                    }
+                    // The package generator enforces the same rule.
+                    let session = Session {
+                        installation_id: installation.clone(),
+                        owner_name: owner.clone(),
+                        ..Session::new(template)
+                    };
+                    personalized_solution(template, &session).unwrap();
+                }
+                // Installations prepared before owner names also import.
+                let legacy = instance_identity(template, &installation, None).unwrap();
+                assert!(valid_unique_name(&legacy.unique_name), "{}", legacy.unique_name);
+            }
+        }
+        // Existing tracker installations keep their exact legacy name.
+        let legacy = instance_identity(&TRACKER, "8e5c1f84-0000-4000-8000-000000000001", None).unwrap();
+        assert_eq!(legacy.unique_name, "AtlasBridge_8e5c1f84000040008000000000000001");
+        assert!(!valid_unique_name(&format!("AtlasQA_{}", "x".repeat(43))));
+        assert!(!valid_unique_name("1Atlas"));
+        assert!(!valid_unique_name("Atlas-QA"));
+    }
+
+    #[test]
+    fn a_prepared_package_is_rebuilt_with_the_current_naming_rules() {
+        let dir = tempfile::tempdir().unwrap();
+        let sync = tempfile::tempdir().unwrap();
+        let installer = Installer::new(dir.path().to_path_buf(), &QA);
+        let prepared = installer
+            .action(Action::Prepare {
+                one_drive_root: sync.path().to_string_lossy().into(),
+                calendar_name: String::new(),
+                owner_name: "Christian Mora".into(),
+            })
+            .unwrap();
+        let package = PathBuf::from(&prepared.package_path);
+        // Simulate a ZIP produced by an older release with an invalid name.
+        fs::write(&package, b"stale package").unwrap();
+        let reopened = Installer::new(dir.path().to_path_buf(), &QA);
+        let snapshot = reopened.snapshot().unwrap();
+        assert_eq!(snapshot.session.installation_id, prepared.session.installation_id);
+        let bytes = fs::read(&package).unwrap();
+        let solution = package_entry_text(&bytes, "solution.xml");
+        let key = instance_key(&snapshot.session.installation_id).unwrap();
+        assert!(solution.contains(&format!(
+            "<UniqueName>AtlasQA_ChristianMora_{}</UniqueName>",
+            &key[..UNIQUE_NAME_KEY_CHARS]
+        )));
     }
 
     #[test]
