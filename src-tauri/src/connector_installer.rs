@@ -32,8 +32,8 @@ const TEAMS_EVENT_WORKFLOW: &str =
     "Workflows/AtlasCaptureTeamsMessages-7f7115e8-b821-4bb9-9b4e-5c7a5448610e.json";
 const MAX_FILE: u64 = 25 * 1024 * 1024;
 const PORTAL: &str = "https://make.powerautomate.com/";
-const SOLUTION_VERSION: &str = "1.13.0.0";
-const QA_SOLUTION_VERSION: &str = "1.0.0.0";
+const SOLUTION_VERSION: &str = "1.14.0.0";
+const QA_SOLUTION_VERSION: &str = "1.0.1.0";
 const MAX_OWNER_CHARS: usize = 80;
 const MAX_OWNER_SLUG: usize = 20;
 /// Dataverse rejects solutions whose UniqueName has 50 or more characters.
@@ -201,6 +201,10 @@ pub struct Session {
     /// QA only: request the flow must answer to prove the installation.
     #[serde(default)]
     pub ping_request_id: Option<String>,
+    /// A newer solution version was prepared for a completed installation;
+    /// the user re-imports the ZIP to update the same solution.
+    #[serde(default)]
+    pub update_available: bool,
 }
 
 impl Session {
@@ -220,6 +224,7 @@ impl Session {
             owner_name: None,
             solution_display_name: None,
             ping_request_id: None,
+            update_available: false,
         }
     }
 }
@@ -252,21 +257,32 @@ fn fail(code: &str) -> AppError {
 
 impl Installer {
     pub fn new(directory: PathBuf, template: &'static Template) -> Self {
-        let session = fs::read(directory.join("session.json"))
+        let saved = fs::read(directory.join("session.json"))
             .ok()
             .filter(|data| data.len() < 16_384)
             .and_then(|data| serde_json::from_slice::<Session>(&data).ok())
             .filter(|s| {
                 uuid::Uuid::parse_str(&s.installation_id).is_ok()
                     && DateTime::parse_from_rfc3339(&s.started_at).is_ok()
-                    && s.solution_version.as_deref() == Some(template.version)
-            })
-            .unwrap_or_else(|| Session::new(template));
+            });
+        let (session, migrated) = match saved {
+            Some(mut session) if session.solution_version.as_deref() != Some(template.version) => {
+                migrate_session(&mut session, template);
+                (session, true)
+            }
+            Some(session) => (session, false),
+            None => (Session::new(template), false),
+        };
         let installer = Self {
             directory,
             template,
             session: Mutex::new(session),
         };
+        if migrated {
+            if let Ok(session) = installer.session.lock().map(|s| s.clone()) {
+                let _ = installer.persist(&session);
+            }
+        }
         installer.refresh_package();
         installer
     }
@@ -487,6 +503,9 @@ impl Installer {
                 }
                 next.diagnostic = "portal_required".into();
             }
+            Action::AcknowledgeUpdate {} => {
+                next.update_available = false;
+            }
             Action::Reset {} => {
                 next = Session::new(self.template);
             }
@@ -546,6 +565,36 @@ pub enum Action {
     },
     Retry {},
     Reset {},
+    /// The user imported the updated ZIP of a completed installation.
+    AcknowledgeUpdate {},
+}
+
+/// A new Atlas release ships a newer solution version. The installation id,
+/// owner and folder are kept so re-importing updates the same solution
+/// instead of creating a second one next to the old flows.
+fn migrate_session(session: &mut Session, template: &Template) {
+    diagnostics::info(
+        "connector/update",
+        &format!(
+            "{:?} solution {} -> {}: keeping installation {}",
+            template.kind,
+            session.solution_version.as_deref().unwrap_or("unknown"),
+            template.version,
+            session.installation_id
+        ),
+    );
+    session.solution_version = Some(template.version.into());
+    match session.phase {
+        // Working installations keep working; Atlas asks for a re-import.
+        Phase::Completed => session.update_available = true,
+        // The old package may already be imported but never proved itself:
+        // import the updated one, then verify again.
+        Phase::ImportingSolution | Phase::ActivatingFlow | Phase::VerifyingFile => {
+            session.phase = Phase::ImportingSolution;
+            session.diagnostic = "solution_update_required".into();
+        }
+        _ => {}
+    }
 }
 
 fn advance(session: &mut Session, from: Phase, to: Phase) -> Result<()> {
@@ -1710,7 +1759,7 @@ mod tests {
         );
         assert_eq!(
             actions["RequestedDate"]["inputs"]["value"],
-            "@trim(base64ToString(body('Read_Atlas_requested_date')))"
+            "@trim(base64ToString(coalesce(json(if(startsWith(string(body('Read_Atlas_requested_date')),'{'),string(body('Read_Atlas_requested_date')),'{}'))?['$content'],base64(string(body('Read_Atlas_requested_date'))))))"
         );
         assert_eq!(
             actions["Initialize_RequestedDate"]["inputs"]["variables"][0]["value"],
@@ -2112,6 +2161,49 @@ mod tests {
         assert!(!valid_unique_name(&format!("AtlasQA_{}", "x".repeat(43))));
         assert!(!valid_unique_name("1Atlas"));
         assert!(!valid_unique_name("Atlas-QA"));
+    }
+
+    #[test]
+    fn a_new_solution_version_updates_the_same_installation() {
+        let sync = tempfile::tempdir().unwrap();
+        for (template, phase, expected_phase, expected_update) in [
+            (&QA, Phase::VerifyingFile, Phase::ImportingSolution, false),
+            (&TRACKER, Phase::Completed, Phase::Completed, true),
+            (&TRACKER, Phase::FindingConnections, Phase::FindingConnections, false),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let folder = prepare_inbox(sync.path(), template.kind).unwrap();
+            let old = Session {
+                phase,
+                folder: Some(folder.to_string_lossy().into()),
+                owner_name: Some("Christian Mora".into()),
+                solution_version: Some("0.9.0.0".into()),
+                ..Session::new(template)
+            };
+            fs::write(dir.path().join("session.json"), serde_json::to_vec(&old).unwrap()).unwrap();
+            let installer = Installer::new(dir.path().to_path_buf(), template);
+            let session = installer.snapshot().unwrap().session;
+            // Same installation, same owner: re-importing updates the same solution.
+            assert_eq!(session.installation_id, old.installation_id);
+            assert_eq!(session.owner_name, old.owner_name);
+            assert_eq!(session.solution_version.as_deref(), Some(template.version));
+            assert_eq!(session.phase, expected_phase);
+            assert_eq!(session.update_available, expected_update);
+            // The migration is saved and the package is rebuilt for this identity.
+            let saved: Session =
+                serde_json::from_slice(&fs::read(dir.path().join("session.json")).unwrap()).unwrap();
+            assert_eq!(saved.solution_version.as_deref(), Some(template.version));
+            let package = fs::read(dir.path().join(template.package_file)).unwrap();
+            let solution = package_entry_text(&package, "solution.xml");
+            assert!(solution.contains(&format!("<Version>{}</Version>", template.version)));
+            let key = instance_key(&old.installation_id).unwrap();
+            assert!(solution.contains(&key[..UNIQUE_NAME_KEY_CHARS]));
+            if expected_update {
+                let acknowledged = installer.action(Action::AcknowledgeUpdate {}).unwrap();
+                assert!(!acknowledged.session.update_available);
+                assert_eq!(acknowledged.session.phase, Phase::Completed);
+            }
+        }
     }
 
     #[test]

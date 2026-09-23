@@ -29,6 +29,22 @@ function ErrorBanner({ message, onClose }: { message: string; onClose?: () => vo
   </div>;
 }
 
+function SolutionUpdateBanner({ role, onDone }: { role: AppRole; onDone: () => Promise<void> }) {
+  const t = useT();
+  const [error, setError] = useState("");
+  const run = (operation: () => Promise<unknown>) => { setError(""); void operation().catch(failure => setError(String(failure))); };
+  return <div className="rise mb-6 rounded-2xl border border-[#e89969]/40 bg-[#fff0df] px-5 py-4 text-sm text-[#7a4516]">
+    <div className="flex flex-wrap items-center gap-4">
+      <RefreshCw className="h-5 w-5 shrink-0" />
+      <span className="min-w-0 flex-1"><b className="block">{t("Your Power Automate solution has an update")}</b><span className="text-xs">{t("Atlas prepared a new version of your personal solution. Import the ZIP in Power Automate (Solutions → Import solution): it updates the same solution and keeps your connections.")}</span></span>
+      <button className="btn-secondary" onClick={() => run(() => api.installer.showPackage(role))}><FolderOpen className="h-4 w-4" />{t("Show ZIP")}</button>
+      <button className="btn-secondary" onClick={() => run(() => api.installer.openPortal(role))}><ExternalLink className="h-4 w-4" />{t("Open Power Automate")}</button>
+      <button className="btn-primary" onClick={() => run(async () => { await api.installer.action(role, { kind: "acknowledge_update" }); await onDone(); })}><Check className="h-4 w-4" />{t("I imported it")}</button>
+    </div>
+    {error && <p className="mt-2 text-xs text-red-700">{error}</p>}
+  </div>;
+}
+
 function LoadingScreen() {
   const t = useT();
   return <main className="min-h-screen" aria-busy="true">
@@ -373,6 +389,7 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
   return <div className="min-h-screen" aria-busy={busy}>
     <header className="sticky top-0 z-30 border-b border-white/70 bg-cream/80 px-8 py-4 backdrop-blur-xl"><div className="mx-auto flex max-w-[1540px] items-center justify-between"><Brand /><div className="flex items-center gap-2"><div className="mr-3 max-w-xs text-right"><p className="text-xs font-bold">{bridgeMode ? t("Power Automate Inbox") : status.account?.displayName}</p><p className="truncate text-[10px] text-ink/40">{bridgeMode ? status.bridgeFolder : status.account?.email}</p></div><button title={t("Switch language")} className="rounded-xl border border-ink/10 bg-white px-2.5 py-2.5 text-[11px] font-extrabold tracking-wide hover:bg-mint" onClick={() => void switchLanguage()}>{lang === "es" ? "ES" : "EN"}</button><button title={t("Tracker destination")} className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={editDestination}><FileSpreadsheet className="h-4 w-4" /></button><button title={t("Open failure log")} className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={() => void api.openLog().catch(failure => setError(String(failure)))}><FileText className="h-4 w-4" /></button><button title={t("Data source")} className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={editMicrosoft}>{bridgeMode ? <Inbox className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}</button><button title={t("Change role")} className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={() => void exitRole()}><Home className="h-4 w-4" /></button><button title={t("Profile settings")} className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={() => setEditingProfile(true)}><Settings className="h-4 w-4" /></button>{!bridgeMode && <button title={t("Sign out")} className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-red-50 hover:text-red-600" onClick={signOut}><LogOut className="h-4 w-4" /></button>}</div></div></header>
     <main className="mx-auto max-w-[1540px] px-8 py-8">
+      {status.connectorUpdateAvailable && <SolutionUpdateBanner role="cs" onDone={refreshStatus} />}
       <div className="grid grid-cols-[minmax(0,1fr)_290px] gap-6">
         <section className="min-w-0">
           <div className="rise mb-7 flex items-end justify-between"><div><p className="text-xs font-bold uppercase tracking-[.18em] text-pine">{t("Daily workspace")}</p><h1 className="mt-2 font-display text-4xl">{t("Record your daily work.")}</h1><p className="mt-2 text-sm text-ink/50">{t("Meetings and concrete work tasks become separate tracker rows.")}</p></div><div className="flex items-center gap-2"><span className="chip bg-white text-ink/55"><Inbox className="h-3 w-3" />{t("{count} found", { count: counts.all })}</span><span className="chip bg-mint text-pine"><Check className="h-3 w-3" />{t("{count} selected", { count: counts.selected })}</span>{counts.review > 0 && <span className="chip bg-[#fff0df] text-[#9a5a1e]">{t("{count} to review", { count: counts.review })}</span>}</div></div>
@@ -434,7 +451,7 @@ function RoleScreen({ onChoose, busy, error }: { onChoose: (role: AppRole) => vo
   </main>;
 }
 
-function ManagerWorkspace({ status, signOut, exitRole }: { status: AppStatus; signOut: () => Promise<void>; exitRole: () => Promise<void> }) {
+function ManagerWorkspace({ status, refreshStatus, signOut, exitRole }: { status: AppStatus; refreshStatus: () => Promise<void>; signOut: () => Promise<void>; exitRole: () => Promise<void> }) {
   const { lang, setLang } = useI18n();
   const t = useT();
   const [error, setError] = useState("");
@@ -446,7 +463,7 @@ function ManagerWorkspace({ status, signOut, exitRole }: { status: AppStatus; si
   };
   return <div className="min-h-screen">
     <header className="sticky top-0 z-30 border-b border-white/70 bg-cream/80 px-8 py-4 backdrop-blur-xl"><div className="mx-auto flex max-w-[1540px] items-center justify-between"><div className="flex items-center gap-4"><Brand /><span className="chip bg-[#081c1a] text-[#8dd7c4]">{t("QA · Manager")}</span></div><div className="flex items-center gap-2"><div className="mr-3 max-w-xs text-right"><p className="text-xs font-bold">{bridgeMode ? (status.solutionOwner ?? t("Power Automate QA")) : status.account?.displayName}</p><p className="truncate text-[10px] text-ink/40">{bridgeMode ? status.qaBridgeFolder : status.account?.email}</p></div><button title={t("Switch language")} className="rounded-xl border border-ink/10 bg-white px-2.5 py-2.5 text-[11px] font-extrabold tracking-wide hover:bg-mint" onClick={() => void switchLanguage()}>{lang === "es" ? "ES" : "EN"}</button><button title={t("Open failure log")} className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={() => void api.openLog().catch(failure => setError(String(failure)))}><FileText className="h-4 w-4" /></button><button title={t("Change role")} className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={() => void exitRole()}><Home className="h-4 w-4" /></button>{!bridgeMode && <button title={t("Sign out")} className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-red-50 hover:text-red-600" onClick={signOut}><LogOut className="h-4 w-4" /></button>}</div></div></header>
-    <main className="mx-auto max-w-[1540px] px-8 py-8">{error && <div className="mb-5"><ErrorBanner message={error} onClose={() => setError("")} /></div>}<QaPanel /></main>
+    <main className="mx-auto max-w-[1540px] px-8 py-8">{status.connectorUpdateAvailable && <SolutionUpdateBanner role="manager" onDone={refreshStatus} />}{error && <div className="mb-5"><ErrorBanner message={error} onClose={() => setError("")} /></div>}<QaPanel /></main>
   </div>;
 }
 
@@ -480,7 +497,7 @@ function AtlasApp() {
   // 2. The Power Automate connector of that role.
   if (!status.configured || installing) return <ConnectorInstaller key={status.appRole} role={status.appRole} defaultOwner={status.solutionOwner ?? status.profile?.fullName} onClose={status.configured ? () => setInstalling(false) : undefined} onChangeRole={() => void exitRole()} onUseFolder={useConnector} />;
   if (!status.signedIn) return <LoginScreen onSignIn={signIn} onEditMicrosoft={() => setInstalling(true)} busy={busy} error={error} />;
-  if (status.appRole === "manager") return <ManagerWorkspace status={status} signOut={signOut} exitRole={exitRole} />;
+  if (status.appRole === "manager") return <ManagerWorkspace status={status} refreshStatus={refresh} signOut={signOut} exitRole={exitRole} />;
   if (!status.profile) return <SetupScreen status={status} onSaved={saveProfile} />;
   if (!status.destination || editingDestination) return <DestinationSetupScreen initial={status.destination} initialAutoSync={status.autoSync} initialAutoSyncTime={status.autoSyncTime} initialAutomationMode={status.automationMode} bridgeMode={status.sourceMode === "power_automate_folder"} onSave={saveDestination} onCancel={status.destination ? () => setEditingDestination(false) : undefined} />;
   return <Workspace status={status} refreshStatus={refresh} signOut={signOut} editMicrosoft={() => setInstalling(true)} editDestination={() => setEditingDestination(true)} exitRole={exitRole} />;

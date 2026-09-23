@@ -399,6 +399,10 @@ const es: Record<string, string> = {
   "Your cases will appear here": "Tus casos aparecerán aquí",
   "Try another filter.": "Prueba otro filtro.",
   "Add the people you audit. Atlas asks your QA flow for their history in monthly batches every few minutes and evaluates each conversation as it arrives.": "Agrega a las personas que auditas. Atlas le pide a tu flujo QA su historial por meses cada pocos minutos y evalúa cada conversación a medida que llega.",
+  "Your Power Automate solution has an update": "Tu solución de Power Automate tiene una actualización",
+  "Atlas prepared a new version of your personal solution. Import the ZIP in Power Automate (Solutions → Import solution): it updates the same solution and keeps your connections.": "Atlas preparó una versión nueva de tu solución personal. Importa el ZIP en Power Automate (Soluciones → Importar solución): actualiza la misma solución y conserva tus conexiones.",
+  "Open Power Automate": "Abrir Power Automate",
+  "I imported it": "Ya la importé",
 };
 
 // Spanish-keyed entries (setup wizard and legacy Spanish UI) translated to English.
@@ -628,6 +632,7 @@ const en: Record<string, string> = {
   "Office 365 Outlook, Microsoft Teams y OneDrive for Business": "Office 365 Outlook, Microsoft Teams and OneDrive for Business",
   "Escribe tu nombre con letras (máximo 80 caracteres).": "Type your name using letters (80 characters maximum).",
   "Esto reinicia solo el asistente y genera un nuevo identificador de instalación. El flujo existente seguirá en Microsoft y el nuevo ZIP creará una solución independiente; elimina la anterior en el portal si ya no la necesitas para evitar duplicados.": "This only restarts the assistant and creates a new installation ID. The existing flow stays in Microsoft and the new ZIP creates a separate solution; delete the old one in the portal if you no longer need it to avoid duplicates.",
+  "Atlas preparó una versión nueva de tu solución personal. Importa de nuevo el ZIP en Power Automate: actualiza la misma solución, conserva tus conexiones y luego Atlas vuelve a comprobarla.": "Atlas prepared a new version of your personal solution. Import the ZIP again in Power Automate: it updates the same solution, keeps your connections, and then Atlas verifies it again.",
 };
 
 export function translate(lang: Language, key: string, vars?: Record<string, string | number>): string {

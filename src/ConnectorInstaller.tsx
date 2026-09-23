@@ -17,6 +17,7 @@ const visibleSteps = steps.filter(([key]) => !['finding_environment', 'activatin
 const diagnostics: Record<string, string> = {
   portal_required: 'El portal oficial realiza la instalación. Atlas no puede leer tu sesión, detectar permisos remotos ni confirmar conexiones automáticamente.',
   user_reported_not_remotely_verified: 'Paso anterior confirmado por ti; Atlas no ha consultado el tenant. Continúa en el mismo entorno y con tu cuenta corporativa.',
+  solution_update_required: 'Atlas preparó una versión nueva de tu solución personal. Importa de nuevo el ZIP en Power Automate: actualiza la misma solución, conserva tus conexiones y luego Atlas vuelve a comprobarla.',
   file_verified: 'Llegó un archivo de esta instalación y cumple atlas-evidence.schema.json. Esto verifica la entrega del puente; no certifica la integridad de todos tus datos de Microsoft 365.',
   previous_installation_detected: 'Atlas encontró evidencia de una instalación anterior. Importa el ZIP que preparó este asistente: actualiza tu propia solución AtlasBridge de esta instalación; los archivos antiguos no se borrarán.',
   collector_file_pending: 'La captura inmediata de Teams ya responde, pero todavía falta el paquete del recolector programado. Espera su próximo ciclo; Atlas necesita comprobar también calendario y correo.',
