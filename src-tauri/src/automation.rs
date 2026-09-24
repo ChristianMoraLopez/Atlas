@@ -106,14 +106,6 @@ fn remove_legacy_task(name: &str) {
 }
 
 #[cfg(windows)]
-fn startup_action() -> Result<String> {
-    let executable = std::env::current_exe().map_err(|error| {
-        AppError::Message(format!("Atlas could not locate its executable: {error}"))
-    })?;
-    Ok(format!("\"{}\" --atlas-startup", executable.display()))
-}
-
-#[cfg(windows)]
 fn run_key_value() -> Option<String> {
     let output = Command::new(system_tool("reg.exe"))
         .args(["QUERY", RUN_KEY, "/V", RUN_VALUE])
@@ -130,34 +122,11 @@ fn run_key_value() -> Option<String> {
         .map(|(_, value)| value.trim().to_string())
 }
 
+/// Deletes any Windows Run-key auto-start left by earlier releases. Atlas no
+/// longer registers itself to launch at sign-in, so this only ever removes a
+/// stale entry; it never adds one.
 #[cfg(windows)]
-fn configure_run_key(enabled: bool) -> Result<bool> {
-    if enabled {
-        let action = startup_action()?;
-        if run_key_value().as_deref() == Some(action.as_str()) {
-            return Ok(false);
-        }
-        let output = Command::new(system_tool("reg.exe"))
-            .args(["ADD", RUN_KEY, "/V", RUN_VALUE, "/T", "REG_SZ", "/D", &action, "/F"])
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-            .map_err(|error| {
-                AppError::Message(format!("Windows startup could not be configured: {error}"))
-            })?;
-        if !output.status.success() {
-            let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            return Err(AppError::Message(format!(
-                "Windows could not register Atlas for the current user{}{}",
-                if detail.is_empty() { "." } else { ": " },
-                detail
-            )));
-        }
-        diagnostics::info(
-            "automation/startup-registry",
-            "Registered portable Atlas in the current user's Windows Run key",
-        );
-        return Ok(true);
-    }
+fn remove_run_key() {
     if run_key_value().is_some() {
         let _ = Command::new(system_tool("reg.exe"))
             .args(["DELETE", RUN_KEY, "/V", RUN_VALUE, "/F"])
@@ -168,7 +137,6 @@ fn configure_run_key(enabled: bool) -> Result<bool> {
             "Removed Atlas from the current user's Windows Run key",
         );
     }
-    Ok(false)
 }
 
 #[cfg(windows)]
@@ -203,97 +171,19 @@ fn remove_startup_shortcut() -> Result<()> {
     }
 }
 
+/// Atlas no longer installs itself to start with Windows. A portable, unsigned
+/// executable that writes an auto-start entry and launches hidden helper
+/// processes matches the behaviour endpoint security flags as a dropper, so
+/// Atlas now runs only when the user opens it, like an ordinary desktop tool.
+/// This still removes any auto-start left by earlier releases (Run key,
+/// Startup shortcut and legacy scheduled tasks) so nothing lingers.
 #[cfg(windows)]
-fn create_startup_shortcut() -> Result<()> {
-    let link = startup_link_path()?;
-    let executable = std::env::current_exe().map_err(|error| {
-        AppError::Message(format!("Atlas could not locate its executable: {error}"))
-    })?;
-    let working_directory = executable.parent().ok_or_else(|| {
-        AppError::Message("Atlas could not determine its portable folder.".into())
-    })?;
-    let parent = link.parent().ok_or_else(|| {
-        AppError::Message("Atlas could not determine the Windows Startup folder.".into())
-    })?;
-    fs::create_dir_all(parent)?;
-
-    // Values travel through environment variables so paths containing quotes,
-    // spaces, or PowerShell metacharacters are never interpreted as script text.
-    let script = "$shell = New-Object -ComObject WScript.Shell; $shortcut = $shell.CreateShortcut($env:ATLAS_STARTUP_LINK); $shortcut.TargetPath = $env:ATLAS_STARTUP_EXE; $shortcut.Arguments = '--atlas-startup'; $shortcut.WorkingDirectory = $env:ATLAS_STARTUP_WORKDIR; $shortcut.WindowStyle = 7; $shortcut.Description = 'Atlas background tracker'; $shortcut.Save()";
-    let output = Command::new(system_tool(r"WindowsPowerShell\v1.0\powershell.exe"))
-        .args([
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            script,
-        ])
-        .env("ATLAS_STARTUP_LINK", &link)
-        .env("ATLAS_STARTUP_EXE", &executable)
-        .env("ATLAS_STARTUP_WORKDIR", working_directory)
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-        .map_err(|error| {
-            AppError::Message(format!(
-                "Windows could not create the Atlas startup shortcut: {error}"
-            ))
-        })?;
-    if !output.status.success() || !link.is_file() {
-        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(AppError::Message(format!(
-            "Windows did not create the Atlas startup shortcut{}{}",
-            if detail.is_empty() { "." } else { ": " },
-            detail
-        )));
-    }
-    diagnostics::info(
-        "automation/startup-shortcut",
-        &format!(
-            "Created Atlas startup shortcut at {} for {} --atlas-startup",
-            link.display(),
-            executable.display()
-        ),
-    );
-    Ok(())
-}
-
-/// Registers Atlas to start hidden at Windows sign-in. Idempotent: nothing
-/// is rewritten when the registration already points at this executable.
-/// Only one method is kept active so Windows never launches Atlas twice.
-#[cfg(windows)]
-pub fn configure(enabled: bool, time: &str) -> Result<()> {
+pub fn configure(_enabled: bool, time: &str) -> Result<()> {
     normalize_time(time)?;
-    // Older releases used Task Scheduler, which many managed PCs block for
-    // standard users. Remove those tasks when present.
     remove_legacy_task(TASK_NAME);
     remove_legacy_task(STARTUP_TASK_NAME);
-    if !enabled {
-        configure_run_key(false)?;
-        return remove_startup_shortcut();
-    }
-    match configure_run_key(true) {
-        Ok(_) => remove_startup_shortcut().or_else(|error| {
-            diagnostics::error("automation/startup-shortcut", &error.to_string());
-            Ok(())
-        }),
-        Err(registry_error) => {
-            diagnostics::error(
-                "automation/startup-fallback",
-                &format!("The Run key failed; using the Startup folder instead: {registry_error}"),
-            );
-            let link_exists = startup_link_path().map(|link| link.is_file()).unwrap_or(false);
-            if link_exists {
-                return Ok(());
-            }
-            create_startup_shortcut().map_err(|shortcut_error| {
-                AppError::Message(format!(
-                    "Windows could not register Atlas at startup. Run key: {registry_error} Startup folder: {shortcut_error}"
-                ))
-            })
-        }
-    }
+    remove_run_key();
+    remove_startup_shortcut()
 }
 
 #[cfg(not(windows))]
