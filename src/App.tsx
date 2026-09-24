@@ -313,18 +313,22 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
     }, 500);
     return () => window.clearTimeout(timer);
   }, [date, items, warnings]);
-  const loadEvidence = async (targetDate: string, email: boolean, teams: boolean): Promise<ExtractionResult> => {
+  const loadEvidence = async (targetDate: string, email: boolean, teams: boolean, waitForDelivery = true): Promise<ExtractionResult> => {
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     if (!bridgeMode) return api.extract(targetDate, email, teams, timezone);
     await api.requestBridgeDate(targetDate);
+    // A manual import waits (with a notice) while Power Automate delivers the day.
+    // A background run never blocks the window: it checks once and, if the day is
+    // not there yet, throws so the caller can hand control back to the scheduler.
+    const maxAttempts = waitForDelivery ? 26 : 0;
     let lastError = "";
-    for (let attempt = 0; attempt <= 26; attempt += 1) {
+    for (let attempt = 0; attempt <= maxAttempts; attempt += 1) {
       try { return await api.extract(targetDate, email, teams, timezone); }
       catch (failure) {
         lastError = String(failure);
         if (!lastError.includes("No se encontró un paquete de evidencia")) throw failure;
+        if (attempt === maxAttempts) { if (!waitForDelivery) throw failure; break; }
         if (attempt === 0) setSyncNotice(t("Request sent for {date}. Power Automate processes it on its next cycle and Atlas will check the folder automatically.", { date: targetDate }));
-        if (attempt === 26) break;
         await new Promise(resolve => window.setTimeout(resolve, 15_000));
       }
     }
@@ -346,7 +350,7 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
     }
     const targetDate = request?.date ?? localDate(); setDate(targetDate); setWarnings([]);
     try {
-      const result = await loadEvidence(targetDate, true, true);
+      const result = await loadEvidence(targetDate, true, true, !automatic);
       setItems(result.interactions);
       const warning = completionWarning(result.interactions);
       setWarnings(warning ? [...result.warnings, warning] : result.warnings);
@@ -361,8 +365,17 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
       }
       if (request) await api.completeScheduled(request.runKey, true, selectedCount < 3);
     } catch (e) {
-      setError(`${automatic ? t("Automatic daily run failed: ") : ""}${String(e)}`);
-      if (request) await api.completeScheduled(request.runKey, false, true).catch(() => undefined);
+      const message = String(e);
+      // A background run whose day has not reached OneDrive yet is deferred, not
+      // failed: release it quietly so the scheduler retries later and the window
+      // stays usable instead of locking on the loading screen.
+      if (automatic && message.includes("No se encontró un paquete de evidencia")) {
+        setSyncNotice(t("Requested {date} from Power Automate. Atlas will import it automatically once the flow delivers it; meanwhile you can keep working.", { date: targetDate }));
+        if (request) await api.completeScheduled(request.runKey, false, false).catch(() => undefined);
+      } else {
+        setError(`${automatic ? t("Automatic daily run failed: ") : ""}${message}`);
+        if (request) await api.completeScheduled(request.runKey, false, true).catch(() => undefined);
+      }
     } finally { endWork(); }
   };
   const switchLanguage = async () => {
