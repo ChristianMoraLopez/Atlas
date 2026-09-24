@@ -525,14 +525,21 @@ pub fn export_analyst(
     Ok((file, written))
 }
 
+/// Layout version of the QA workbooks; bumping it rewrites every sheet once.
+pub const EXCEL_LAYOUT: u32 = 2;
+
+/// Each case is a vertical block: field names in column A, values in
+/// column B (wrapped so long notes stay readable), cases one below another.
 fn write_sheet(sheet: &mut umya_spreadsheet::Worksheet, config: &QaConfig, cases: &[&QaCase]) {
-    for (col, header) in QA_HEADERS.iter().enumerate() {
-        let coordinate = format!("{}1", (b'A' + col as u8) as char);
-        let cell = sheet.get_cell_mut(coordinate.as_str());
-        cell.set_value(header.to_string());
-        cell.get_style_mut().get_font_mut().set_bold(true);
-    }
-    for (row, case) in cases.iter().enumerate() {
+    let mut row = 1u32;
+    for (index, case) in cases.iter().enumerate() {
+        let title = sheet.get_cell_mut((1, row));
+        title.set_value(format!("Case {} of {}", index + 1, cases.len()));
+        title.get_style_mut().get_font_mut().set_bold(true);
+        let heading = sheet.get_cell_mut((2, row));
+        heading.set_value(case.request_id.clone());
+        heading.get_style_mut().get_font_mut().set_bold(true);
+        row += 1;
         let values = [
             case.audit_date.clone(),
             config.vertical.clone(),
@@ -552,21 +559,20 @@ fn write_sheet(sheet: &mut umya_spreadsheet::Worksheet, config: &QaConfig, cases
             case.update_follow_up_notes.clone(),
             auto_fail_label(&case.auto_fail),
         ];
-        for (col, value) in values.iter().enumerate() {
-            let coordinate = format!("{}{}", (b'A' + col as u8) as char, row + 2);
-            sheet.get_cell_mut(coordinate.as_str()).set_value(value.clone());
+        for (field, value) in QA_HEADERS.iter().zip(values.iter()) {
+            let label = sheet.get_cell_mut((1, row));
+            label.set_value(field.to_string());
+            label.get_style_mut().get_font_mut().set_bold(true);
+            let cell = sheet.get_cell_mut((2, row));
+            cell.set_value(value.clone());
+            cell.get_style_mut().get_alignment_mut().set_wrap_text(true);
+            row += 1;
         }
+        // A blank line separates the cases.
+        row += 1;
     }
-    for (col, width) in [
-        12.0, 42.0, 24.0, 30.0, 12.0, 14.0, 16.0, 46.0, 18.0, 46.0, 11.0, 46.0, 9.0, 46.0, 16.0,
-        46.0, 30.0,
-    ]
-    .iter()
-    .enumerate()
-    {
-        let letter = ((b'A' + col as u8) as char).to_string();
-        sheet.get_column_dimension_mut(&letter).set_width(*width);
-    }
+    sheet.get_column_dimension_mut("A").set_width(36.0);
+    sheet.get_column_dimension_mut("B").set_width(110.0);
 }
 
 pub fn output_folder(config: &QaConfig) -> Option<PathBuf> {
@@ -638,6 +644,15 @@ mod tests {
         assert_eq!(written, 1);
         let book = umya_spreadsheet::reader::xlsx::read(&file).unwrap();
         assert!(book.get_sheet_by_name("2026-W38").is_some());
+        // Cases are vertical blocks: field names in A, values in B.
+        let book = umya_spreadsheet::reader::xlsx::read(&file).unwrap();
+        let sheet = book.get_sheet_by_name("2026-W38").unwrap();
+        assert_eq!(sheet.get_value((1, 1)), "Case 1 of 1");
+        assert_eq!(sheet.get_value((1, 2)), "Audit date");
+        assert_eq!(sheet.get_value((1, 5)), "Request ID");
+        assert_eq!(sheet.get_value((2, 5)), "QA request");
+        assert_eq!(sheet.get_value((1, 18)), "QA Auto fail?");
+        assert_eq!(sheet.get_value((2, 18)), "No Autofail");
         // Every week lost its cases: the workbook is removed, not left empty.
         let none: Vec<&QaCase> = Vec::new();
         let (_, written) = export_analyst(&config, "Ana Test", &none, &weeks).unwrap();
