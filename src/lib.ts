@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AiPromptInfo, AppRole, AppStatus, AutomationMode, ExportResult, ExtractionResult, InstallerSnapshot, Interaction, TrackerCatalog, QaCase, QaCaseEntry, QaConfig, QaEngineStatus, QaExportResult, TrackerDestination, UserProfile } from "./types";
+import type { AiPromptInfo, AppRole, AppStatus, AutomationMode, ExportResult, ExtractionResult, InstallerSnapshot, Interaction, TrackerCatalog, QaCase, QaCaseEntry, QaConfig, QaEngineStatus, QaExportResult, QaMail, TrackerDestination, UserProfile } from "./types";
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   try {
@@ -53,6 +53,7 @@ export const api = {
   qaStatus: () => call<QaEngineStatus>("qa_engine_status"),
   qaCases: () => call<QaCaseEntry[]>("qa_list_cases"),
   qaUpdateCase: (qaCase: QaCase) => call<void>("qa_update_case", { case: qaCase }),
+  qaCaseMessages: (caseId: string) => call<QaMail[]>("qa_case_messages", { caseId }),
   qaReevaluate: (caseId: string) => call<void>("qa_reevaluate_case", { caseId }),
   qaSyncNow: () => call<void>("qa_sync_now"),
   qaRestartHistory: () => call<void>("qa_restart_history"),

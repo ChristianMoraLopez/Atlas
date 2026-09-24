@@ -223,6 +223,18 @@ export interface QaCaseEntry extends QaCase {
   lastMessageAt: string;
 }
 
+export interface QaMail {
+  id: string;
+  conversationId: string;
+  subject: string;
+  received: string;
+  from: string;
+  to: string;
+  cc: string;
+  text: string;
+  hasAttachments: boolean;
+}
+
 export interface QaExportResult {
   files: string[];
   written: number;

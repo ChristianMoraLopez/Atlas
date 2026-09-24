@@ -403,6 +403,11 @@ const es: Record<string, string> = {
   "Atlas prepared a new version of your personal solution. Import the ZIP in Power Automate (Solutions → Import solution): it updates the same solution and keeps your connections.": "Atlas preparó una versión nueva de tu solución personal. Importa el ZIP en Power Automate (Soluciones → Importar solución): actualiza la misma solución y conserva tus conexiones.",
   "Open Power Automate": "Abrir Power Automate",
   "I imported it": "Ya la importé",
+  "Loading the conversation…": "Cargando la conversación…",
+  "From": "De",
+  "To": "Para",
+  "Subject": "Asunto",
+  "This message has no text.": "Este mensaje no tiene texto.",
 };
 
 // Spanish-keyed entries (setup wizard and legacy Spanish UI) translated to English.
