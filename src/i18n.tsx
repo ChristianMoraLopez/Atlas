@@ -202,6 +202,7 @@ const es: Record<string, string> = {
   "Automatic daily run queued {count} rows for SharePoint.": "La ejecución diaria automática encoló {count} filas para SharePoint.",
   "Automatic daily run complete: {added} added, {updated} refreshed.": "Ejecución diaria automática completa: {added} añadidas, {updated} actualizadas.",
   "Automatic daily run failed: ": "La ejecución diaria automática falló: ",
+  "Requested {date} from Power Automate. Atlas will import it automatically once the flow delivers it; meanwhile you can keep working.": "Se solicitó {date} a Power Automate. Atlas lo importará automáticamente cuando el flujo lo entregue; mientras tanto puedes seguir trabajando.",
 
   // AI transparency panel
   "AI transparency": "Transparencia de la IA",
