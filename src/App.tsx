@@ -15,7 +15,7 @@ import AiTransparencyModal from "./AiTransparencyModal";
 import LottieIcon, { type LottieName } from "./LottieIcon";
 import QaPanel from "./QaPanel";
 import { I18nProvider, useI18n, useT } from "./i18n";
-import type { AppRole, AppStatus, AutomationMode, AutomationRequest, ExportResult, ExtractionResult, Interaction, TrackerDestination, TrackerDestinationKind, UserProfile } from "./types";
+import type { AppRole, AppStatus, AutomationMode, AutomationRequest, ExportResult, ExtractionResult, Interaction, TrackerCatalog, TrackerDestination, TrackerDestinationKind, UserProfile } from "./types";
 
 const emptyProfile: UserProfile = {
   loginId: "", fullName: "", area: "Manufacturing", teamLead: "", circanaManager: ""
@@ -194,11 +194,14 @@ function SourceBadge({ item }: { item: Interaction }) {
 }
 
 function SelectCell({ value, options, onChange }: { value: string; options: string[]; onChange: (v: string) => void }) {
-  return <div className="relative"><select className="w-full appearance-none bg-transparent py-1 pr-5 text-xs outline-none" value={value} onChange={e => onChange(e.target.value)}>{options.map(x => <option key={x}>{x}</option>)}</select><ChevronDown className="pointer-events-none absolute right-0 top-1.5 h-3 w-3 text-ink/35" /></div>;
+  const choices = options.includes(value) || !value ? options : [value, ...options];
+  return <div className="relative"><select className={`w-full appearance-none bg-transparent py-1 pr-5 text-xs outline-none ${value ? "" : "text-red-600"}`} value={value} onChange={e => onChange(e.target.value)}>{choices.map(x => <option key={x} value={x}>{x.trim()}</option>)}</select><ChevronDown className="pointer-events-none absolute right-0 top-1.5 h-3 w-3 text-ink/35" /></div>;
 }
 
-function InteractionTable({ items, setItems }: { items: Interaction[]; setItems: React.Dispatch<React.SetStateAction<Interaction[]>> }) {
+function InteractionTable({ items, setItems, catalog }: { items: Interaction[]; setItems: React.Dispatch<React.SetStateAction<Interaction[]>>; catalog?: TrackerCatalog }) {
   const t = useT();
+  const subcategories = (category: string) => catalog?.categories.find(entry => entry.name === category)?.subcategories ?? [];
+  const clientsFor = (clientType: string) => catalog?.clients[clientType] ?? [];
   const set = (index: number, patch: Partial<Interaction>) => setItems(old => old.map((v, i) => i === index ? { ...v, ...patch } : v));
   const removeManual = (index: number) => setItems(old => old.filter((_, i) => i !== index));
   return <div className="overflow-auto rounded-xl border border-ink/10 bg-white">
@@ -212,16 +215,16 @@ function InteractionTable({ items, setItems }: { items: Interaction[]; setItems:
         return <tr key={item.sourceId} className={`${item.selected ? "" : "opacity-50"} align-top hover:bg-cream/35`}>
           <td className="px-3 py-3"><input type="checkbox" className="h-4 w-4 accent-pine" checked={item.selected} onChange={e => set(i, { selected: e.target.checked, reviewed: e.target.checked ? true : item.reviewed })} /></td>
           <td className="whitespace-nowrap px-3 py-3"><SourceBadge item={item} />{item.aiSuggested ? <input className="mt-1 block w-40 bg-transparent text-[10px] text-ink/45 outline-none" value={item.evidenceLabel} onChange={e => set(i, { evidenceLabel: e.target.value })} /> : <p className="mt-1 max-w-40 truncate text-[10px] text-ink/35" title={item.evidenceLabel}>{item.evidenceLabel}</p>}</td>
-          <td className="px-3 py-3">{fullyEditable ? <SelectCell value={item.interactionType} options={["Meeting", "Task"]} onChange={v => set(i, { interactionType: v as Interaction["interactionType"] })} /> : <span className="text-xs">{item.interactionType}</span>}</td>
+          <td className="px-3 py-3">{fullyEditable ? <SelectCell value={item.interactionType} options={catalog?.interactions ?? ["Meeting", "Task"]} onChange={v => set(i, { interactionType: v })} /> : <span className="text-xs">{item.interactionType}</span>}</td>
           <td className="px-3 py-3">{fullyEditable ? <input type="datetime-local" className="w-[155px] bg-transparent text-xs outline-none" value={toLocalInput(item.interactionDateTime)} onChange={e => set(i, { interactionDateTime: fromLocalInput(e.target.value), receptionDateTime: fromLocalInput(e.target.value) })} /> : <span className="whitespace-nowrap text-xs">{new Date(item.interactionDateTime).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>}</td>
           <td className="px-3 py-3">{fullyEditable ? <input type="datetime-local" className="w-[155px] bg-transparent text-xs outline-none" value={toLocalInput(item.resolutionDateTime)} onChange={e => set(i, { resolutionDateTime: fromLocalInput(e.target.value) })} /> : <span className="whitespace-nowrap text-xs">{item.resolutionDateTime ? new Date(item.resolutionDateTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"}</span>}</td>
           <td className="whitespace-nowrap px-3 py-3"><span className={`chip ${item.status === "Resolved" ? "bg-mint text-pine" : "bg-[#fff0df] text-[#9a5a1e]"}`}>{item.status}</span></td>
-          <td className="px-3 py-3">{fullyEditable ? <SelectCell value={item.clientType} options={["", "Circana", "End_Client", "Capgemini"]} onChange={v => set(i, { clientType: v as Interaction["clientType"] })} /> : <span className="text-xs">{item.clientType || "—"}</span>}</td>
-          <td className="px-3 py-3">{fullyEditable ? <input className="w-28 bg-transparent text-xs outline-none" placeholder={t("Blank")} value={item.endClient} onChange={e => set(i, { endClient: e.target.value })} /> : <span className="text-xs">{item.endClient || "—"}</span>}</td>
-          <td className="px-3 py-3"><input className="w-28 bg-transparent text-xs outline-none" placeholder={t("Fill in")} value={item.category} onChange={e => set(i, { category: e.target.value })} /></td>
-          <td className="px-3 py-3"><input className="w-28 bg-transparent text-xs outline-none" placeholder={t("Fill in")} value={item.subcategory} onChange={e => set(i, { subcategory: e.target.value })} /></td>
-          <td className="px-3 py-3"><SelectCell value={item.priority} options={["Low", "Intermediate", "High"]} onChange={v => set(i, { priority: v as Interaction["priority"] })} /></td>
-          <td className="px-3 py-3"><input className="w-24 bg-transparent text-xs outline-none" placeholder="—" value={item.incidentNumber} onChange={e => set(i, { incidentNumber: e.target.value })} /></td>
+          <td className="px-3 py-3">{fullyEditable ? <SelectCell value={item.clientType} options={catalog?.clientTypes ?? ["Circana", "End_Client", "Capgemini", "Others"]} onChange={v => set(i, { clientType: v, endClient: clientsFor(v)[0] ?? v })} /> : <span className="text-xs">{item.clientType || "—"}</span>}</td>
+          <td className="px-3 py-3">{fullyEditable && clientsFor(item.clientType).length ? <SelectCell value={item.endClient} options={clientsFor(item.clientType)} onChange={v => set(i, { endClient: v })} /> : <span className="text-xs">{item.endClient || "—"}</span>}</td>
+          <td className="w-32 px-3 py-3">{catalog ? <SelectCell value={item.category} options={catalog.categories.map(entry => entry.name)} onChange={v => set(i, { category: v, subcategory: subcategories(v)[0] ?? v })} /> : <input className="w-28 bg-transparent text-xs outline-none" value={item.category} onChange={e => set(i, { category: e.target.value })} />}</td>
+          <td className="w-40 px-3 py-3">{catalog ? <SelectCell value={item.subcategory} options={subcategories(item.category)} onChange={v => set(i, { subcategory: v })} /> : <input className="w-28 bg-transparent text-xs outline-none" value={item.subcategory} onChange={e => set(i, { subcategory: e.target.value })} />}</td>
+          <td className="px-3 py-3"><SelectCell value={item.priority} options={catalog?.priorities ?? ["Low", "Intermediate", "High"]} onChange={v => set(i, { priority: v })} /></td>
+          <td className="px-3 py-3"><input className="w-24 bg-transparent text-xs outline-none" placeholder="N/A" value={item.incidentNumber} onChange={e => set(i, { incidentNumber: e.target.value || "N/A" })} /></td>
           <td className="px-3 py-3"><textarea rows={2} className="w-full resize-none bg-transparent text-xs leading-5 outline-none" placeholder={t("Add a factual note")} value={item.comments} onChange={e => set(i, { comments: e.target.value })} /></td>
           <td className="px-2 py-3">{item.sourceKind === "manual" && <button title={t("Remove manual entry")} onClick={() => removeManual(i)} className="rounded-md p-1 text-ink/35 hover:bg-red-50 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>}</td>
         </tr>;
@@ -277,6 +280,8 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
   const t = useT();
   const profile = status.profile!; const destination = status.destination!; const bridgeMode = status.sourceMode === "power_automate_folder"; const [date, setDate] = useState(localDate()); const [includeEmail, setIncludeEmail] = useState(true); const [includeTeams, setIncludeTeams] = useState(true); const [items, setItems] = useState<Interaction[]>([]); const [warnings, setWarnings] = useState<string[]>([]); const [busy, setBusy] = useState(false); const busyRef = useRef(false); const [error, setError] = useState(""); const [syncNotice, setSyncNotice] = useState(""); const [manual, setManual] = useState(false); const [editingProfile, setEditingProfile] = useState(false); const [success, setSuccess] = useState<ExportResult>();
   const [aiPanel, setAiPanel] = useState(false);
+  const [catalog, setCatalog] = useState<TrackerCatalog>();
+  useEffect(() => { void api.trackerCatalog().then(setCatalog).catch(failure => void api.logError("tracker-catalog", String(failure))); }, [destination.value, destination.localPath]);
   const [workStatus, setWorkStatus] = useState<{ message: string; detail: string }>();
   const counts = useMemo(() => ({ all: items.length, selected: items.filter(i => i.selected).length, review: items.filter(i => !i.reviewed).length }), [items]);
   const startWork = (message: string, detail: string) => { if (busyRef.current) return false; busyRef.current = true; setWorkStatus({ message, detail }); setBusy(true); setError(""); setSyncNotice(""); return true; };
@@ -399,7 +404,7 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
           </div>
           {error && <div className="mt-5"><ErrorBanner message={error} onClose={() => setError("")} /></div>}{syncNotice && <div className="mt-5 flex items-center gap-3 rounded-xl border border-pine/15 bg-mint/55 px-4 py-3 text-sm text-pine"><Check className="h-4 w-4" />{syncNotice}</div>}{warnings.map((w, i) => <div className="mt-3" key={i}><ErrorBanner message={w} /></div>)}
           <div className="rise rise-2 mt-6 flex items-center justify-between"><div><h2 className="font-display text-2xl">{t("Preview")}</h2><p className="mt-1 text-xs text-ink/45">{t("Atlas selects finished meetings and concrete work tasks, including tasks still in progress. Reminders and automatic notices stay out.")}</p></div><button className="btn-secondary" onClick={() => setManual(true)}><Plus className="h-4 w-4" />{t("Add manual task")}</button></div>
-          <div className="mt-4">{items.length ? <InteractionTable items={items} setItems={setItems} /> : <div className="card rise rise-3 grid min-h-64 place-items-center p-10 text-center"><div><div className="lottie-frame mx-auto h-32 w-32"><LottieIcon name="analytics" className="h-28 w-28" /></div><h3 className="mt-4 font-display text-xl">{bridgeMode ? t("Choose a day and import") : t("Choose a day and extract")}</h3><p className="mt-2 max-w-sm text-xs leading-5 text-ink/45">{t("Atlas shows only interactions backed by your calendar, selected mail, chat evidence, or details you type manually.")}</p></div></div>}</div>
+          <div className="mt-4">{items.length ? <InteractionTable items={items} setItems={setItems} catalog={catalog} /> : <div className="card rise rise-3 grid min-h-64 place-items-center p-10 text-center"><div><div className="lottie-frame mx-auto h-32 w-32"><LottieIcon name="analytics" className="h-28 w-28" /></div><h3 className="mt-4 font-display text-xl">{bridgeMode ? t("Choose a day and import") : t("Choose a day and extract")}</h3><p className="mt-2 max-w-sm text-xs leading-5 text-ink/45">{t("Atlas shows only interactions backed by your calendar, selected mail, chat evidence, or details you type manually.")}</p></div></div>}</div>
         </section>
         <div className="space-y-5"><ExportPanel destination={destination} autoSync={status.autoSync} autoSyncTime={status.autoSyncTime} automationMode={status.automationMode} bridgeMode={bridgeMode} items={items} busy={busy} onSave={saveSelected} onSync={() => void syncCalendar(false)} onEdit={editDestination} /><aside className="rounded-2xl bg-[#081c1a] p-5 text-white"><ShieldCheck className="h-5 w-5 text-[#8dd7c4]" /><h3 className="mt-4 font-display text-xl">{t("Daily minimum: 3")}</h3><p className="mt-2 text-xs leading-5 text-white/55">{t("Atlas always saves the real activities found. If there are fewer than three, it opens the app so you can add the missing ones.")}</p></aside></div>
       </div>

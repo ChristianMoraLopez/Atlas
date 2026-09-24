@@ -13,6 +13,7 @@ mod qa;
 mod qa_engine;
 mod sharepoint;
 mod state;
+mod tracker_catalog;
 mod tracker_writer;
 
 use crate::{
@@ -566,6 +567,23 @@ async fn save_tracker_destination(
     build_status(&state).await
 }
 
+async fn tracker_catalog_for(state: &AppState) -> tracker_catalog::TrackerCatalog {
+    let config_dir = state.config_dir.clone();
+    let destination = state.read_settings().ok().and_then(|settings| settings.destination);
+    tauri::async_runtime::spawn_blocking(move || {
+        tracker_catalog::load(&config_dir, destination.as_ref())
+    })
+    .await
+    .unwrap_or_default()
+}
+
+#[tauri::command]
+async fn get_tracker_catalog(
+    state: tauri::State<'_, AppState>,
+) -> Result<tracker_catalog::TrackerCatalog> {
+    Ok(tracker_catalog_for(&state).await)
+}
+
 #[tauri::command]
 fn log_frontend_error(context: String, message: String) {
     diagnostics::error(&format!("frontend/{context}"), &message);
@@ -745,6 +763,13 @@ async fn extract_interactions(
             .await?
         }
     };
+    // Every tracker column is filled from the workbook lists before the rows
+    // are shown, cached as verified evidence, or exported.
+    let catalog = tracker_catalog_for(&state).await;
+    let now = chrono::Utc::now();
+    for item in &mut result.interactions {
+        tracker_catalog::complete(item, &catalog, now);
+    }
     select_daily_tracker_rows(&mut result.interactions);
     let mut cache = state
         .verified_sources
@@ -772,7 +797,7 @@ fn load_cached_day(
     if !path.is_file() {
         return Ok(None);
     }
-    let cached: CachedDayPreview = match std::fs::read(&path)
+    let mut cached: CachedDayPreview = match std::fs::read(&path)
         .ok()
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
     {
@@ -787,6 +812,18 @@ fn load_cached_day(
     };
     if cached.source_mode != state.read_settings()?.source_mode {
         return Ok(None);
+    }
+    // Previews saved by older releases may have blank columns; complete the
+    // rows and their verified copies identically so export checks still match.
+    let catalog = tracker_catalog::cached(&state.config_dir);
+    let now = chrono::Utc::now();
+    for item in cached
+        .result
+        .interactions
+        .iter_mut()
+        .chain(cached.verified_sources.iter_mut())
+    {
+        tracker_catalog::complete(item, &catalog, now);
     }
     let mut verified = state
         .verified_sources
@@ -1015,6 +1052,22 @@ async fn export_configured_tracker(
         ));
     }
     validate_provenance(&state, &interactions)?;
+    let catalog = tracker_catalog_for(&state).await;
+    let now = chrono::Utc::now();
+    let mut interactions = interactions;
+    for item in &mut interactions {
+        tracker_catalog::complete(item, &catalog, now);
+    }
+    if let Some(item) = interactions
+        .iter()
+        .find(|item| item.selected && !tracker_catalog::missing_fields(item).is_empty())
+    {
+        return Err(AppError::Message(format!(
+            "'{}' still has empty columns: {}.",
+            item.evidence_label,
+            tracker_catalog::missing_fields(item).join(", ")
+        )));
+    }
     let result = match destination.kind {
         TrackerDestinationKind::LocalExisting | TrackerDestinationKind::LocalNew => {
             let existing = destination.kind == TrackerDestinationKind::LocalExisting;
@@ -1317,6 +1370,7 @@ pub fn run() {
             load_cached_day,
             save_day_preview,
             export_configured_tracker,
+            get_tracker_catalog,
             open_log_file,
             open_external_url,
             reveal_tracker_folder,
