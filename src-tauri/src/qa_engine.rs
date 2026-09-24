@@ -35,7 +35,9 @@ pub const QA_CONTRACT: &str = "atlas-qa-v1";
 const LIVE_CONTRACT: &str = "atlas-qa-live-v1";
 pub const QA_FOLDERS: [&str; 2] = ["Inbox", "Sent Items"];
 const QUERY_TOP: u32 = 200;
-const QUERIES_PER_REQUEST: usize = 8;
+// The flow answers a full request in about five minutes; 24 windows (a
+// year of Inbox and Sent Items) per request keep the history import short.
+const QUERIES_PER_REQUEST: usize = 24;
 const REQUEST_TIMEOUT_MINUTES: i64 = 25;
 const EVALUATION_BUDGET: Duration = Duration::from_secs(240);
 const MAX_TEXT_CHARS: usize = 20_000;
@@ -438,6 +440,9 @@ struct PendingRequest {
     request_id: String,
     created_at: String,
     windows: BTreeMap<String, QaWindow>,
+    /// Installation that must answer; empty for requests of older releases.
+    #[serde(default)]
+    installation_id: String,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -544,6 +549,9 @@ struct CaseStore {
     /// Workbook weeks that lost a case and must be rewritten.
     #[serde(default)]
     stale_weeks: Vec<StaleWeek>,
+    /// Layout of the workbooks already written (see qa::EXCEL_LAYOUT).
+    #[serde(default)]
+    excel_layout: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -1094,8 +1102,39 @@ fn build_request(
             request_id,
             created_at,
             windows: pending,
+            installation_id: installation_id.into(),
         },
     )
+}
+
+/// Removes answers nobody will read: files of other installations and of
+/// requests that are no longer pending, once they are two days old.
+fn clean_old_answers(root: &Path, installation_id: &str, pending: Option<&PendingRequest>) {
+    let keep = pending.map(|p| format!("atlas-qa-{installation_id}-{}-", p.request_id));
+    let cutoff = std::time::SystemTime::now()
+        .checked_sub(Duration::from_secs(2 * 24 * 3600))
+        .unwrap_or(std::time::UNIX_EPOCH);
+    for dir in [inbox_dir(root), live_dir(root)] {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.starts_with("atlas-qa-") || !name.ends_with(".json") {
+                continue;
+            }
+            if keep.as_deref().is_some_and(|prefix| name.starts_with(prefix)) {
+                continue;
+            }
+            let old = entry
+                .metadata()
+                .and_then(|metadata| metadata.modified())
+                .is_ok_and(|modified| modified < cutoff);
+            if old {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
 }
 
 /// Collects the flow's answer for the pending request, if complete.
@@ -1502,6 +1541,8 @@ async fn evaluate(app: &tauri::AppHandle, state: &AppState, config: &QaConfig) -
 
 fn export_pending(state: &AppState, config: &QaConfig, full: bool) -> Result<QaExportResult> {
     update_cases(state, |store| {
+        // Workbooks written with an older layout are rewritten once.
+        let full = full || store.excel_layout < qa::EXCEL_LAYOUT;
         if full {
             for record in store.cases.values_mut() {
                 record.exported = false;
@@ -1551,6 +1592,7 @@ fn export_pending(state: &AppState, config: &QaConfig, full: bool) -> Result<QaE
             record.exported = true;
         }
         store.stale_weeks.clear();
+        store.excel_layout = qa::EXCEL_LAYOUT;
         Ok(QaExportResult { files, written })
     })
 }
@@ -1607,6 +1649,24 @@ async fn tick_inner(app: &tauri::AppHandle, state: &AppState) -> Result<()> {
                     sync.incremental_requested = true;
                     sync.last_live_signal_at = Some(Utc::now().to_rfc3339());
                 }
+                // A request written for another installation (the QA solution
+                // was installed again) can never be answered by these flows:
+                // ask again right away instead of waiting for the timeout.
+                if let Some(pending) = sync.pending.clone() {
+                    if !pending.installation_id.is_empty()
+                        && pending.installation_id != *installation_id
+                    {
+                        sync.pending = None;
+                        for window in pending.windows.into_values().rev() {
+                            requeue(&mut sync, window);
+                        }
+                        diagnostics::info(
+                            "qa/engine",
+                            "The QA solution was installed again; re-sending the pending mailbox request",
+                        );
+                    }
+                }
+                clean_old_answers(root, installation_id, sync.pending.as_ref());
                 if let Some(pending) = sync.pending.clone() {
                     if let Some(results) = collect_answer(root, installation_id, &pending, &mut store) {
                         sync.pending = None;
@@ -2176,6 +2236,20 @@ mod tests {
         assert_eq!(results[1].1, None);
         assert_eq!(store.messages["m1"].text, "Hello there");
         assert_eq!(fs::read_dir(&inbox).unwrap().flatten().filter(|e| e.path().is_file()).count(), 0);
+    }
+
+    #[test]
+    fn a_request_of_a_previous_installation_is_sent_again_at_once() {
+        let config = QaConfig::default();
+        let sync = SyncState::default();
+        let windows = incremental_windows(date("2026-09-22"), date("2026-09-24"));
+        let (_, pending) = build_request("old-installation", &config, &sync, windows);
+        assert_eq!(pending.installation_id, "old-installation");
+        // Older releases stored no installation id: they are left to the timeout.
+        let legacy: PendingRequest =
+            serde_json::from_str(r#"{"requestId":"qa-1","createdAt":"2026-09-24T00:00:00Z","windows":{}}"#)
+                .unwrap();
+        assert!(legacy.installation_id.is_empty());
     }
 
     #[test]

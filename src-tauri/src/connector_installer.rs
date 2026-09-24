@@ -257,14 +257,7 @@ fn fail(code: &str) -> AppError {
 
 impl Installer {
     pub fn new(directory: PathBuf, template: &'static Template) -> Self {
-        let saved = fs::read(directory.join("session.json"))
-            .ok()
-            .filter(|data| data.len() < 16_384)
-            .and_then(|data| serde_json::from_slice::<Session>(&data).ok())
-            .filter(|s| {
-                uuid::Uuid::parse_str(&s.installation_id).is_ok()
-                    && DateTime::parse_from_rfc3339(&s.started_at).is_ok()
-            });
+        let saved = load_saved_session(&directory, template);
         let (session, migrated) = match saved {
             Some(mut session) if session.solution_version.as_deref() != Some(template.version) => {
                 migrate_session(&mut session, template);
@@ -567,6 +560,62 @@ pub enum Action {
     Reset {},
     /// The user imported the updated ZIP of a completed installation.
     AcknowledgeUpdate {},
+}
+
+/// Reads the saved setup. A file that cannot be used is kept aside and the
+/// reason is logged, so a lost setup (which leads to a second solution in
+/// Power Automate) can always be explained and recovered.
+fn load_saved_session(directory: &Path, template: &Template) -> Option<Session> {
+    let path = directory.join("session.json");
+    let data = match fs::read(&path) {
+        Ok(data) => data,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if directory.exists() {
+                diagnostics::info(
+                    "connector/session",
+                    &format!("{:?}: no saved setup in {}; starting a new one", template.kind, directory.display()),
+                );
+            }
+            return None;
+        }
+        Err(error) => {
+            diagnostics::error(
+                "connector/session",
+                &format!("{:?}: the saved setup could not be read: {error}", template.kind),
+            );
+            return None;
+        }
+    };
+    let problem = if data.len() >= 16_384 {
+        Some("the file is too large".to_string())
+    } else {
+        match serde_json::from_slice::<Session>(&data) {
+            Ok(session)
+                if uuid::Uuid::parse_str(&session.installation_id).is_ok()
+                    && DateTime::parse_from_rfc3339(&session.started_at).is_ok() =>
+            {
+                return Some(session);
+            }
+            Ok(_) => Some("its installation id or start time is invalid".to_string()),
+            Err(error) => Some(error.to_string()),
+        }
+    };
+    let backup = directory.join(format!("session.unreadable-{}.json", uuid::Uuid::new_v4()));
+    let kept = fs::copy(&path, &backup).is_ok();
+    diagnostics::error(
+        "connector/session",
+        &format!(
+            "{:?}: the saved setup was not usable ({}){}; starting a new one",
+            template.kind,
+            problem.unwrap_or_default(),
+            if kept {
+                format!(", a copy was kept at {}", backup.display())
+            } else {
+                String::new()
+            }
+        ),
+    );
+    None
 }
 
 /// A new Atlas release ships a newer solution version. The installation id,
@@ -2161,6 +2210,20 @@ mod tests {
         assert!(!valid_unique_name(&format!("AtlasQA_{}", "x".repeat(43))));
         assert!(!valid_unique_name("1Atlas"));
         assert!(!valid_unique_name("Atlas-QA"));
+    }
+
+    #[test]
+    fn an_unusable_saved_setup_is_kept_aside_not_silently_lost() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("session.json"), b"{ not json").unwrap();
+        let installer = Installer::new(dir.path().to_path_buf(), &QA);
+        assert_eq!(installer.snapshot().unwrap().session.phase, Phase::CheckingRequirements);
+        let kept = fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with("session.unreadable-"))
+            .count();
+        assert_eq!(kept, 1);
     }
 
     #[test]
