@@ -8,7 +8,37 @@ import {
 import { api, formatDateTime } from "./lib";
 import { useT } from "./i18n";
 import LottieIcon from "./LottieIcon";
-import type { QaAuditee, QaCase, QaCaseEntry, QaConfig, QaEngineStatus } from "./types";
+import type { QaAuditee, QaCase, QaCaseEntry, QaConfig, QaEngineStatus, QaMail } from "./types";
+
+/** The whole conversation of a case, every message in full. */
+function ConversationEvidence({ caseId, fallback }: { caseId: string; fallback: QaCaseEntry["evidence"] }) {
+  const t = useT();
+  const [messages, setMessages] = useState<QaMail[]>();
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let active = true;
+    api.qaCaseMessages(caseId)
+      .then(result => { if (active) setMessages(result); })
+      .catch(() => { if (active) setFailed(true); });
+    return () => { active = false; };
+  }, [caseId]);
+  if (failed || (messages && messages.length === 0)) {
+    return <div className="mt-2 space-y-2">{fallback.map((ev, i) => <div key={i} className="rounded-xl border border-ink/8 bg-white p-3"><p className="text-[11px] font-bold text-ink/60">{ev.label}</p><p className="mt-1 whitespace-pre-wrap text-xs leading-5 text-ink/70">{ev.excerpt}</p></div>)}</div>;
+  }
+  if (!messages) return <p className="mt-2 flex items-center gap-2 text-xs text-ink/50"><Loader2 className="h-3.5 w-3.5 animate-spin" />{t("Loading the conversation…")}</p>;
+  return <div className="mt-2 space-y-3">
+    {messages.map(message => <article key={message.id} className="overflow-hidden rounded-xl border border-ink/10 bg-white">
+      <header className="grid grid-cols-[70px_1fr] gap-x-3 gap-y-0.5 border-b border-ink/8 bg-cream/60 px-4 py-2.5 text-[11px]">
+        <span className="font-bold text-ink/45">{t("Date")}</span><span className="text-ink/75">{formatDateTime(message.received)}</span>
+        <span className="font-bold text-ink/45">{t("From")}</span><span className="break-all text-ink/75">{message.from || "—"}</span>
+        <span className="font-bold text-ink/45">{t("To")}</span><span className="break-all text-ink/75">{message.to || "—"}</span>
+        {message.cc && <><span className="font-bold text-ink/45">Cc</span><span className="break-all text-ink/75">{message.cc}</span></>}
+        <span className="font-bold text-ink/45">{t("Subject")}</span><span className="font-bold text-ink/80">{message.subject || "—"}</span>
+      </header>
+      <pre className="max-h-[28rem] overflow-auto whitespace-pre-wrap break-words px-4 py-3 font-sans text-xs leading-5 text-ink/80">{message.text || t("This message has no text.")}</pre>
+    </article>)}
+  </div>;
+}
 
 const YNA = ["Y", "N", "N/A"];
 const SENTIMENTS = ["Positive", "Neutral", "Negative"];
@@ -166,7 +196,7 @@ function CaseCard({ item, onSave, onReevaluate }: { item: QaCaseEntry; onSave: (
       </div>
       {item.evidence.length > 0 && <div className="mt-4">
         <button type="button" onClick={() => setShowEvidence(v => !v)} className="flex items-center gap-2 text-xs font-bold text-pine underline"><Mail className="h-3.5 w-3.5" />{showEvidence ? t("Hide evidence") : t("Show evidence ({count})", { count: item.evidence.length })}</button>
-        {showEvidence && <div className="mt-2 space-y-2">{item.evidence.map((ev, i) => <div key={i} className="rounded-xl border border-ink/8 bg-white p-3"><p className="text-[11px] font-bold text-ink/60">{ev.label}</p><p className="mt-1 text-xs leading-5 text-ink/55">{ev.excerpt}{ev.excerpt.length >= 220 ? "…" : ""}</p></div>)}</div>}
+        {showEvidence && <ConversationEvidence caseId={item.caseId} fallback={item.evidence} />}
       </div>}
       <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
         <label className="flex cursor-pointer items-center gap-2 text-xs font-bold text-ink/60"><input type="checkbox" className="h-4 w-4 accent-[#0f4f45]" checked={draft.selected} onChange={e => void save({ selected: e.target.checked })} />{t("Include in Excel")}</label>

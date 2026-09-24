@@ -464,6 +464,18 @@ pub fn export_analyst(
     for case in cases {
         by_week.entry(case_week(case)).or_default().push(case);
     }
+    if existed {
+        let untouched = book
+            .get_sheet_collection()
+            .iter()
+            .filter(|sheet| !weeks.contains(sheet.get_name()))
+            .count();
+        let refilled = weeks.iter().filter(|week| by_week.contains_key(*week)).count();
+        if untouched == 0 && refilled == 0 {
+            fs::remove_file(&file).context("Unable to remove the empty QA workbook")?;
+            return Ok((file, 0));
+        }
+    }
     let mut written = 0usize;
     let mut first_sheet_of_new_book = !existed;
     for week in weeks {
@@ -626,5 +638,10 @@ mod tests {
         assert_eq!(written, 1);
         let book = umya_spreadsheet::reader::xlsx::read(&file).unwrap();
         assert!(book.get_sheet_by_name("2026-W38").is_some());
+        // Every week lost its cases: the workbook is removed, not left empty.
+        let none: Vec<&QaCase> = Vec::new();
+        let (_, written) = export_analyst(&config, "Ana Test", &none, &weeks).unwrap();
+        assert_eq!(written, 0);
+        assert!(!file.exists());
     }
 }

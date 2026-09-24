@@ -1199,6 +1199,14 @@ fn qa_list_cases(state: tauri::State<'_, AppState>) -> Result<Vec<qa_engine::QaC
 }
 
 #[tauri::command]
+fn qa_case_messages(
+    state: tauri::State<'_, AppState>,
+    case_id: String,
+) -> Result<Vec<qa_engine::QaMail>> {
+    qa_engine::case_messages(&state, &case_id)
+}
+
+#[tauri::command]
 fn qa_update_case(state: tauri::State<'_, AppState>, case: QaCase) -> Result<()> {
     qa_engine::update_case(&state, case)
 }
@@ -1380,6 +1388,7 @@ pub fn run() {
             qa_engine_status,
             qa_list_cases,
             qa_update_case,
+            qa_case_messages,
             qa_reevaluate_case,
             qa_sync_now,
             qa_restart_history,

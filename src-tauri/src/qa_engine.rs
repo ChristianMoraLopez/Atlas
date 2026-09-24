@@ -38,7 +38,7 @@ const QUERY_TOP: u32 = 200;
 const QUERIES_PER_REQUEST: usize = 8;
 const REQUEST_TIMEOUT_MINUTES: i64 = 25;
 const EVALUATION_BUDGET: Duration = Duration::from_secs(240);
-const MAX_TEXT_CHARS: usize = 4000;
+const MAX_TEXT_CHARS: usize = 20_000;
 const MAX_CONVERSATION_MESSAGES: usize = 40;
 const EMPTY_MONTHS_TO_STOP: usize = 6;
 const MIN_HISTORY_MONTHS: u32 = 12;
@@ -328,18 +328,33 @@ pub fn addresses(value: &str) -> Vec<String> {
         .collect()
 }
 
+/// Readable text of a mail body: paragraphs and line breaks are kept so the
+/// manager can read the whole message; spaces inside a line are collapsed.
 pub fn html_to_text(html: &str) -> String {
     static STYLE: OnceLock<Regex> = OnceLock::new();
+    static BREAKS: OnceLock<Regex> = OnceLock::new();
     static TAGS: OnceLock<Regex> = OnceLock::new();
     let style = STYLE.get_or_init(|| {
         Regex::new(r"(?is)<(style|script|head)[^>]*>.*?</(style|script|head)>").expect("valid regex")
     });
+    let breaks = BREAKS.get_or_init(|| {
+        Regex::new(r"(?i)<\s*(br|/p|/div|/tr|/li|/h[1-6]|/table|/blockquote)\b[^>]*>")
+            .expect("valid regex")
+    });
     let tags = TAGS.get_or_init(|| Regex::new(r"(?s)<[^>]*>").expect("valid regex"));
     let without_blocks = style.replace_all(html, " ");
-    html_escape::decode_html_entities(&tags.replace_all(&without_blocks, " "))
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+    let with_breaks = breaks.replace_all(&without_blocks, "\n");
+    let decoded =
+        html_escape::decode_html_entities(&tags.replace_all(&with_breaks, " ")).into_owned();
+    let mut lines: Vec<String> = Vec::new();
+    for line in decoded.lines() {
+        let line = line.split_whitespace().collect::<Vec<_>>().join(" ");
+        if line.is_empty() && lines.last().is_some_and(|last| last.is_empty()) {
+            continue;
+        }
+        lines.push(line);
+    }
+    lines.join("\n").trim().to_string()
 }
 
 fn normalize_message(message: BridgeMessage) -> Option<QaMail> {
@@ -526,6 +541,17 @@ struct CaseStore {
     cases: BTreeMap<String, CaseRecord>,
     #[serde(default)]
     failures: BTreeMap<String, FailureRecord>,
+    /// Workbook weeks that lost a case and must be rewritten.
+    #[serde(default)]
+    stale_weeks: Vec<StaleWeek>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct StaleWeek {
+    analyst_email: String,
+    analyst_name: String,
+    week: String,
 }
 
 fn qa_dir(state: &AppState) -> PathBuf {
@@ -1238,6 +1264,8 @@ fn find_candidates(
     }
     let mut candidates = Vec::new();
     let mut relevant = 0usize;
+    let mut qualifying: HashSet<String> = HashSet::new();
+    let present: HashSet<String> = conversations.keys().cloned().collect();
     for (key, mut messages) in conversations {
         if !messages
             .iter()
@@ -1246,24 +1274,20 @@ fn find_candidates(
             continue;
         }
         messages.sort_by(|a, b| a.received.cmp(&b.received));
-        let participants: HashSet<String> = messages
-            .iter()
-            .flat_map(|m| {
-                addresses(&m.from)
-                    .into_iter()
-                    .chain(addresses(&m.to))
-                    .chain(addresses(&m.cc))
-            })
-            .collect();
+        // A case is a conversation the analyst worked on: they wrote at
+        // least one message. Being a recipient (for example of a QA program
+        // announcement sent to a distribution list) does not make it theirs.
+        let authors: HashSet<String> = messages.iter().flat_map(|m| addresses(&m.from)).collect();
         let print = fingerprint(&messages);
         let last = messages.last().map(|m| m.received.clone()).unwrap_or_default();
         for auditee in &config.auditees {
             let email = auditee.email.trim().to_lowercase();
-            if !participants.contains(&email) {
+            if !authors.contains(&email) {
                 continue;
             }
             relevant += 1;
             let case_id = qa::case_id(&key, &email);
+            qualifying.insert(case_id.clone());
             if let Some(record) = cases.cases.get_mut(&case_id) {
                 if record.fingerprint == print {
                     continue;
@@ -1294,8 +1318,59 @@ fn find_candidates(
             });
         }
     }
+    prune_cases(config, cases, &present, &qualifying);
     candidates.sort_by(|a, b| b.last_message_at.cmp(&a.last_message_at));
     (candidates, relevant)
+}
+
+/// Removes cases whose conversation is in the mail store but no longer
+/// qualifies (the analyst never wrote in it, or the subject no longer
+/// matches). Only analysts still on the list are touched, and a case whose
+/// conversation is missing from the store is kept, so a damaged store can
+/// never wipe the reviews. Exported cases mark their week for a rewrite.
+fn prune_cases(
+    config: &QaConfig,
+    cases: &mut CaseStore,
+    present: &HashSet<String>,
+    qualifying: &HashSet<String>,
+) {
+    let configured: HashSet<String> = config
+        .auditees
+        .iter()
+        .map(|auditee| auditee.email.trim().to_lowercase())
+        .collect();
+    let stale: Vec<String> = cases
+        .cases
+        .iter()
+        .filter(|(id, record)| {
+            configured.contains(&record.case.analyst_email)
+                && present.contains(&record.conversation_id)
+                && !qualifying.contains(*id)
+        })
+        .map(|(id, _)| id.clone())
+        .collect();
+    for id in stale {
+        if let Some(record) = cases.cases.remove(&id) {
+            diagnostics::info(
+                "qa/engine",
+                &format!(
+                    "Removed a QA case that {} did not work on",
+                    record.case.analyst_email
+                ),
+            );
+            if record.exported {
+                let week = StaleWeek {
+                    analyst_email: record.case.analyst_email.clone(),
+                    analyst_name: record.case.analyst_name.clone(),
+                    week: qa::case_week(&record.case),
+                };
+                if !cases.stale_weeks.contains(&week) {
+                    cases.stale_weeks.push(week);
+                }
+            }
+        }
+        cases.failures.remove(&id);
+    }
 }
 
 fn conversation_evidence(candidate: &Candidate) -> qa::ConversationEvidence {
@@ -1439,6 +1514,12 @@ fn export_pending(state: &AppState, config: &QaConfig, full: bool) -> Result<QaE
                 .or_default()
                 .insert(qa::case_week(&record.case));
         }
+        for stale in &store.stale_weeks {
+            dirty
+                .entry(stale.analyst_email.clone())
+                .or_default()
+                .insert(stale.week.clone());
+        }
         let mut files = Vec::new();
         let mut written = 0usize;
         for (email, weeks) in &dirty {
@@ -1454,6 +1535,13 @@ fn export_pending(state: &AppState, config: &QaConfig, full: bool) -> Result<QaE
                 .filter(|r| &r.case.analyst_email == email)
                 .map(|r| r.case.analyst_name.clone())
                 .next_back()
+                .or_else(|| {
+                    store
+                        .stale_weeks
+                        .iter()
+                        .find(|stale| &stale.analyst_email == email)
+                        .map(|stale| stale.analyst_name.clone())
+                })
                 .unwrap_or_else(|| email.clone());
             let (file, rows) = qa::export_analyst(config, &name, &analyst_cases, weeks)?;
             files.push(file.display().to_string());
@@ -1462,6 +1550,7 @@ fn export_pending(state: &AppState, config: &QaConfig, full: bool) -> Result<QaE
         for record in store.cases.values_mut() {
             record.exported = true;
         }
+        store.stale_weeks.clear();
         Ok(QaExportResult { files, written })
     })
 }
@@ -1833,6 +1922,25 @@ pub fn list_cases(state: &AppState) -> Result<Vec<QaCaseEntry>> {
     Ok(entries)
 }
 
+/// Every stored message of the case's conversation, oldest first, with the
+/// complete text so the manager can read the evidence in full.
+pub fn case_messages(state: &AppState, case_id: &str) -> Result<Vec<QaMail>> {
+    let (cases, mail): (CaseStore, MailStore) = with_files(state, || {
+        Ok((load_json(&cases_path(state)), load_json(&mail_path(state))))
+    })?;
+    let record = cases
+        .cases
+        .get(case_id)
+        .ok_or_else(|| AppError::Message("This QA case no longer exists.".into()))?;
+    let mut messages: Vec<QaMail> = mail
+        .messages
+        .into_values()
+        .filter(|message| conversation_key(message) == record.conversation_id)
+        .collect();
+    messages.sort_by(|a, b| a.received.cmp(&b.received));
+    Ok(messages)
+}
+
 pub fn update_case(state: &AppState, mut case: QaCase) -> Result<()> {
     update_cases(state, |store| {
         let record = store
@@ -2098,6 +2206,102 @@ mod tests {
         assert!(write_watch(dir.path(), "inst", &emails).unwrap());
         assert!(!write_watch(dir.path(), "inst", &emails).unwrap());
         assert!(write_watch(dir.path(), "inst", &[]).unwrap());
+    }
+
+    fn sample_case(email: &str) -> QaCase {
+        QaCase {
+            case_id: String::new(),
+            analyst_name: "Ana".into(),
+            analyst_email: email.into(),
+            audit_date: "2026-09-23".into(),
+            request_id: "QA/CX Success Audit Onboarding".into(),
+            request_date: "2026-06-30".into(),
+            request_source: "Email".into(),
+            initial_response: "Y".into(),
+            initial_response_notes: String::new(),
+            customer_sentiment: "Neutral".into(),
+            customer_sentiment_notes: String::new(),
+            adherence: "N/A".into(),
+            adherence_notes: String::new(),
+            status: "Y".into(),
+            status_notes: String::new(),
+            update_follow_up: "N/A".into(),
+            update_follow_up_notes: String::new(),
+            auto_fail: "none".into(),
+            evidence: Vec::new(),
+            selected: true,
+            reviewed: true,
+            new_evidence: false,
+        }
+    }
+
+    #[test]
+    fn announcements_the_analyst_only_received_are_not_cases() {
+        let config = QaConfig {
+            auditees: vec![QaAuditee {
+                name: "Ana".into(),
+                email: "ana@example.com".into(),
+                custom_rules: String::new(),
+                watched: true,
+                historical_done: true,
+            }],
+            ..QaConfig::default()
+        };
+        let mut mail = MailStore::default();
+        mail.messages.insert(
+            "m9".into(),
+            QaMail {
+                id: "m9".into(),
+                conversation_id: "c9".into(),
+                subject: "Support Team | Circana | QA/ CX Success Audit Onboarding".into(),
+                received: "2026-06-30T20:49:00+00:00".into(),
+                from: "Laura.Isaza@Circana.com".into(),
+                to: "Support Team <support-team@example.com>; Ana <ana@example.com>".into(),
+                cc: String::new(),
+                text: "Hi team, welcome to the QA/CX Success audit cycle.".into(),
+                has_attachments: false,
+            },
+        );
+        let mut cases = CaseStore::default();
+        // A case an older release created because Ana was only a recipient.
+        let wrong = qa::case_id("c9", "ana@example.com");
+        // A reviewed case whose conversation is not in the local store stays.
+        let unknown = qa::case_id("c-missing", "ana@example.com");
+        for (id, conversation) in [(&wrong, "c9"), (&unknown, "c-missing")] {
+            cases.cases.insert(
+                id.clone(),
+                CaseRecord {
+                    case: sample_case("ana@example.com"),
+                    fingerprint: "old".into(),
+                    conversation_id: conversation.into(),
+                    exported: true,
+                    evaluated_at: String::new(),
+                    last_message_at: String::new(),
+                },
+            );
+        }
+        let (candidates, relevant) = find_candidates(&config, &mail, &mut cases);
+        assert!(candidates.is_empty());
+        assert_eq!(relevant, 0);
+        assert!(!cases.cases.contains_key(&wrong));
+        assert!(cases.cases.contains_key(&unknown));
+        // Its Excel week is rewritten without it.
+        assert_eq!(
+            cases.stale_weeks,
+            vec![StaleWeek {
+                analyst_email: "ana@example.com".into(),
+                analyst_name: "Ana".into(),
+                week: qa::case_week(&sample_case("ana@example.com")),
+            }]
+        );
+    }
+
+    #[test]
+    fn mail_bodies_keep_their_paragraphs() {
+        let text = html_to_text(
+            "<div>Hi team,</div><div><br></div><p>Line  one<br/>Line two</p><style>x{}</style>",
+        );
+        assert_eq!(text, "Hi team,\n\nLine one\nLine two");
     }
 
     #[test]
