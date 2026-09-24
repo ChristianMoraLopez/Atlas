@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AiPromptInfo, AppRole, AppStatus, AutomationMode, ExportResult, ExtractionResult, InstallerSnapshot, Interaction, QaCase, QaCaseEntry, QaConfig, QaEngineStatus, QaExportResult, TrackerDestination, UserProfile } from "./types";
+import type { AiPromptInfo, AppRole, AppStatus, AutomationMode, ExportResult, ExtractionResult, InstallerSnapshot, Interaction, TrackerCatalog, QaCase, QaCaseEntry, QaConfig, QaEngineStatus, QaExportResult, TrackerDestination, UserProfile } from "./types";
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   try {
@@ -37,6 +37,7 @@ export const api = {
   backgroundReady: () => call<void>("background_frontend_ready"),
   logError: (context: string, message: string) => invoke<void>("log_frontend_error", { context, message }),
   saveQaBridgeFolder: (folder: string) => call<AppStatus>("save_qa_bridge_folder", { folder }),
+  trackerCatalog: () => call<TrackerCatalog>("get_tracker_catalog"),
   openLog: () => call<void>("open_log_file"),
   openExternal: (url: string) => call<void>("open_external_url", { url }),
   revealTracker: () => call<void>("reveal_tracker_folder"),

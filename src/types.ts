@@ -79,17 +79,17 @@ export interface AppStatus {
 export interface Interaction {
   sourceKind: SourceKind;
   sourceId: string;
-  interactionType: "Meeting" | "E-Mail" | "Task";
+  interactionType: string;
   receptionDateTime: string;
   interactionDateTime: string;
   resolutionDateTime?: string;
-  clientType: "Circana" | "End_Client" | "Capgemini" | "";
+  clientType: string;
   endClient: string;
-  status: "Resolved" | "In Progress";
-  resolutionType: "Processed & Resolved" | "";
+  status: string;
+  resolutionType: string;
   category: string;
   subcategory: string;
-  priority: "Low" | "Intermediate" | "High";
+  priority: string;
   incidentNumber: string;
   comments: string;
   selected: boolean;
@@ -97,6 +97,17 @@ export interface Interaction {
   manualAuthored: boolean;
   aiSuggested: boolean;
   evidenceLabel: string;
+}
+
+export interface TrackerCatalog {
+  interactions: string[];
+  clientTypes: string[];
+  clients: Record<string, string[]>;
+  categories: { name: string; subcategories: string[] }[];
+  resolutionTypes: string[];
+  statuses: string[];
+  priorities: string[];
+  source: "workbook" | "default";
 }
 
 export interface ExtractionResult {
