@@ -914,6 +914,50 @@ fn normalized_evidence(value: &str) -> String {
 fn looks_like_reminder_or_notice(value: &str) -> bool {
     let clean = normalized_evidence(value);
     let padded = format!(" {clean} ");
+    // Social chatter and pure "an email/message arrived" notices. The 1.5B model
+    // keeps emitting these as tasks even though the core prompt excludes them, so
+    // they are dropped here deterministically instead of relying on the model.
+    const SOCIAL_OR_INFO: &[&str] = &[
+        " ooo ",
+        " greets ",
+        " greeted ",
+        " greeting ",
+        " greetings ",
+        " thanks ",
+        " thanked ",
+        " thank you ",
+        " congratulates ",
+        " congratulated ",
+        " congratulating ",
+        " compliments ",
+        " complimented ",
+        " good job ",
+        " well done ",
+        " good day ",
+        " happy friday ",
+        " received email ",
+        " received an email ",
+        " receives an email ",
+        " receiving an email ",
+        " received a message ",
+        " received an invitation ",
+        " sent an email ",
+        " sends an email ",
+    ];
+    if SOCIAL_OR_INFO.iter().any(|phrase| padded.contains(phrase)) {
+        return true;
+    }
+    // "Read/Receive ... email" or "... notice" that merely names a message.
+    let names_a_message =
+        clean.ends_with(" email") || clean.ends_with(" notice") || clean.ends_with(" invitation");
+    let passive_verb = [" read ", " receive ", " received ", " receiving ", " receipt of "]
+        .iter()
+        .any(|verb| padded.contains(verb))
+        || clean.starts_with("read ")
+        || clean.starts_with("receive");
+    if names_a_message && passive_verb {
+        return true;
+    }
     [
         "remember ",
         "reminder ",
@@ -1331,6 +1375,41 @@ mod tests {
         let mut notice = candidate("Review the daily notification");
         notice.reminder_or_notice = true;
         assert!(!candidate_is_work_task(&notice, &[&message]));
+    }
+
+    #[test]
+    fn social_chatter_and_bare_email_notices_are_not_tasks() {
+        for value in [
+            "Navneet OOO",
+            "Christian Mora greets and thanks the team for a job well done.",
+            "Sergio Mora greets Christian Mora and thanks him for a good day.",
+            "Received email from TetraPak regarding a canceled tech check.",
+            "Read Analysis Builder Training for Client Users email.",
+            "Receive Receipt Panel Restatement Updates email.",
+            "Receiving Canceled Shark Tank Pre-Finale Tech Check Notice",
+        ] {
+            let message = evidence(value);
+            assert!(
+                !candidate_is_work_task(&candidate(value), &[&message]),
+                "should drop: {value}"
+            );
+        }
+    }
+
+    #[test]
+    fn concrete_work_survives_the_chatter_filter() {
+        for value in [
+            "Christian Mora reviews and re-runs autoQC issues.",
+            "Analyzing Item Level Brand Value Coding Change Report for US Country",
+            "Christian Mora found additional items not in the facial wipes section.",
+            "Process 38.0 TSV and Integrated Fresh attribute processing.",
+        ] {
+            let message = evidence(value);
+            assert!(
+                candidate_is_work_task(&candidate(value), &[&message]),
+                "should keep: {value}"
+            );
+        }
     }
 
     #[test]
