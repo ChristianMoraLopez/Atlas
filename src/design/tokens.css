@@ -23,8 +23,10 @@
 
   --atlas-font-display: "Fraunces Variable", Georgia, "Times New Roman", serif;
   --atlas-font-ui: "Instrument Sans Variable", "Segoe UI", system-ui, sans-serif;
+  /* Survey notation: times, coordinates, sheet numbers. */
+  --atlas-font-mono: "JetBrains Mono Variable", Consolas, ui-monospace, monospace;
 
-  --atlas-radius-sheet: 1.35rem;
+  --atlas-radius-sheet: .55rem;
   --atlas-ease-out: cubic-bezier(.22, .8, .3, 1);
   --atlas-shadow-sheet: 0 1px 0 rgb(255 255 255 / .8) inset, 0 24px 60px -28px rgb(var(--atlas-ink) / .28);
 }

@@ -1,0 +1,160 @@
+@use "mixins" as *;
+
+.masthead {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  padding: .85rem 2rem;
+  border-bottom: 1px solid c(ink, .12);
+  background:
+    linear-gradient(c(paper, .86), c(paper, .86)),
+    repeating-linear-gradient(90deg, c(ink, .06) 0 1px, transparent 1px 64px);
+  backdrop-filter: blur(16px) saturate(1.2);
+
+  // A fine double rule under the title block, as on a printed sheet.
+  &::after {
+    content: "";
+    position: absolute;
+    inset: auto 0 -4px;
+    height: 3px;
+    border-bottom: 1px solid c(ink, .08);
+    pointer-events: none;
+  }
+}
+
+.inner {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2rem;
+  max-width: 1540px;
+  margin: 0 auto;
+}
+
+.identity { display: flex; align-items: center; gap: 1rem; }
+
+.source {
+  display: grid;
+  justify-self: end;
+  max-width: 30rem;
+  padding-left: 1rem;
+  border-left: 1px solid c(ink, .15);
+  text-align: left;
+}
+
+.sourceTitle { @include survey-label(.56rem, .2em); color: c(accent); }
+
+.sourceDetail {
+  overflow: hidden;
+  margin-top: .2rem;
+  font-family: var(--atlas-font-mono);
+  font-size: .66rem;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: c(ink, .5);
+}
+
+.instruments {
+  display: flex;
+  align-items: center;
+  gap: .35rem;
+  padding: .3rem;
+  border: 1px solid c(ink, .14);
+  border-radius: .7rem;
+  background: c(surface, .8);
+  box-shadow: 0 1px 0 #fff inset, 0 8px 20px -16px c(ink, .5);
+}
+
+.group {
+  display: flex;
+  gap: .2rem;
+  padding-left: .4rem;
+  margin-left: .2rem;
+  border-left: 1px solid c(ink, .12);
+}
+
+.tool {
+  display: grid;
+  place-items: center;
+  min-width: 2.15rem;
+  height: 2.15rem;
+  padding: 0 .45rem;
+  border: 0;
+  border-radius: .5rem;
+  background: transparent;
+  color: c(ink, .72);
+  cursor: pointer;
+  transition: background .18s ease, color .18s ease;
+
+  svg { width: 1rem; height: 1rem; }
+
+  &:hover { background: c(accent-soft, .8); color: c(accent-deep); }
+  &[data-danger]:hover { background: #fde8e6; color: #b42318; }
+  &[data-state="open"] { background: c(accent-soft); }
+}
+
+.lang { font-family: var(--atlas-font-mono); font-size: .68rem; font-weight: 700; letter-spacing: .08em; }
+
+.swatch {
+  display: block;
+  width: .95rem;
+  height: .95rem;
+  border-radius: 999px;
+  background: var(--swatch, c(accent));
+  box-shadow: 0 0 0 2px c(surface), 0 0 0 3px c(ink, .2);
+
+  &[data-option="pine"] { --swatch: rgb(15 79 69); }
+  &[data-option="terracotta"] { --swatch: rgb(160 70 42); }
+  &[data-option="indigo"] { --swatch: rgb(44 62 138); }
+  &[data-option="graphite"] { --swatch: rgb(46 52 56); }
+}
+
+.tooltip {
+  z-index: 60;
+  padding: .35rem .55rem;
+  border-radius: .35rem;
+  font-size: .7rem;
+  font-weight: 600;
+  color: #f4efe2;
+  background: c(night);
+  box-shadow: 0 10px 24px -12px c(ink, .6);
+  animation: tip-in .16s var(--atlas-ease-out);
+}
+.tooltipArrow { fill: c(night); }
+
+.inks {
+  z-index: 60;
+  width: 13rem;
+  padding: .7rem;
+  border: 1px solid c(ink, .18);
+  border-radius: .6rem;
+  background: c(surface);
+  box-shadow: 0 22px 48px -24px c(ink, .55);
+  animation: tip-in .18s var(--atlas-ease-out);
+}
+
+.inksTitle { margin: 0 0 .5rem; @include survey-label(.55rem, .22em); color: c(ink, .5); }
+.inksGrid { display: grid; gap: .2rem; }
+
+.ink {
+  display: flex;
+  align-items: center;
+  gap: .65rem;
+  padding: .45rem .5rem;
+  border: 0;
+  border-radius: .4rem;
+  background: transparent;
+  font-size: .78rem;
+  text-align: left;
+  color: c(ink, .8);
+  cursor: pointer;
+
+  &:hover { background: c(paper); }
+  &[aria-checked="true"] { background: c(accent-soft, .7); font-weight: 700; }
+}
+
+@keyframes tip-in {
+  from { opacity: 0; transform: translateY(-3px); }
+}
+
+@include reduced-motion { .tooltip, .inks { animation: none; } }

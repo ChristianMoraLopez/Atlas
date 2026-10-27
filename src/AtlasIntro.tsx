@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useT } from "./i18n";
 
 export default function AtlasIntro({ children }: { children: ReactNode }) {
   const t = useT();
   const [leaving, setLeaving] = useState(false);
   const [finished, setFinished] = useState(false);
+  const app = useRef<HTMLDivElement>(null);
+  // inert (not only aria-hidden) keeps keyboard focus out of the app behind the intro.
+  useEffect(() => { app.current?.toggleAttribute("inert", !finished); }, [finished]);
   const close = useCallback(() => {
     setLeaving(true);
     window.setTimeout(() => setFinished(true), 420);
@@ -19,7 +22,7 @@ export default function AtlasIntro({ children }: { children: ReactNode }) {
   }, [close]);
 
   return <>
-    <div className={finished ? "" : "pointer-events-none select-none"} aria-hidden={!finished}>{children}</div>
+    <div ref={app} className={finished ? "" : "pointer-events-none select-none"} aria-hidden={!finished}>{children}</div>
     {!finished && <section className={`atlas-intro ${leaving ? "atlas-intro--leaving" : ""}`} aria-label={t("Atlas is starting")}>
       <div className="atlas-intro__glow atlas-intro__glow--one" />
       <div className="atlas-intro__glow atlas-intro__glow--two" />

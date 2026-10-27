@@ -19,13 +19,18 @@ button:active:not(:disabled) { transform: translateY(1px); }
 button:disabled { opacity: .48; cursor: not-allowed; }
 
 @layer components {
-  .card { @apply rounded-[var(--atlas-radius-sheet)] border border-white/70 bg-sheet/85 shadow-panel backdrop-blur-sm; }
-  .label { @apply mb-1.5 block text-[11px] font-bold uppercase tracking-[0.16em] text-ink/55; }
-  .field { @apply w-full rounded-xl border border-ink/10 bg-white px-3 py-2.5 text-sm outline-none ring-pine/15 transition focus:border-pine/40 focus:ring-4; }
-  .btn-primary { @apply inline-flex items-center justify-center gap-2 rounded-xl bg-pine px-4 py-2.5 text-sm font-bold text-white shadow-[0_10px_24px_-14px_rgb(var(--atlas-accent)/.9)] hover:bg-pine-deep; }
-  .btn-secondary { @apply inline-flex items-center justify-center gap-2 rounded-xl border border-ink/10 bg-white px-4 py-2.5 text-sm font-bold text-ink hover:bg-cream; }
+  /* Sheets of survey paper: square-ish corners, a fine ink rule, a soft drop. */
+  .card { @apply rounded-[var(--atlas-radius-sheet)] border border-ink/[.12] bg-sheet/90 shadow-panel backdrop-blur-sm; }
+  .label { @apply mb-1.5 block font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-ink/55; }
+  .field { @apply w-full rounded-md border border-ink/[.16] bg-white px-3 py-2.5 text-sm outline-none ring-pine/15 transition focus:border-pine/50 focus:ring-4; }
+  .btn-primary { @apply relative inline-flex items-center justify-center gap-2 overflow-hidden rounded-md bg-pine px-4 py-2.5 text-sm font-bold text-white shadow-[0_1px_0_rgb(255_255_255/.18)_inset,0_10px_24px_-14px_rgb(var(--atlas-accent)/.9)] hover:bg-pine-deep; }
+  .btn-secondary { @apply inline-flex items-center justify-center gap-2 rounded-md border border-ink/[.16] bg-white px-4 py-2.5 text-sm font-bold text-ink hover:border-ink/30 hover:bg-cream; }
   .chip { @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold; }
 }
+
+/* The primary action leaves a moving survey line under the cursor's path. */
+.btn-primary::after { content: ""; position: absolute; inset: auto 0 0; height: 2px; background: linear-gradient(90deg, transparent, rgb(var(--atlas-glow)), transparent); transform: translateX(-100%); transition: transform .6s var(--atlas-ease-out); }
+.btn-primary:hover:not(:disabled)::after { transform: translateX(100%); }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { border: 3px solid transparent; background: rgb(var(--atlas-accent) / .25); background-clip: padding-box; border-radius: 99px; }

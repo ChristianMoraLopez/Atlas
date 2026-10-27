@@ -1,0 +1,366 @@
+@use "mixins" as *;
+
+/* ---- Seal -------------------------------------------------------------- */
+
+.sealRow { display: flex; align-items: center; gap: .8rem; }
+
+.seal {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: c(surface);
+  box-shadow: 0 0 0 1px c(accent, .22), 0 0 0 4px c(surface), 0 0 0 5px c(brass, .45);
+}
+
+.sealMap { position: absolute; inset: 0; }
+
+.sealInitials {
+  position: relative;
+  font-family: var(--atlas-font-display);
+  font-size: 1.05rem;
+  font-style: italic;
+  font-weight: 600;
+  color: c(accent-deep);
+  text-shadow: 0 0 6px c(surface), 0 0 2px c(surface);
+}
+
+.sealWord { display: block; font-family: var(--atlas-font-display); font-size: 1.15rem; line-height: 1; }
+.sealCaption { display: block; margin-top: .35rem; @include survey-label(.56rem, .22em); color: c(ink, .45); }
+
+/* ---- Survey sheet (day hero) ------------------------------------------ */
+
+$frame: 14px;
+
+.sheet {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  gap: 1.3rem;
+  margin-bottom: 1.75rem;
+  padding: calc(#{$frame} + 1.6rem) calc(#{$frame} + 1.9rem) calc(#{$frame} + 1rem);
+  overflow: hidden;
+  border-radius: .5rem;
+  background:
+    linear-gradient(100deg, c(surface) 24%, c(surface, .7) 56%, c(accent-soft, .5)),
+    c(surface);
+  box-shadow: 0 0 0 1px c(ink, .1), var(--atlas-shadow-sheet);
+}
+
+.sheetMap {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  mask-image: linear-gradient(90deg, transparent 6%, #000 60%);
+}
+
+// Classic map border: alternating bars between two fine rules.
+.neatline {
+  position: absolute;
+  inset: 8px;
+  z-index: 1;
+  pointer-events: none;
+  border: 1px solid c(ink, .55);
+
+  &::before {
+    content: "";
+    position: absolute;
+    inset: 4px;
+    border: 4px solid transparent;
+    border-image: repeating-linear-gradient(90deg, c(ink, .55) 0 46px, transparent 46px 92px) 4;
+    outline: 1px solid c(ink, .3);
+  }
+}
+
+.gridRefs {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  justify-content: space-around;
+  @include survey-label(.5rem, .1em);
+  color: c(ink, .4);
+  pointer-events: none;
+}
+.gridRefsTop { inset: 17px 2.5rem auto; }
+.gridRefsSide { inset: 2.5rem auto 2.5rem 17px; flex-direction: column; }
+
+.sheetHead { display: flex; align-items: flex-start; justify-content: space-between; gap: 2rem; }
+.titleBlock { max-width: 46rem; }
+
+.eyebrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .4rem .9rem;
+  margin: 0;
+  @include survey-label(.62rem, .18em);
+  color: c(accent);
+}
+
+.sheetCode {
+  padding: .22rem .5rem;
+  border: 1px solid c(ink, .55);
+  color: c(ink, .8);
+  background: c(surface);
+}
+
+.date { color: c(ink, .5); }
+
+.greeting {
+  margin: .7rem 0 0;
+  font-family: var(--atlas-font-display);
+  font-size: clamp(2.4rem, 3.5vw, 3.3rem);
+  font-weight: 400;
+  line-height: 1.02;
+  font-variation-settings: "opsz" 144, "SOFT" 80, "WONK" 1;
+
+  span { display: inline-block; will-change: transform; }
+  em { font-style: italic; color: c(accent); }
+}
+
+.compassWrap { display: block; flex-shrink: 0; margin: -.2rem .2rem 0 0; }
+.compass { width: 4.4rem; height: 4.4rem; overflow: visible; }
+.compassRing { fill: c(surface, .7); stroke: c(ink, .45); stroke-width: 1; }
+.compassRingFine { fill: none; stroke: c(ink, .25); stroke-width: .6; stroke-dasharray: 1.4 2.2; }
+.compassNeedleBack { fill: c(surface); stroke: c(ink, .55); stroke-width: .8; stroke-linejoin: round; }
+.compassNeedle { fill: c(signal); }
+.compassCross { fill: c(ink, .18); }
+.compassNorth { font-family: var(--atlas-font-mono); font-size: 6px; font-weight: 700; fill: c(ink, .7); }
+
+/* Legend ----------------------------------------------------------------- */
+
+.legendRow { display: flex; flex-wrap: wrap; align-items: stretch; gap: .9rem; }
+
+.legend {
+  display: flex;
+  align-items: stretch;
+  margin: 0;
+  border: 1px solid c(ink, .5);
+  background: c(surface, .88);
+  box-shadow: 3px 3px 0 c(ink, .08);
+}
+
+.legendTitle {
+  display: grid;
+  place-items: center;
+  padding: 0 .7rem;
+  border-right: 1px solid c(ink, .5);
+  @include survey-label(.55rem, .24em);
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  color: c(ink, .6);
+}
+
+.legendItem {
+  @include source-tones;
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  margin: 0;
+  padding: .55rem .9rem;
+  color: rgb(var(--tone));
+  transition: opacity .25s ease;
+  animation: settle .45s calc(.3s + var(--i, 0) * .06s) var(--atlas-ease-out) both;
+
+  & + & { border-left: 1px dashed c(ink, .18); }
+  &[data-empty] { opacity: .38; }
+}
+
+.legendLabel { font-size: .74rem; font-weight: 600; color: c(ink, .72); }
+.legendCount { min-width: 1.2ch; font-family: var(--atlas-font-mono); font-size: 1rem; font-variant-numeric: tabular-nums; color: rgb(var(--tone)); }
+
+.tally { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; }
+
+/* Route ------------------------------------------------------------------ */
+
+.route { padding: .2rem 0 1.1rem; }
+.lanes { position: relative; display: grid; grid-template-columns: 1.4rem 1fr; height: 7.2rem; }
+
+.laneLabel {
+  @include source-tones;
+  position: absolute;
+  left: 0;
+  transform: translateY(-50%);
+  color: rgb(var(--tone) / .55);
+  line-height: 0;
+}
+
+.field { position: relative; grid-column: 2; }
+
+.lane {
+  position: absolute;
+  inset-inline: 0;
+  height: 1px;
+  background-image: linear-gradient(90deg, c(ink, .2) 40%, transparent 40%);
+  background-size: 6px 1px;
+}
+
+.tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: linear-gradient(c(ink, .1), c(ink, .04));
+
+  span {
+    position: absolute;
+    bottom: -1.25rem;
+    left: 50%;
+    transform: translateX(-50%);
+    font-family: var(--atlas-font-mono);
+    font-size: .58rem;
+    letter-spacing: .04em;
+    color: c(ink, .42);
+  }
+}
+
+.trail {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+
+  path {
+    fill: none;
+    stroke: c(signal, .85);
+    stroke-width: 2;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+    stroke-dasharray: 1;
+    vector-effect: non-scaling-stroke;
+  }
+}
+
+.waypoint {
+  @include source-tones;
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  margin: -.75rem 0 0 -.75rem;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: c(surface);
+  box-shadow: 0 0 0 1px rgb(var(--tone) / .35), 0 6px 14px -8px rgb(var(--tone));
+  color: rgb(var(--tone));
+  cursor: pointer;
+  transition: transform .2s var(--atlas-ease-out), box-shadow .2s ease;
+  // Individual "scale" so the drop-in never fights the hover transform.
+  animation: drop .5s calc(.45s + var(--i, 0) * .07s) cubic-bezier(.2, 1.4, .4, 1) both;
+
+  &[data-off] { opacity: .55; }
+
+  &:hover, &[data-focus] {
+    z-index: 3;
+    transform: scale(1.3);
+    box-shadow: 0 0 0 2px rgb(var(--tone)), 0 0 0 7px rgb(var(--tone) / .14);
+  }
+}
+
+.waypointNumber {
+  position: absolute;
+  bottom: calc(100% + .1rem);
+  font-family: var(--atlas-font-mono);
+  font-size: .55rem;
+  font-weight: 700;
+  color: c(ink, .6);
+  pointer-events: none;
+}
+
+.scale {
+  margin: .4rem 0 0;
+  font-size: .68rem;
+  color: c(ink, .42);
+}
+
+/* ---- Summits (daily minimum) ------------------------------------------- */
+
+.summits {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  padding: 1.3rem 1.3rem 1.4rem;
+  border-radius: .5rem;
+  color: #f4efe2;
+  background: c(night);
+  box-shadow: 0 0 0 1px c(glow, .14) inset;
+}
+
+.summitsMap { position: absolute; inset: 0; z-index: -1; opacity: .9; }
+.summitsEyebrow { margin: 0; @include survey-label(.58rem, .24em); color: c(glow); }
+.summitsChart { display: block; width: 100%; height: auto; margin-top: 1rem; overflow: visible; }
+.summitsGround { stroke: c(glow, .35); stroke-width: 1; stroke-dasharray: 3 4; }
+
+.summit {
+  path:first-child { fill: c(glow, .06); stroke: c(glow, .45); stroke-width: 1.2; stroke-linejoin: round; transition: fill .5s ease, stroke .5s ease; }
+  .summitFlag { fill: transparent; transition: fill .4s .2s ease; }
+
+  &[data-reached] {
+    path:first-child { fill: c(glow, .3); stroke: c(glow); }
+    .summitFlag { fill: c(signal); }
+  }
+}
+
+.summitsCount {
+  margin: .9rem 0 0;
+  font-family: var(--atlas-font-mono);
+  font-size: .8rem;
+  color: #f4efe2b3;
+
+  b { font-family: var(--atlas-font-display); font-size: 2rem; font-weight: 400; color: #fff; }
+}
+
+.summitsCopy { margin: .4rem 0 0; font-size: .72rem; line-height: 1.55; color: #f4efe28c; }
+
+@keyframes drop { from { scale: 0; opacity: 0; } }
+@keyframes settle { from { translate: -8px 0; opacity: 0; } }
+
+@include reduced-motion {
+  .waypoint, .legendItem { animation: none; }
+}
+
+/* ---- Blank sheet (empty preview) -------------------------------------- */
+
+.blank {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  justify-items: center;
+  min-height: 17rem;
+  padding: 3rem 2rem;
+  overflow: hidden;
+  border: 1px dashed c(ink, .25);
+  border-radius: var(--atlas-radius-sheet);
+  background: c(surface, .7);
+  text-align: center;
+}
+
+.blankMap { position: absolute; inset: 0; z-index: -1; opacity: .35; mask-image: radial-gradient(circle at 50% 45%, #000 10%, transparent 75%); }
+
+.blankRoute {
+  width: 15rem;
+  overflow: visible;
+
+  path {
+    fill: none;
+    stroke: c(signal);
+    stroke-width: 2;
+    stroke-dasharray: .018 .018;
+    stroke-linecap: round;
+    animation: march 1.6s linear infinite;
+  }
+  circle { fill: c(surface); stroke: c(ink, .6); stroke-width: 1.4; }
+  text { font-family: var(--atlas-font-display); font-size: 11px; font-style: italic; fill: c(signal); }
+}
+
+.blankTitle { margin: 1.4rem 0 0; font-family: var(--atlas-font-display); font-size: 1.5rem; font-weight: 400; }
+.blankDetail { max-width: 24rem; margin: .5rem 0 0; font-size: .76rem; line-height: 1.6; color: c(ink, .5); }
+
+@keyframes march { to { stroke-dashoffset: -.036; } }
+@include reduced-motion { .blankRoute path { animation: none; } }

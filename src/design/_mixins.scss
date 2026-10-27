@@ -1,0 +1,25 @@
+// Shared Sass helpers for the Atlas design modules.
+
+@function c($token, $alpha: 1) {
+  @return rgb(var(--atlas-#{$token}) / $alpha);
+}
+
+// Small caps label used for eyebrows, legends and sheet codes.
+@mixin survey-label($size: .62rem, $track: .2em) {
+  font-family: var(--atlas-font-mono);
+  font-size: $size;
+  font-weight: 600;
+  letter-spacing: $track;
+  text-transform: uppercase;
+}
+
+@mixin source-tones {
+  &[data-source="calendar"] { --tone: var(--atlas-calendar); }
+  &[data-source="email"] { --tone: var(--atlas-mail); }
+  &[data-source="teams_chat"] { --tone: var(--atlas-teams); }
+  &[data-source="manual"] { --tone: var(--atlas-accent); }
+}
+
+@mixin reduced-motion {
+  @media (prefers-reduced-motion: reduce) { @content; }
+}

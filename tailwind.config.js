@@ -20,7 +20,8 @@ export default {
       },
       fontFamily: {
         sans: ["Instrument Sans Variable", "Segoe UI", "system-ui", "sans-serif"],
-        display: ["Fraunces Variable", "Georgia", "Cambria", "serif"]
+        display: ["Fraunces Variable", "Georgia", "Cambria", "serif"],
+        mono: ["JetBrains Mono Variable", "Consolas", "ui-monospace", "monospace"]
       },
       boxShadow: { panel: "var(--atlas-shadow-sheet)" }
     }

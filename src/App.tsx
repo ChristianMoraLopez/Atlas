@@ -6,7 +6,12 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import { AnimatePresence, motion } from "motion/react";
 import TopoMap from "./design/TopoMap";
-import { AccentPicker, DayHero, PersonalSeal } from "./design/Personal";
+import { BlankSheet, DayHero, Summits } from "./design/Personal";
+import { Emblem } from "./design/Emblem";
+import { Masthead, type Tool } from "./design/Masthead";
+import { SourceSwitch } from "./design/Controls";
+import { RouteFocusProvider, SourceMark, useRouteFocus, useWaypointNumbers } from "./design/route";
+import logbook from "./design/Logbook.module.scss";
 import { seedFrom } from "./design/identity";
 import {
   AlertCircle, ArrowRight, Bot, CalendarDays, CalendarRange, Check, ChevronDown, Cloud, Columns3,
@@ -182,12 +187,8 @@ function DestinationSetupScreen({ initial, initialAutoSync, initialAutoSyncTime,
   </main>;
 }
 
-function Toggle({ checked, onChange, label, detail, icon }: { checked: boolean; onChange: (v: boolean) => void; label: string; detail: string; icon: React.ReactNode }) {
-  return <button type="button" onClick={() => onChange(!checked)} className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left ${checked ? "border-pine/25 bg-mint/55" : "border-ink/10 bg-white"}`}>
-    <span className={`grid h-9 w-9 place-items-center rounded-lg ${checked ? "bg-pine text-white" : "bg-cream text-ink/45"}`}>{icon}</span>
-    <span className="flex-1"><span className="block text-sm font-bold">{label}</span><span className="block text-[11px] text-ink/45">{detail}</span></span>
-    <span className={`relative h-5 w-9 rounded-full ${checked ? "bg-pine" : "bg-ink/15"}`}><span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${checked ? "left-[18px]" : "left-0.5"}`} /></span>
-  </button>;
+function Toggle(props: { checked: boolean; onChange: (v: boolean) => void; label: string; detail: string; icon: React.ReactNode }) {
+  return <SourceSwitch {...props} />;
 }
 
 function SourceBadge({ item }: { item: Interaction }) {
@@ -197,9 +198,9 @@ function SourceBadge({ item }: { item: Interaction }) {
   return <span className={`chip ${styles}`}><Icon className="h-3 w-3" />{item.sourceKind === "teams_chat" ? (item.aiSuggested ? t("AI summary") : t("Teams evidence")) : t(item.sourceKind.replace("_", " "))}</span>;
 }
 
-function SelectCell({ value, options, onChange }: { value: string; options: string[]; onChange: (v: string) => void }) {
+function SelectCell({ value, options, onChange, label }: { value: string; options: string[]; onChange: (v: string) => void; label?: string }) {
   const choices = options.includes(value) || !value ? options : [value, ...options];
-  return <div className="relative"><select className={`w-full appearance-none bg-transparent py-1 pr-5 text-xs outline-none ${value ? "" : "text-red-600"}`} value={value} onChange={e => onChange(e.target.value)}>{choices.map(x => <option key={x} value={x}>{x.trim()}</option>)}</select><ChevronDown className="pointer-events-none absolute right-0 top-1.5 h-3 w-3 text-ink/35" /></div>;
+  return <div className="relative"><select aria-label={label} className={`w-full appearance-none bg-transparent py-1 pr-5 text-xs outline-none ${value ? "" : "text-red-600"}`} value={value} onChange={e => onChange(e.target.value)}>{choices.map(x => <option key={x} value={x}>{x.trim()}</option>)}</select><ChevronDown className="pointer-events-none absolute right-0 top-1.5 h-3 w-3 text-ink/35" /></div>;
 }
 
 type ColumnKey = "source" | "type" | "start" | "end" | "status" | "clientType" | "endClient" | "category" | "subcategory" | "priority" | "incident" | "comments";
@@ -235,6 +236,8 @@ function InteractionTable({ items, setItems, catalog }: { items: Interaction[]; 
   const subcategories = (category: string) => catalog?.categories.find(entry => entry.name === category)?.subcategories ?? [];
   const clientsFor = (clientType: string) => catalog?.clients[clientType] ?? [];
   const set = (index: number, patch: Partial<Interaction>) => setItems(old => old.map((v, i) => i === index ? { ...v, ...patch } : v));
+  const numbers = useWaypointNumbers(items);
+  const { focused, setFocused } = useRouteFocus();
   const removeManual = (index: number) => setItems(old => old.filter((_, i) => i !== index));
   // Hidden columns, search and filters only change this preview; the export always writes the full tracker format.
   const [hidden, setHidden] = useState<ColumnKey[]>(readHiddenColumns);
@@ -273,11 +276,11 @@ function InteractionTable({ items, setItems, catalog }: { items: Interaction[]; 
         {query && <button type="button" className="text-ink/35 hover:text-ink" title={t("Clear search")} onClick={() => setQuery("")}><X className="h-3.5 w-3.5" /></button>}
       </label>
       <div className="flex rounded-lg border border-ink/10 p-0.5" role="group" aria-label={t("Source")}>
-        {SOURCE_FILTERS.map(option => <button key={option.kind} type="button" onClick={() => setSource(option.kind)} className={`rounded-md px-2.5 py-1.5 text-[11px] font-bold ${source === option.kind ? "bg-pine text-white" : "text-ink/55 hover:bg-cream"}`}>{t(option.label)}</button>)}
+        {SOURCE_FILTERS.map(option => <button key={option.kind} type="button" onClick={() => setSource(option.kind)} className={`rounded-md px-2.5 py-1.5 text-[11px] font-bold ${source === option.kind ? "bg-pine text-white" : "text-ink/75 hover:bg-cream"}`}>{t(option.label)}</button>)}
       </div>
       <label className="relative flex items-center gap-1 rounded-lg border border-ink/10 px-2.5 py-1.5 text-[11px] font-bold text-ink/60">
         <ListFilter className="h-3.5 w-3.5" />
-        <select className="appearance-none bg-transparent pr-4 outline-none" value={rowFilter} onChange={e => setRowFilter(e.target.value as RowFilter)}>{ROW_FILTERS.map(option => <option key={option.value} value={option.value}>{t(option.label)}</option>)}</select>
+        <select aria-label={t("Every row")} className="appearance-none bg-transparent pr-4 outline-none" value={rowFilter} onChange={e => setRowFilter(e.target.value as RowFilter)}>{ROW_FILTERS.map(option => <option key={option.value} value={option.value}>{t(option.label)}</option>)}</select>
         <ChevronDown className="pointer-events-none absolute right-2 h-3 w-3 text-ink/35" />
       </label>
       <div className="relative">
@@ -299,7 +302,7 @@ function InteractionTable({ items, setItems, catalog }: { items: Interaction[]; 
     </div>
     <div className="overflow-auto">
     <table className="w-full border-collapse text-left" style={{ minWidth: `${560 + COLUMNS.filter(column => shown(column.key)).length * 72}px` }}>
-      <thead className="sticky top-0 z-10 bg-[#f2f4ef] text-[10px] font-extrabold uppercase tracking-[.13em] text-ink/45"><tr>
+      <thead className="sticky top-0 z-10 border-b border-ink/15 bg-cream font-mono text-[10px] font-semibold uppercase tracking-[.14em] text-ink/70"><tr>
         <th className="w-12 px-3 py-3"><input type="checkbox" className="h-4 w-4 accent-pine" title={t("Select the rows shown")} disabled={!visible.length} checked={allVisibleSelected} onChange={e => selectVisible(e.target.checked)} /></th>
         <th className="min-w-[260px] px-3 py-3">{t("Description")}</th>
         {COLUMNS.filter(column => shown(column.key)).map(column => <th key={column.key} className={`px-3 py-3 ${column.className ?? ""}`}>{t(column.label)}</th>)}
@@ -309,25 +312,31 @@ function InteractionTable({ items, setItems, catalog }: { items: Interaction[]; 
       {visible.map(({ item, index: i }) => {
         const fullyEditable = item.sourceKind === "manual" || item.aiSuggested;
         const { title, note } = rowDescription(item);
-        return <tr key={item.sourceId} className={`${item.selected ? "" : "opacity-50"} align-top hover:bg-cream/35`}>
-          <td className="px-3 py-3"><input type="checkbox" className="h-4 w-4 accent-pine" checked={item.selected} onChange={e => set(i, { selected: e.target.checked, reviewed: e.target.checked ? true : item.reviewed })} /></td>
-          <td className="max-w-[340px] px-3 py-3">
-            {item.aiSuggested ? <input className="block w-full bg-transparent text-xs font-bold outline-none" value={item.evidenceLabel} onChange={e => set(i, { evidenceLabel: e.target.value })} /> : <p className="truncate text-xs font-bold" title={title}>{title || "—"}</p>}
-            {note && <p className="mt-0.5 line-clamp-2 text-[11px] leading-4 text-ink/50" title={note}>{note}</p>}
+        const number = numbers.get(item.sourceId);
+        return <tr key={item.sourceId} id={`row-${item.sourceId}`} data-focus={focused === item.sourceId || undefined} onMouseEnter={() => setFocused(item.sourceId)} onMouseLeave={() => setFocused(undefined)} className={`${logbook.row} ${item.selected ? "" : logbook.off} align-top hover:bg-cream/35`}>
+          <td className="px-3 py-3"><input type="checkbox" aria-label={t("Use")} className="h-4 w-4 accent-pine" checked={item.selected} onChange={e => set(i, { selected: e.target.checked, reviewed: e.target.checked ? true : item.reviewed })} /></td>
+          <td className="max-w-[360px] px-3 py-3">
+            <div className="flex items-start gap-2.5">
+            {number && <span className={logbook.waypoint} data-source={item.sourceKind}><SourceMark kind={item.sourceKind} size={9} hollow={!item.selected} />{String(number).padStart(2, "0")}</span>}
+            <div className="min-w-0 flex-1">
+            {item.aiSuggested ? <input aria-label={t("Description")} className="block w-full bg-transparent text-xs font-bold outline-none" value={item.evidenceLabel} onChange={e => set(i, { evidenceLabel: e.target.value })} /> : <p className="truncate text-xs font-bold" title={title}>{title || "—"}</p>}
+            {note && <p className="mt-0.5 line-clamp-2 text-[11px] leading-4 text-ink/65" title={note}>{note}</p>}
             {!shown("source") && <div className="mt-1"><SourceBadge item={item} /></div>}
+            </div>
+            </div>
           </td>
           {shown("source") && <td className="whitespace-nowrap px-3 py-3"><SourceBadge item={item} /></td>}
-          {shown("type") && <td className="px-3 py-3">{fullyEditable ? <SelectCell value={item.interactionType} options={catalog?.interactions ?? ["Meeting", "Task"]} onChange={v => set(i, { interactionType: v })} /> : <span className="text-xs">{item.interactionType}</span>}</td>}
-          {shown("start") && <td className="px-3 py-3">{fullyEditable ? <input type="datetime-local" className="w-[155px] bg-transparent text-xs outline-none" value={toLocalInput(item.interactionDateTime)} onChange={e => set(i, { interactionDateTime: fromLocalInput(e.target.value), receptionDateTime: fromLocalInput(e.target.value) })} /> : <span className="whitespace-nowrap text-xs">{new Date(item.interactionDateTime).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>}</td>}
-          {shown("end") && <td className="px-3 py-3">{fullyEditable ? <input type="datetime-local" className="w-[155px] bg-transparent text-xs outline-none" value={toLocalInput(item.resolutionDateTime)} onChange={e => set(i, { resolutionDateTime: fromLocalInput(e.target.value) })} /> : <span className="whitespace-nowrap text-xs">{item.resolutionDateTime ? new Date(item.resolutionDateTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"}</span>}</td>}
+          {shown("type") && <td className="px-3 py-3">{fullyEditable ? <SelectCell label={t("Type")} value={item.interactionType} options={catalog?.interactions ?? ["Meeting", "Task"]} onChange={v => set(i, { interactionType: v })} /> : <span className="text-xs">{item.interactionType}</span>}</td>}
+          {shown("start") && <td className="px-3 py-3">{fullyEditable ? <input type="datetime-local" aria-label={t("Start")} className="w-[155px] bg-transparent text-xs outline-none" value={toLocalInput(item.interactionDateTime)} onChange={e => set(i, { interactionDateTime: fromLocalInput(e.target.value), receptionDateTime: fromLocalInput(e.target.value) })} /> : <span className={logbook.time}>{new Date(item.interactionDateTime).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>}</td>}
+          {shown("end") && <td className="px-3 py-3">{fullyEditable ? <input type="datetime-local" aria-label={t("End")} className="w-[155px] bg-transparent text-xs outline-none" value={toLocalInput(item.resolutionDateTime)} onChange={e => set(i, { resolutionDateTime: fromLocalInput(e.target.value) })} /> : <span className={logbook.time}>{item.resolutionDateTime ? new Date(item.resolutionDateTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"}</span>}</td>}
           {shown("status") && <td className="whitespace-nowrap px-3 py-3"><span className={`chip ${item.status === "Resolved" ? "bg-mint text-pine" : "bg-[#fff0df] text-[#9a5a1e]"}`}>{item.status}</span></td>}
-          {shown("clientType") && <td className="px-3 py-3">{fullyEditable ? <SelectCell value={item.clientType} options={catalog?.clientTypes ?? ["Circana", "End_Client", "Capgemini", "Others"]} onChange={v => set(i, { clientType: v, endClient: clientsFor(v)[0] ?? v })} /> : <span className="text-xs">{item.clientType || "—"}</span>}</td>}
-          {shown("endClient") && <td className="px-3 py-3">{fullyEditable && clientsFor(item.clientType).length ? <SelectCell value={item.endClient} options={clientsFor(item.clientType)} onChange={v => set(i, { endClient: v })} /> : <span className="text-xs">{item.endClient || "—"}</span>}</td>}
-          {shown("category") && <td className="w-32 px-3 py-3">{catalog ? <SelectCell value={item.category} options={catalog.categories.map(entry => entry.name)} onChange={v => set(i, { category: v, subcategory: subcategories(v)[0] ?? v })} /> : <input className="w-28 bg-transparent text-xs outline-none" value={item.category} onChange={e => set(i, { category: e.target.value })} />}</td>}
-          {shown("subcategory") && <td className="w-40 px-3 py-3">{catalog ? <SelectCell value={item.subcategory} options={subcategories(item.category)} onChange={v => set(i, { subcategory: v })} /> : <input className="w-28 bg-transparent text-xs outline-none" value={item.subcategory} onChange={e => set(i, { subcategory: e.target.value })} />}</td>}
-          {shown("priority") && <td className="px-3 py-3"><SelectCell value={item.priority} options={catalog?.priorities ?? ["Low", "Intermediate", "High"]} onChange={v => set(i, { priority: v })} /></td>}
-          {shown("incident") && <td className="px-3 py-3"><input className="w-24 bg-transparent text-xs outline-none" placeholder="N/A" value={item.incidentNumber} onChange={e => set(i, { incidentNumber: e.target.value || "N/A" })} /></td>}
-          {shown("comments") && <td className="px-3 py-3"><textarea rows={2} className="w-full resize-none bg-transparent text-xs leading-5 outline-none" placeholder={t("Add a factual note")} value={item.comments} onChange={e => set(i, { comments: e.target.value })} /></td>}
+          {shown("clientType") && <td className="px-3 py-3">{fullyEditable ? <SelectCell label={t("Client type")} value={item.clientType} options={catalog?.clientTypes ?? ["Circana", "End_Client", "Capgemini", "Others"]} onChange={v => set(i, { clientType: v, endClient: clientsFor(v)[0] ?? v })} /> : <span className="text-xs">{item.clientType || "—"}</span>}</td>}
+          {shown("endClient") && <td className="px-3 py-3">{fullyEditable && clientsFor(item.clientType).length ? <SelectCell label={t("End client")} value={item.endClient} options={clientsFor(item.clientType)} onChange={v => set(i, { endClient: v })} /> : <span className="text-xs">{item.endClient || "—"}</span>}</td>}
+          {shown("category") && <td className="w-32 px-3 py-3">{catalog ? <SelectCell label={t("Category")} value={item.category} options={catalog.categories.map(entry => entry.name)} onChange={v => set(i, { category: v, subcategory: subcategories(v)[0] ?? v })} /> : <input className="w-28 bg-transparent text-xs outline-none" value={item.category} onChange={e => set(i, { category: e.target.value })} />}</td>}
+          {shown("subcategory") && <td className="w-40 px-3 py-3">{catalog ? <SelectCell label={t("Subcategory")} value={item.subcategory} options={subcategories(item.category)} onChange={v => set(i, { subcategory: v })} /> : <input className="w-28 bg-transparent text-xs outline-none" value={item.subcategory} onChange={e => set(i, { subcategory: e.target.value })} />}</td>}
+          {shown("priority") && <td className="px-3 py-3"><SelectCell label={t("Priority")} value={item.priority} options={catalog?.priorities ?? ["Low", "Intermediate", "High"]} onChange={v => set(i, { priority: v })} /></td>}
+          {shown("incident") && <td className="px-3 py-3"><input aria-label={t("Incident")} className="w-24 bg-transparent text-xs outline-none" placeholder="N/A" value={item.incidentNumber} onChange={e => set(i, { incidentNumber: e.target.value || "N/A" })} /></td>}
+          {shown("comments") && <td className="px-3 py-3"><textarea rows={2} aria-label={t("Comments")} className="w-full resize-none bg-transparent text-xs leading-5 outline-none" placeholder={t("Add a factual note")} value={item.comments} onChange={e => set(i, { comments: e.target.value })} /></td>}
           <td className="px-2 py-3">{item.sourceKind === "manual" && <button title={t("Remove manual entry")} onClick={() => removeManual(i)} className="rounded-md p-1 text-ink/35 hover:bg-red-50 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>}</td>
         </tr>;
       })}
@@ -363,9 +372,9 @@ function ExportPanel({ destination, autoSync, autoSyncTime, automationMode, brid
   const t = useT();
   const isRemote = destination.kind === "share_point" || destination.kind === "share_point_flow";
   const writerFlow = destination.kind === "share_point_flow";
-  return <aside className="card h-fit p-5"><div className="flex items-start justify-between"><div><p className="text-xs font-bold uppercase tracking-[.16em] text-pine">{t("Tracker")}</p><h3 className="mt-2 font-display text-2xl">{t("Configured once")}</h3></div><span className={`grid h-9 w-9 place-items-center rounded-xl ${isRemote ? "bg-[#e7f0ff] text-[#315f9e]" : "bg-mint text-pine"}`}>{isRemote ? <Cloud className="h-4 w-4" /> : <FileSpreadsheet className="h-4 w-4" />}</span></div>
+  return <aside className="card h-fit p-5"><div className="flex items-start justify-between"><div><p className="label mb-0 text-pine">{t("Destination")} · {t("Tracker")}</p><h3 className="mt-2 font-display text-[1.45rem] leading-tight">{t("Configured once")}</h3></div><span className={`grid h-9 w-9 place-items-center rounded-xl ${isRemote ? "bg-[#e7f0ff] text-[#315f9e]" : "bg-mint text-pine"}`}>{isRemote ? <Cloud className="h-4 w-4" /> : <FileSpreadsheet className="h-4 w-4" />}</span></div>
     <p className="mt-3 text-xs leading-5 text-ink/45">{t("Only selected, verified rows are written. Existing macros, formulas, and other worksheets are preserved.")}</p>
-    <p className="mt-4 line-clamp-4 break-all rounded-xl bg-cream p-3 text-[10px] leading-4 text-ink/55">{destination.value}</p>
+    <p className="mt-4 line-clamp-4 break-all border-l-2 border-brass/60 bg-cream/70 py-2.5 pl-3 pr-2 font-mono text-[10px] leading-4 text-ink/60">{destination.value}</p>
     {writerFlow && <div className="mt-3 rounded-xl border border-pine/15 bg-mint/35 p-3"><b className="text-xs">{t("Import connector 2 once")}</b><p className="mt-1 text-[10px] leading-4 text-ink/50">{t("Map OneDrive, SharePoint and Excel connections, then leave the flow active.")}</p><div className="mt-3 flex gap-2"><button className="btn-secondary flex-1 px-3 py-2 text-[10px]" onClick={() => void api.showWriterPackage().catch(failure => window.alert(String(failure)))}><FolderOpen className="h-3 w-3" />{t("Show ZIP")}</button><button className="btn-secondary flex-1 px-3 py-2 text-[10px]" onClick={() => void api.openPowerAutomate().catch(failure => window.alert(String(failure)))}><ExternalLink className="h-3 w-3" />{t("Import")}</button></div></div>}
     <div className="mt-3 flex items-center justify-between"><span className={`chip ${autoSync ? "bg-mint text-pine" : "bg-cream text-ink/50"}`}>{autoSync ? (automationMode === "startup_previous_workday" ? t("Previous day · startup or 09:30") : `Daily · ${autoSyncTime}`) : t("Automatic run off")}</span><button className="text-[11px] font-bold text-pine hover:underline" onClick={onEdit}>{t("Change setup")}</button></div>
     <button className="btn-primary mt-5 w-full" onClick={onSync} disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}{bridgeMode ? t("Import today’s inbox") : t("Sync today’s calendar")}</button>
@@ -590,22 +599,34 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
       .catch(error => api.logError("background-listener", String(error)));
     return () => { disposed = true; unlistenBackground?.(); };
   }, []);
-  return <div className="min-h-screen" aria-busy={busy}>
-    <header className="sticky top-0 z-30 border-b border-white/70 bg-cream/80 px-8 py-4 backdrop-blur-xl"><div className="mx-auto flex max-w-[1540px] items-center justify-between"><PersonalSeal name={profile.fullName} caption={t("Interaction tracker")} /><div className="flex items-center gap-2"><div className="mr-3 max-w-xs text-right"><p className="text-xs font-bold">{bridgeMode ? t("Power Automate Inbox") : status.account?.displayName}</p><p className="truncate text-[10px] text-ink/40">{bridgeMode ? status.bridgeFolder : status.account?.email}</p></div><AccentPicker /><button title={t("Switch language")} className="rounded-xl border border-ink/10 bg-white px-2.5 py-2.5 text-[11px] font-extrabold tracking-wide hover:bg-mint" onClick={() => void switchLanguage()}>{lang === "es" ? "ES" : "EN"}</button><button title={t("Tracker destination")} className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={editDestination}><FileSpreadsheet className="h-4 w-4" /></button><button title={t("Open failure log")} className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={() => void api.openLog().catch(failure => setError(String(failure)))}><FileText className="h-4 w-4" /></button><button title={t("Data source")} className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={editMicrosoft}>{bridgeMode ? <Inbox className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}</button><button title={t("Change role")} className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={() => void exitRole()}><Home className="h-4 w-4" /></button><button title={t("Profile settings")} className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={() => setEditingProfile(true)}><Settings className="h-4 w-4" /></button>{!bridgeMode && <button title={t("Sign out")} className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-red-50 hover:text-red-600" onClick={signOut}><LogOut className="h-4 w-4" /></button>}</div></div></header>
+  const tools: Tool[][] = [
+    [
+      { label: t("Tracker destination"), icon: <FileSpreadsheet />, onClick: editDestination },
+      { label: t("Data source"), icon: bridgeMode ? <Inbox /> : <ShieldCheck />, onClick: editMicrosoft },
+      { label: t("Open failure log"), icon: <FileText />, onClick: () => void api.openLog().catch(failure => setError(String(failure))) },
+    ],
+    [
+      { label: t("Profile settings"), icon: <Settings />, onClick: () => setEditingProfile(true) },
+      { label: t("Change role"), icon: <Home />, onClick: () => void exitRole() },
+      ...(!bridgeMode ? [{ label: t("Sign out"), icon: <LogOut />, onClick: () => void signOut(), danger: true }] : []),
+    ],
+  ];
+  return <RouteFocusProvider><div className="min-h-screen" aria-busy={busy}>
+    <Masthead name={profile.fullName} caption={t("Interaction tracker")} sourceTitle={bridgeMode ? t("Power Automate Inbox") : status.account?.displayName} sourceDetail={bridgeMode ? status.bridgeFolder : status.account?.email} groups={tools} onLanguage={() => void switchLanguage()} />
     <main className="mx-auto max-w-[1540px] px-8 py-8">
       {status.connectorUpdateAvailable && <SolutionUpdateBanner role="cs" onDone={refreshStatus} />}
       <div className="grid grid-cols-[minmax(0,1fr)_290px] gap-6">
         <section className="min-w-0">
           <DayHero name={profile.fullName} date={date} items={items}><span className="mx-1 h-4 w-px bg-ink/15" /><span className="chip bg-white text-ink/55"><Inbox className="h-3 w-3" />{t("{count} found", { count: counts.all })}</span><span className="chip bg-mint text-pine"><Check className="h-3 w-3" />{t("{count} selected", { count: counts.selected })}</span>{counts.review > 0 && <span className="chip bg-[#fff0df] text-[#9a5a1e]">{t("{count} to review", { count: counts.review })}</span>}</DayHero>
-          <div className="card rise rise-1 p-5"><div className="grid grid-cols-[220px_1fr_1fr_auto] items-end gap-4 max-[1360px]:grid-cols-[200px_1fr_1fr]"><div><div className="mb-1.5 flex items-center justify-between"><span className="label mb-0">{rangeEnd ? t("First day") : t("Workday")}</span><button type="button" disabled={busy} className="flex items-center gap-1 text-[11px] font-bold text-pine hover:underline" onClick={() => setRangeEnd(rangeEnd ? undefined : date)}><CalendarRange className="h-3 w-3" />{rangeEnd ? t("One day") : t("Several days")}</button></div><input type="date" max={localDate()} className="field" value={date} disabled={busy} onChange={e => { if (e.target.value) openDay(e.target.value); }} />{rangeEnd && <label className="mt-2 block"><span className="label">{t("Last day")}</span><input type="date" min={date} max={localDate()} className="field" value={rangeEnd} disabled={busy} onChange={e => setRangeEnd(e.target.value)} /></label>}</div><Toggle checked={includeEmail} onChange={setIncludeEmail} label={t("Infer from mail")} detail={t("Work tasks, without inbox noise")} icon={<Mail className="h-4 w-4" />} /><Toggle checked={includeTeams} onChange={changeTeams} label={t("Infer from Teams")} detail={t("Separate task for each activity")} icon={<Bot className="h-4 w-4" />} /><button className="btn-primary h-[46px] px-5 max-[1360px]:col-span-3 max-[1360px]:justify-self-end" disabled={busy || ((includeEmail || includeTeams) && (!status.ollamaRunning || !status.ollamaModelAvailable))} onClick={() => void (rangeEnd ? importRange() : extract())}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : rangeEnd ? <CalendarRange className="h-4 w-4" /> : <RefreshCw className="h-4 w-4" />}{rangeEnd ? t("Import {count} workdays", { count: rangeDays.length }) : bridgeMode ? t("Import selected day") : t("Extract selected day")}</button></div>
+          <div className="card rise rise-1 p-5"><div className="grid grid-cols-[220px_1fr_1fr_auto] items-end gap-4 max-[1360px]:grid-cols-[200px_1fr_1fr]"><div><div className="mb-1.5 flex items-center justify-between"><span className="label mb-0">{rangeEnd ? t("First day") : t("Workday")}</span><button type="button" disabled={busy} className="flex items-center gap-1 text-[11px] font-bold text-pine hover:underline" onClick={() => setRangeEnd(rangeEnd ? undefined : date)}><CalendarRange className="h-3 w-3" />{rangeEnd ? t("One day") : t("Several days")}</button></div><input type="date" aria-label={rangeEnd ? t("First day") : t("Workday")} max={localDate()} className="field" value={date} disabled={busy} onChange={e => { if (e.target.value) openDay(e.target.value); }} />{rangeEnd && <label className="mt-2 block"><span className="label">{t("Last day")}</span><input type="date" aria-label={t("Last day")} min={date} max={localDate()} className="field" value={rangeEnd} disabled={busy} onChange={e => setRangeEnd(e.target.value)} /></label>}</div><Toggle checked={includeEmail} onChange={setIncludeEmail} label={t("Infer from mail")} detail={t("Work tasks, without inbox noise")} icon={<Mail className="h-4 w-4" />} /><Toggle checked={includeTeams} onChange={changeTeams} label={t("Infer from Teams")} detail={t("Separate task for each activity")} icon={<Bot className="h-4 w-4" />} /><button className="btn-primary h-[46px] px-5 max-[1360px]:col-span-3 max-[1360px]:justify-self-end" disabled={busy || ((includeEmail || includeTeams) && (!status.ollamaRunning || !status.ollamaModelAvailable))} onClick={() => void (rangeEnd ? importRange() : extract())}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : rangeEnd ? <CalendarRange className="h-4 w-4" /> : <RefreshCw className="h-4 w-4" />}{rangeEnd ? t("Import {count} workdays", { count: rangeDays.length }) : bridgeMode ? t("Import selected day") : t("Extract selected day")}</button></div>
             {status.ollamaRunning && status.ollamaModelAvailable && <button type="button" onClick={() => setAiPanel(true)} title={t("View AI prompt")} className="mt-4 flex w-full items-center gap-3 rounded-xl border border-pine/15 bg-mint/55 px-4 py-3 text-left text-xs text-pine hover:bg-mint"><Bot className="h-5 w-5" /><span className="flex-1"><b>{t("Atlas Local AI is ready.")}</b> {t("Mail and Teams evidence stay on this computer and are interpreted by")} <code>{status.ollamaModel}</code>.</span><span className="shrink-0 font-bold underline">{t("View prompt")}</span></button>}
             {(!status.ollamaRunning || !status.ollamaModelAvailable) && <div role="button" tabIndex={0} onClick={() => setAiPanel(true)} onKeyDown={e => { if (e.key === "Enter") setAiPanel(true); }} title={t("View AI prompt")} className="mt-4 flex cursor-pointer items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-800"><Bot className="h-5 w-5" /><span className="flex-1"><b>{t("Bundled Local AI could not start.")}</b> {status.localAiError ?? t("Run the Atlas installer again to repair it.")}</span><button className="font-bold underline" onClick={e => { e.stopPropagation(); void recheckLocalAi(); }}>{t("Recheck")}</button></div>}
           </div>
           {error && <div className="mt-5"><ErrorBanner message={error} onClose={() => setError("")} /></div>}{syncNotice && <div className="mt-5 flex items-center gap-3 rounded-xl border border-pine/15 bg-mint/55 px-4 py-3 text-sm text-pine"><Check className="h-4 w-4" />{syncNotice}</div>}{warnings.map((w, i) => <div className="mt-3" key={i}><ErrorBanner message={w} /></div>)}
-          <div className="rise rise-2 mt-6 flex items-center justify-between"><div><h2 className="font-display text-2xl">{t("Preview")}</h2><p className="mt-1 text-xs text-ink/45">{t("Atlas selects finished meetings and concrete work tasks, including tasks still in progress. Reminders and automatic notices stay out.")}</p></div><button className="btn-secondary" onClick={() => setManual(true)}><Plus className="h-4 w-4" />{t("Add manual task")}</button></div>
-          <div className="mt-4">{items.length ? <InteractionTable items={items} setItems={setItems} catalog={catalog} /> : <div className="card rise rise-3 grid min-h-64 place-items-center p-10 text-center"><div><div className="lottie-frame mx-auto h-32 w-32"><LottieIcon name="analytics" className="h-28 w-28" /></div><h3 className="mt-4 font-display text-xl">{bridgeMode ? t("Choose a day and import") : t("Choose a day and extract")}</h3><p className="mt-2 max-w-sm text-xs leading-5 text-ink/45">{t("Atlas shows only interactions backed by your calendar, selected mail, chat evidence, or details you type manually.")}</p></div></div>}</div>
+          <div className="rise rise-2 mt-8 flex items-end justify-between border-t border-ink/15 pt-5"><div><p className="label mb-1 text-pine">{t("Logbook")}</p><h2 className="font-display text-[1.9rem] leading-none">{t("Preview")}</h2><p className="mt-1 text-xs text-ink/45">{t("Atlas selects finished meetings and concrete work tasks, including tasks still in progress. Reminders and automatic notices stay out.")}</p></div><button className="btn-secondary" onClick={() => setManual(true)}><Plus className="h-4 w-4" />{t("Add manual task")}</button></div>
+          <div className="mt-4">{items.length ? <InteractionTable items={items} setItems={setItems} catalog={catalog} /> : <BlankSheet name={profile.fullName} title={bridgeMode ? t("Choose a day and import") : t("Choose a day and extract")} detail={t("Atlas shows only interactions backed by your calendar, selected mail, chat evidence, or details you type manually.")} />}</div>
         </section>
-        <div className="space-y-5"><ExportPanel destination={destination} autoSync={status.autoSync} autoSyncTime={status.autoSyncTime} automationMode={status.automationMode} bridgeMode={bridgeMode} items={items} busy={busy} onSave={saveSelected} onSync={() => void syncCalendar(false)} onEdit={editDestination} /><aside className="rounded-2xl bg-night p-5 text-white"><ShieldCheck className="h-5 w-5 text-glow" /><h3 className="mt-4 font-display text-xl">{t("Daily minimum: 3")}</h3><p className="mt-2 text-xs leading-5 text-white/55">{t("Atlas always saves the real activities found. If there are fewer than three, it opens the app so you can add the missing ones.")}</p></aside></div>
+        <div className="space-y-5"><ExportPanel destination={destination} autoSync={status.autoSync} autoSyncTime={status.autoSyncTime} automationMode={status.automationMode} bridgeMode={bridgeMode} items={items} busy={busy} onSave={saveSelected} onSync={() => void syncCalendar(false)} onEdit={editDestination} /><Summits selected={counts.selected} /></div>
       </div>
     </main>
     {aiPanel && <AiTransparencyModal onClose={() => setAiPanel(false)} onSaved={refreshStatus} />}
@@ -614,7 +635,7 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
     {success && <SuccessModal result={success} onClose={() => setSuccess(undefined)} />}
     {rangeReport && <RangeReportModal days={rangeReport.days} stopped={rangeReport.stopped} onClose={() => setRangeReport(undefined)} onOpenDay={day => { setRangeReport(undefined); setRangeEnd(undefined); openDay(day); }} />}
     <AtlasLoader show={busy} message={workStatus?.message ?? t("Atlas is working")} detail={rangeStopping ? t("Stopping after the current day…") : workStatus?.detail} action={rangeRunning && !rangeStopping ? { label: t("Stop after this day"), onClick: () => { stopRange.current = true; setRangeStopping(true); } } : undefined} />
-  </div>;
+  </div></RouteFocusProvider>;
 }
 
 function RoleScreen({ onChoose, busy, error }: { onChoose: (role: AppRole) => void; busy: boolean; error: string }) {
@@ -628,7 +649,7 @@ function RoleScreen({ onChoose, busy, error }: { onChoose: (role: AppRole) => vo
   const card = (role: AppRole, lottie: LottieName, eyebrow: string, title: string, detail: string, installs: string[], rhythm: string, delay: string) => (
     <button disabled={busy} onClick={() => onChoose(role)}
       className={`card card-lift group flex flex-col items-start gap-4 p-7 text-left rise ${delay} disabled:opacity-60`}>
-      <span className="lottie-frame h-28 w-28 self-center"><LottieIcon name={lottie} className="h-24 w-24" /></span>
+      <Emblem role={role} />
       <span className="text-[10px] font-bold uppercase tracking-[.2em] text-pine">{eyebrow}</span>
       <span className="-mt-2 font-display text-2xl">{title}</span>
       <span className="text-sm leading-6 text-ink/55">{detail}</span>
@@ -667,7 +688,11 @@ function ManagerWorkspace({ status, refreshStatus, signOut, exitRole }: { status
     try { await api.saveLanguage(next); } catch (failure) { void api.logError("save-language", String(failure)); }
   };
   return <div className="min-h-screen">
-    <header className="sticky top-0 z-30 border-b border-white/70 bg-cream/80 px-8 py-4 backdrop-blur-xl"><div className="mx-auto flex max-w-[1540px] items-center justify-between"><div className="flex items-center gap-4"><PersonalSeal name={status.solutionOwner ?? status.profile?.fullName ?? "Atlas"} caption={t("Interaction tracker")} /><span className="chip bg-night text-glow">{t("QA · Manager")}</span></div><div className="flex items-center gap-2"><AccentPicker /><div className="mr-3 max-w-xs text-right"><p className="text-xs font-bold">{bridgeMode ? (status.solutionOwner ?? t("Power Automate QA")) : status.account?.displayName}</p><p className="truncate text-[10px] text-ink/40">{bridgeMode ? status.qaBridgeFolder : status.account?.email}</p></div><button title={t("Switch language")} className="rounded-xl border border-ink/10 bg-white px-2.5 py-2.5 text-[11px] font-extrabold tracking-wide hover:bg-mint" onClick={() => void switchLanguage()}>{lang === "es" ? "ES" : "EN"}</button><button title={t("Open failure log")} className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={() => void api.openLog().catch(failure => setError(String(failure)))}><FileText className="h-4 w-4" /></button><button title={t("Change role")} className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-mint" onClick={() => void exitRole()}><Home className="h-4 w-4" /></button>{!bridgeMode && <button title={t("Sign out")} className="rounded-xl border border-ink/10 bg-white p-2.5 hover:bg-red-50 hover:text-red-600" onClick={signOut}><LogOut className="h-4 w-4" /></button>}</div></div></header>
+    <Masthead name={status.solutionOwner ?? status.profile?.fullName ?? "Atlas"} caption={t("Interaction tracker")} badge={<span className="chip bg-night text-glow">{t("QA · Manager")}</span>} sourceTitle={bridgeMode ? (status.solutionOwner ?? t("Power Automate QA")) : status.account?.displayName} sourceDetail={bridgeMode ? status.qaBridgeFolder : status.account?.email} onLanguage={() => void switchLanguage()} groups={[[
+      { label: t("Open failure log"), icon: <FileText />, onClick: () => void api.openLog().catch(failure => setError(String(failure))) },
+      { label: t("Change role"), icon: <Home />, onClick: () => void exitRole() },
+      ...(!bridgeMode ? [{ label: t("Sign out"), icon: <LogOut />, onClick: () => void signOut(), danger: true }] : []),
+    ]]} />
     <main className="mx-auto max-w-[1540px] px-8 py-8">{status.connectorUpdateAvailable && <SolutionUpdateBanner role="manager" onDone={refreshStatus} />}{error && <div className="mb-5"><ErrorBanner message={error} onClose={() => setError("")} /></div>}<QaPanel /></main>
   </div>;
 }

@@ -1,0 +1,67 @@
+@use "mixins" as *;
+
+.switchRow {
+  display: flex;
+  align-items: center;
+  gap: .8rem;
+  padding: .75rem .85rem;
+  border: 1px solid c(ink, .14);
+  border-radius: .5rem;
+  background: c(surface);
+  cursor: pointer;
+  transition: border-color .2s ease, background .2s ease;
+
+  &[data-on] { border-color: c(accent, .35); background: linear-gradient(120deg, c(accent-soft, .55), c(surface) 70%); }
+}
+
+.switchIcon {
+  display: grid;
+  place-items: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  flex-shrink: 0;
+  border: 1px solid c(ink, .16);
+  border-radius: 999px;
+  color: c(ink, .5);
+  transition: color .2s ease, border-color .2s ease;
+
+  svg { width: 1rem; height: 1rem; }
+  .switchRow[data-on] & { border-color: c(accent, .5); color: c(accent); }
+}
+
+.switchText {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+
+  b { font-size: .84rem; }
+  span { font-size: .68rem; line-height: 1.35; color: c(ink, .48); }
+}
+
+.switch {
+  position: relative;
+  width: 2.4rem;
+  height: 1.35rem;
+  flex-shrink: 0;
+  padding: 0;
+  border: 1px solid c(ink, .25);
+  border-radius: 999px;
+  background: c(paper);
+  cursor: pointer;
+  transition: background .2s ease, border-color .2s ease;
+
+  &[data-state="checked"] { border-color: c(accent); background: c(accent); }
+}
+
+.thumb {
+  display: block;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 1px 3px c(ink, .35);
+  transform: translateX(.12rem);
+  transition: transform .22s var(--atlas-ease-out);
+
+  &[data-state="checked"] { transform: translateX(1.18rem); }
+}

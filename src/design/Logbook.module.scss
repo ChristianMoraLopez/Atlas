@@ -1,0 +1,40 @@
+@use "mixins" as *;
+
+// The preview table read as a surveyor's logbook: each row carries the
+// waypoint number and map symbol it has on the day route.
+
+.row {
+  position: relative;
+  transition: background .2s ease;
+
+  &[data-focus] { background: c(accent-soft, .45); }
+  &[data-focus] > td:first-child { box-shadow: inset 3px 0 0 c(signal); }
+}
+
+// Rows left out of the export: muted, but still readable.
+.off > td { color: c(ink, .62); }
+.off > td > * { opacity: .72; }
+
+.waypoint {
+  @include source-tones;
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  min-width: 3rem;
+  padding: .2rem .4rem .2rem .35rem;
+  border: 1px solid rgb(var(--tone) / .4);
+  border-radius: 999px;
+  background: c(surface);
+  font-family: var(--atlas-font-mono);
+  font-size: .62rem;
+  font-weight: 700;
+  color: rgb(var(--tone));
+}
+
+.time {
+  font-family: var(--atlas-font-mono);
+  font-size: .72rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: c(ink, .75);
+}
