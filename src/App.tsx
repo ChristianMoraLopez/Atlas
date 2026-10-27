@@ -7,7 +7,7 @@ import { listen } from "@tauri-apps/api/event";
 import { AnimatePresence, motion } from "motion/react";
 import TopoMap from "./design/TopoMap";
 import { AccentPicker, DayHero, PersonalSeal } from "./design/Personal";
-import { seedFrom } from "./design/personal";
+import { seedFrom } from "./design/identity";
 import {
   AlertCircle, ArrowRight, Bot, CalendarDays, Check, ChevronDown, Cloud,
   ExternalLink, FilePlus2, FileSpreadsheet, FileText, FolderOpen, HardDrive, Home,

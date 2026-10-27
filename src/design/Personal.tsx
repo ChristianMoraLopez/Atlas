@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { useI18n } from "../i18n";
 import type { Interaction, SourceKind } from "../types";
 import TopoMap from "./TopoMap";
-import { ACCENTS, firstName, greetingKey, initials, seedFrom, useAccent, type Accent } from "./personal";
+import { ACCENTS, firstName, greetingKey, initials, seedFrom, useAccent, type Accent } from "./identity";
 import styles from "./Personal.module.css";
 
 /** The person's seal: their own contour map with their initials, used as the app mark. */

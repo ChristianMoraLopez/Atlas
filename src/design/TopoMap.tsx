@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { random, tokenColor, useAccent } from "./personal";
+import { random, tokenColor, useAccent } from "./identity";
 import styles from "./TopoMap.module.css";
 
 type TopoMapProps = {
