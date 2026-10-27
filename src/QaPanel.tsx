@@ -102,27 +102,27 @@ function StatusHero({ status, busy, onSync, onExport, onOpenFolder, onRestart }:
     : status.historicalStatus === "done"
       ? t("History imported back to {month} · finished {date}", { month: status.historicalOldestMonth ?? "—", date: formatDateTime(status.historicalCompletedAt) })
       : t("History starts as soon as you add people to audit");
-  return <section className="rise overflow-hidden rounded-[1.6rem] bg-[#081c1a] p-6 text-white shadow-panel">
+  return <section className="rise overflow-hidden rounded-[1.6rem] bg-night p-6 text-white shadow-panel">
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div className="flex items-center gap-4">
         <div className="relative grid h-12 w-12 place-items-center rounded-2xl bg-white/10">
-          {status.activity ? <Loader2 className="h-5 w-5 animate-spin text-[#8dd7c4]" /> : <Bot className="h-5 w-5 text-[#8dd7c4]" />}
-          <span className={`absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full border-2 border-[#081c1a] ${status.connected ? "bg-[#5fd3a4]" : "bg-[#e9704f]"}`} />
+          {status.activity ? <Loader2 className="h-5 w-5 animate-spin text-glow" /> : <Bot className="h-5 w-5 text-glow" />}
+          <span className={`absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full border-2 border-night ${status.connected ? "bg-[#5fd3a4]" : "bg-[#e9704f]"}`} />
         </div>
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-[.2em] text-[#8dd7c4]">{status.source === "power_automate" ? t("Power Automate · your AtlasQA flows") : status.source === "microsoft_graph" ? "Microsoft Graph" : t("Connector not ready")}</p>
+          <p className="text-[10px] font-bold uppercase tracking-[.2em] text-glow">{status.source === "power_automate" ? t("Power Automate · your AtlasQA flows") : status.source === "microsoft_graph" ? "Microsoft Graph" : t("Connector not ready")}</p>
           <p className="mt-1 font-display text-xl">{activityLabel(status.activity, t)}</p>
         </div>
       </div>
       <div className="flex flex-wrap gap-2">
         <button className="inline-flex items-center gap-2 rounded-xl bg-white/10 px-4 py-2.5 text-sm font-bold hover:bg-white/20" disabled={busy || !status.connected} onClick={onSync}><RefreshCw className="h-4 w-4" />{t("Sync now")}</button>
-        <button className="inline-flex items-center gap-2 rounded-xl bg-[#8dd7c4] px-4 py-2.5 text-sm font-bold text-[#081c1a] hover:bg-[#a9e3d4]" disabled={busy} onClick={onExport}><FileSpreadsheet className="h-4 w-4" />{t("Write to Excel")}</button>
+        <button className="inline-flex items-center gap-2 rounded-xl bg-glow px-4 py-2.5 text-sm font-bold text-night hover:bg-[#a9e3d4]" disabled={busy} onClick={onExport}><FileSpreadsheet className="h-4 w-4" />{t("Write to Excel")}</button>
         <button className="rounded-xl bg-white/10 p-2.5 hover:bg-white/20" title={t("Open folder")} onClick={onOpenFolder}><FolderOpen className="h-4 w-4" /></button>
       </div>
     </div>
     <div className="mt-6">
-      <div className="flex items-center justify-between text-xs text-white/60"><span className="flex items-center gap-2"><History className="h-3.5 w-3.5" />{historyText}</span>{status.historicalStatus === "done" && <button className="font-bold text-[#8dd7c4] underline" onClick={onRestart}>{t("Import again")}</button>}</div>
-      <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10"><div className={`h-full rounded-full transition-all duration-700 ${status.historicalStatus === "running" ? "bg-[#8dd7c4]" : "bg-[#5fd3a4]"}`} style={{ width: `${status.historicalStatus === "idle" ? 0 : Math.min(100, progress)}%` }} /></div>
+      <div className="flex items-center justify-between text-xs text-white/60"><span className="flex items-center gap-2"><History className="h-3.5 w-3.5" />{historyText}</span>{status.historicalStatus === "done" && <button className="font-bold text-glow underline" onClick={onRestart}>{t("Import again")}</button>}</div>
+      <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10"><div className={`h-full rounded-full transition-all duration-700 ${status.historicalStatus === "running" ? "bg-glow" : "bg-[#5fd3a4]"}`} style={{ width: `${status.historicalStatus === "idle" ? 0 : Math.min(100, progress)}%` }} /></div>
     </div>
     <div className="mt-5 grid grid-cols-5 gap-3">
       <Stat label={t("QA messages")} value={status.messages} />

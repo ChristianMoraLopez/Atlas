@@ -54,7 +54,7 @@ export default function AiTransparencyModal({ onClose, onSaved }: { onClose: () 
     finally { setBusy(false); }
   };
 
-  return <div className="fixed inset-0 z-50 grid place-items-center bg-[#081c1a]/45 p-8 backdrop-blur-sm">
+  return <div className="fixed inset-0 z-50 grid place-items-center bg-night/45 p-8 backdrop-blur-sm">
     <div className="card flex max-h-[88vh] w-full max-w-3xl flex-col p-7">
       <div className="flex items-start justify-between">
         <div>
@@ -69,7 +69,7 @@ export default function AiTransparencyModal({ onClose, onSaved }: { onClose: () 
         <section>
           <h3 className="text-sm font-extrabold">1 · {t("Core prompt (read-only)")}</h3>
           <p className="mt-1 text-xs leading-5 text-ink/45">{t("This prompt is fixed and never changes. Your rules are appended after it and can never override it.")}</p>
-          <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap rounded-xl bg-[#081c1a] p-4 font-mono text-[11px] leading-5 text-[#c9e8dd]">{info.coreTemplate}</pre>
+          <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap rounded-xl bg-night p-4 font-mono text-[11px] leading-5 text-[#c9e8dd]">{info.coreTemplate}</pre>
         </section>
         <section>
           <h3 className="text-sm font-extrabold">2 · {t("Additional instructions")}</h3>

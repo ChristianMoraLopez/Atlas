@@ -1,0 +1,184 @@
+/* ---- Seal -------------------------------------------------------------- */
+
+.sealRow { display: flex; align-items: center; gap: .8rem; }
+
+.seal {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgb(var(--atlas-surface));
+  box-shadow: 0 0 0 1px rgb(var(--atlas-accent) / .22), 0 0 0 4px rgb(var(--atlas-surface)), 0 0 0 5px rgb(var(--atlas-brass) / .45);
+}
+
+.sealMap { position: absolute; inset: 0; }
+
+.sealInitials {
+  position: relative;
+  font-family: var(--atlas-font-display);
+  font-size: 1.05rem;
+  font-style: italic;
+  font-weight: 600;
+  color: rgb(var(--atlas-accent-deep));
+  text-shadow: 0 0 6px rgb(var(--atlas-surface)), 0 0 2px rgb(var(--atlas-surface));
+}
+
+.sealWord { display: block; font-family: var(--atlas-font-display); font-size: 1.15rem; line-height: 1; }
+
+.sealCaption {
+  display: block;
+  margin-top: .3rem;
+  font-size: .62rem;
+  font-weight: 700;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: rgb(var(--atlas-ink) / .45);
+}
+
+/* ---- Accent picker ----------------------------------------------------- */
+
+.accents {
+  display: flex;
+  gap: .35rem;
+  padding: .45rem .55rem;
+  border: 1px solid rgb(var(--atlas-ink) / .1);
+  border-radius: .75rem;
+  background: #fff;
+}
+
+.accent {
+  width: 1.05rem;
+  height: 1.05rem;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  background: var(--swatch);
+  box-shadow: 0 0 0 2px #fff, 0 0 0 3px transparent;
+  transition: box-shadow .2s ease, transform .2s var(--atlas-ease-out);
+}
+
+.accent:hover { transform: scale(1.12); }
+.accent[aria-checked="true"] { box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px var(--swatch); }
+.accent[data-option="pine"] { --swatch: rgb(15 79 69); }
+.accent[data-option="terracotta"] { --swatch: rgb(160 70 42); }
+.accent[data-option="indigo"] { --swatch: rgb(44 62 138); }
+.accent[data-option="graphite"] { --swatch: rgb(46 52 56); }
+
+/* ---- Day hero ---------------------------------------------------------- */
+
+.hero {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  gap: 1.6rem;
+  margin-bottom: 1.75rem;
+  padding: 1.9rem 2rem 1.4rem;
+  overflow: hidden;
+  border: 1px solid rgb(var(--atlas-ink) / .07);
+  border-radius: calc(var(--atlas-radius-sheet) + .35rem);
+  background:
+    linear-gradient(100deg, rgb(var(--atlas-surface)) 22%, rgb(var(--atlas-surface) / .72) 55%, rgb(var(--atlas-accent-soft) / .55)),
+    rgb(var(--atlas-surface));
+  box-shadow: var(--atlas-shadow-sheet);
+}
+
+.heroMap {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  mask-image: linear-gradient(90deg, transparent 8%, #000 58%);
+}
+
+.heroCopy { max-width: 46rem; }
+
+.eyebrow {
+  margin: 0;
+  font-size: .68rem;
+  font-weight: 700;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  color: rgb(var(--atlas-accent));
+}
+
+.date { color: rgb(var(--atlas-ink) / .5); }
+
+.greeting {
+  margin: .55rem 0 0;
+  font-family: var(--atlas-font-display);
+  font-size: clamp(2.3rem, 3.4vw, 3.15rem);
+  font-weight: 420;
+  line-height: 1.02;
+  font-variation-settings: "opsz" 144, "SOFT" 80, "WONK" 1;
+}
+
+.greeting em { font-style: italic; color: rgb(var(--atlas-accent)); }
+
+.legend { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin-top: 1.05rem; }
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  padding: .32rem .7rem .32rem .55rem;
+  border-radius: 999px;
+  font-size: .72rem;
+  color: rgb(var(--tone));
+  background: rgb(var(--tone) / .09);
+  transition: opacity .25s ease;
+}
+
+.legendItem svg { width: .85rem; height: .85rem; }
+.legendItem b { font-variant-numeric: tabular-nums; }
+.legendItem[data-empty] { opacity: .45; }
+
+[data-source="calendar"] { --tone: var(--atlas-calendar); }
+[data-source="email"] { --tone: var(--atlas-mail); }
+[data-source="teams_chat"] { --tone: var(--atlas-teams); }
+[data-source="manual"] { --tone: var(--atlas-accent); }
+
+/* ---- Day route --------------------------------------------------------- */
+
+.route { padding: 0 .4rem 1.35rem; }
+
+.routeTrack { position: relative; height: 1.6rem; }
+
+.routeLine {
+  position: absolute;
+  inset: 50% 0 auto;
+  height: 1px;
+  transform-origin: left;
+  background-image: linear-gradient(90deg, rgb(var(--atlas-ink) / .35) 50%, transparent 50%);
+  background-size: 7px 1px;
+}
+
+.routeTick { position: absolute; top: calc(50% - 4px); width: 1px; height: 8px; background: rgb(var(--atlas-ink) / .22); }
+
+.routeTick span {
+  position: absolute;
+  top: 1.05rem;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: .6rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .06em;
+  color: rgb(var(--atlas-ink) / .4);
+}
+
+.waypoint {
+  position: absolute;
+  top: calc(50% - 7px);
+  width: 14px;
+  height: 14px;
+  margin-left: -7px;
+  border: 2px solid rgb(var(--atlas-surface));
+  border-radius: 999px;
+  background: rgb(var(--tone));
+  box-shadow: 0 0 0 1px rgb(var(--tone) / .45), 0 6px 14px -6px rgb(var(--tone));
+  cursor: help;
+}
+
+.waypoint[data-off] { background: rgb(var(--atlas-surface)); box-shadow: 0 0 0 1.5px rgb(var(--tone) / .55); }
+.waypoint:hover { z-index: 2; transform: scale(1.25) !important; }

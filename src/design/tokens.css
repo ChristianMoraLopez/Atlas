@@ -1,0 +1,52 @@
+/* Atlas visual system. Every colour the UI uses resolves to one of these
+   channels, so a personal accent (data-accent on <html>) recolours the whole
+   app. Channels are bare "r g b" triplets so Tailwind's /alpha modifiers work. */
+
+:root {
+  --atlas-ink: 18 30 28;          /* body text, near-black pine */
+  --atlas-paper: 244 240 230;     /* warm map paper */
+  --atlas-surface: 255 253 248;   /* raised sheets */
+  --atlas-night: 9 26 24;         /* dark editorial panels */
+  --atlas-signal: 214 104 72;     /* terracotta: attention, waypoints */
+  --atlas-brass: 186 150 82;      /* fine cartographic rules */
+
+  /* Personal accent — Pine by default. */
+  --atlas-accent: 15 79 69;
+  --atlas-accent-deep: 10 58 51;
+  --atlas-accent-soft: 217 239 232;
+  --atlas-glow: 141 215 196;
+
+  /* Source colours shared by badges and the day route. */
+  --atlas-calendar: 49 95 158;
+  --atlas-mail: 113 80 157;
+  --atlas-teams: 168 96 34;
+
+  --atlas-font-display: "Fraunces Variable", Georgia, "Times New Roman", serif;
+  --atlas-font-ui: "Instrument Sans Variable", "Segoe UI", system-ui, sans-serif;
+
+  --atlas-radius-sheet: 1.35rem;
+  --atlas-ease-out: cubic-bezier(.22, .8, .3, 1);
+  --atlas-shadow-sheet: 0 1px 0 rgb(255 255 255 / .8) inset, 0 24px 60px -28px rgb(var(--atlas-ink) / .28);
+}
+
+:root[data-accent="terracotta"] {
+  --atlas-accent: 160 70 42;
+  --atlas-accent-deep: 122 50 28;
+  --atlas-accent-soft: 248 226 214;
+  --atlas-glow: 240 168 130;
+  --atlas-signal: 15 98 86;
+}
+
+:root[data-accent="indigo"] {
+  --atlas-accent: 44 62 138;
+  --atlas-accent-deep: 30 44 104;
+  --atlas-accent-soft: 223 228 248;
+  --atlas-glow: 150 170 240;
+}
+
+:root[data-accent="graphite"] {
+  --atlas-accent: 46 52 56;
+  --atlas-accent-deep: 26 30 33;
+  --atlas-accent-soft: 228 230 228;
+  --atlas-glow: 196 206 200;
+}

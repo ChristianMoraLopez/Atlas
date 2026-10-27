@@ -15,6 +15,23 @@ const es: Record<string, string> = {
   "Skip": "Omitir",
   "MEET · DO · RECORD": "REÚNETE · HAZ · REGISTRA",
 
+  // Personal design
+  "Your colour": "Tu color",
+  "Pine": "Pino",
+  "Terracotta": "Terracota",
+  "Indigo": "Índigo",
+  "Graphite": "Grafito",
+  "Interaction tracker": "Registro de interacciones",
+  "Meetings": "Reuniones",
+  "Mail": "Correo",
+  "Manual": "Manual",
+  "Your day as a route": "Tu día como una ruta",
+  "Your map for today": "Tu mapa de hoy",
+  "Your map for {date}": "Tu mapa del {date}",
+  "Good morning": "Buenos días",
+  "Good afternoon": "Buenas tardes",
+  "Good evening": "Buenas noches",
+
   // Login
   "Your work, accounted for": "Tu trabajo, registrado",
   "Real interactions.": "Interacciones reales.",
@@ -172,7 +189,7 @@ const es: Record<string, string> = {
   "Mail and Teams evidence stay on this computer and are interpreted by": "La evidencia de correo y Teams permanece en este equipo y la interpreta",
   "View prompt": "Ver prompt",
   "Bundled Local AI could not start.": "La IA local incluida no pudo iniciarse.",
-  "Extract the complete Atlas portable ZIP again.": "Vuelve a extraer el ZIP portátil completo de Atlas.",
+  "Run the Atlas installer again to repair it.": "Ejecuta de nuevo el instalador de Atlas para repararlo.",
   "Recheck": "Reintentar",
   "Preview": "Vista previa",
   "Atlas selects finished meetings and concrete work tasks, including tasks still in progress. Reminders and automatic notices stay out.": "Atlas selecciona reuniones finalizadas y tareas concretas, incluidas las que siguen en curso. Los recordatorios y los avisos automáticos quedan fuera.",
