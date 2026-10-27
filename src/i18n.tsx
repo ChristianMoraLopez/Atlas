@@ -56,6 +56,12 @@ const es: Record<string, string> = {
   "Complete": "Completo",
   "Error": "Error",
 
+  // Live progress (keys sent by the backend)
+  "Reading the evidence for {date}": "Leyendo la evidencia del {date}",
+  "Found {calendar} meetings, {mail} emails and {teams} Teams messages": "Encontré {calendar} reuniones, {mail} correos y {teams} mensajes de Teams",
+  "Interpreting {source}: batch {current} of {total}": "Interpretando {source}: lote {current} de {total}",
+  "Writing {count} rows to the tracker": "Escribiendo {count} filas en el tracker",
+
   // Login
   "Your work, accounted for": "Tu trabajo, registrado",
   "Real interactions.": "Interacciones reales.",

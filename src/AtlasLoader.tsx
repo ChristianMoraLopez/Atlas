@@ -19,6 +19,16 @@ export default function AtlasLoader({
   action,
 }: AtlasLoaderProps) {
   const [visible, setVisible] = useState(show && delay === 0);
+  const [elapsed, setElapsed] = useState(0);
+
+  // A running clock shows the work is alive even while one step takes minutes.
+  useEffect(() => {
+    if (!show) return;
+    const started = Date.now();
+    setElapsed(0);
+    const timer = window.setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => window.clearInterval(timer);
+  }, [show]);
 
   useEffect(() => {
     if (!show) {
@@ -54,6 +64,7 @@ export default function AtlasLoader({
         <p className="atlas-loader__message">{message}</p>
         {detail && <p className="atlas-loader__detail">{detail}</p>}
         <div className="atlas-loader__progress" aria-hidden="true"><span /></div>
+        {elapsed >= 5 && <p className="atlas-loader__elapsed">{Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}</p>}
         {action && <button type="button" className="btn-secondary mt-5" onClick={action.onClick}>{action.label}</button>}
       </div>
     </div>

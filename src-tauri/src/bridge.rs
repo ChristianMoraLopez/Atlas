@@ -325,6 +325,48 @@ fn validate_limits(bundle: &EvidenceBundle) -> Result<()> {
     Ok(())
 }
 
+/// Outlook marks a cancelled meeting in the attendee's calendar by prefixing its
+/// subject before (or instead of) setting isCancelled.
+fn cancelled_subject(subject: &str) -> bool {
+    let lower = subject.trim().to_lowercase();
+    ["canceled:", "cancelled:", "cancelado:", "cancelada:", "cancelado ", "canceled ", "cancelled "]
+        .iter()
+        .any(|prefix| lower.starts_with(prefix))
+}
+
+/// The same meeting sent again as "UPDATED: …", "Updated invitation: …",
+/// "FW: …" or "Actualizado: …" shows up as a second event at the same time.
+/// Returns the lowercase subject without those prefixes.
+fn without_resend_prefix(subject: &str) -> String {
+    let mut clean = subject.trim().to_lowercase();
+    loop {
+        let before = clean.len();
+        for prefix in [
+            "updated invitation with note:",
+            "updated invitation:",
+            "updated:",
+            "actualizado:",
+            "actualizada:",
+            "invitación actualizada:",
+            "fw:",
+            "fwd:",
+            "rv:",
+        ] {
+            if let Some(rest) = clean.strip_prefix(prefix) {
+                clean = rest.trim_start().to_string();
+            }
+        }
+        if clean.len() == before {
+            break;
+        }
+    }
+    clean.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn meeting_identity(subject: &str, start: DateTime<Utc>) -> String {
+    format!("{}|{}", start.timestamp(), without_resend_prefix(subject))
+}
+
 fn calendar_rows(
     events: Vec<BridgeCalendarEvent>,
     start: DateTime<Utc>,
@@ -345,22 +387,38 @@ fn calendar_rows(
     }
     let first_mmni_id = parsed
         .iter()
-        .filter(|(event, _, _)| !event.is_cancelled && !excluded_subject(&event.subject))
+        .filter(|(event, _, _)| {
+            !event.is_cancelled
+                && !cancelled_subject(&event.subject)
+                && !excluded_subject(&event.subject)
+        })
         .filter(|(event, _, _)| {
             let subject = event.subject.to_lowercase();
             subject.contains("mmni") || subject.contains("sparktriage")
         })
         .min_by_key(|(_, event_start, _)| *event_start)
         .map(|(event, _, _)| event.id.clone());
+    // When a meeting appears twice ("MMN Call" and "UPDATED: MMN Call"), keep the
+    // plain subject: sort each start time's events so prefixed copies come last.
+    parsed.sort_by_key(|(event, event_start, _)| {
+        let subject = event.subject.to_lowercase();
+        let resent = without_resend_prefix(&subject)
+            != subject.split_whitespace().collect::<Vec<_>>().join(" ");
+        (*event_start, resent)
+    });
     let target_tz: Tz = timezone.parse().unwrap_or(chrono_tz::UTC);
     let mut rows = Vec::new();
+    let mut meetings = HashSet::new();
     for (event, mut event_start, mut event_end) in parsed {
         let subject = if event.subject.trim().is_empty() {
             "Untitled meeting".to_string()
         } else {
             event.subject.trim().to_string()
         };
-        if event.is_cancelled || excluded_subject(&subject) {
+        if event.is_cancelled || cancelled_subject(&subject) || excluded_subject(&subject) {
+            continue;
+        }
+        if !meetings.insert(meeting_identity(&subject, event_start)) {
             continue;
         }
         if first_mmni_id.as_deref() == Some(event.id.as_str()) {
@@ -672,6 +730,27 @@ async fn interpret_mail(
         .collect())
 }
 
+/// Chat chunks that never mention any piece of the job are personal or small
+/// talk. Dropping them before the model saves a CPU-bound batch each and keeps
+/// personal conversations out of the tracker from the start.
+fn work_chats_only(rows: Vec<Interaction>) -> Vec<Interaction> {
+    let total = rows.len();
+    let kept = rows
+        .into_iter()
+        .filter(|row| ollama::has_work_signal(&row.comments))
+        .collect::<Vec<_>>();
+    if kept.len() < total {
+        crate::diagnostics::info(
+            "bridge/teams",
+            &format!(
+                "Skipped {} of {total} Teams chat chunks that never mention work",
+                total - kept.len()
+            ),
+        );
+    }
+    kept
+}
+
 async fn interpret_teams(
     state: &AppState,
     rows: &[Interaction],
@@ -760,8 +839,17 @@ pub async fn extract(
     include_email: bool,
     include_teams: bool,
 ) -> Result<ExtractionResult> {
+    crate::progress::report("Reading the evidence for {date}", &[("date", date.to_string())]);
     let (path, mut bundle) = newest_bundle(folder, date)?;
     validate_limits(&bundle)?;
+    crate::progress::report(
+        "Found {calendar} meetings, {mail} emails and {teams} Teams messages",
+        &[
+            ("calendar", bundle.calendar.len().to_string()),
+            ("mail", bundle.mail.len().to_string()),
+            ("teams", bundle.teams.len().to_string()),
+        ],
+    );
     if let Err(error) = clear_requested_date(folder, date) {
         crate::diagnostics::error("bridge/request", &error.to_string());
     }
@@ -829,7 +917,10 @@ pub async fn extract(
         }
     }
     if include_teams && !bundle.teams.is_empty() {
-        match teams_rows(std::mem::take(&mut bundle.teams), start, end) {
+        match teams_rows(std::mem::take(&mut bundle.teams), start, end).map(work_chats_only) {
+            Ok(values) if values.is_empty() => warnings.push(
+                "Los chats de Teams del día no mencionan trabajo; no se enviaron a la IA.".into(),
+            ),
             Ok(values) => match interpret_teams(state, &values, &actor).await {
                 Ok(suggestions) if !suggestions.is_empty() => interactions.extend(suggestions),
                 Ok(_) => {
@@ -1137,5 +1228,33 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("2026-09-11"));
         assert!(message.contains("flujo no ha entregado"));
+    }
+
+    #[test]
+    fn cancelled_and_updated_copies_of_a_meeting_are_not_recorded_twice() {
+        let event = |id: &str, subject: &str, start: &str, cancelled: bool| BridgeCalendarEvent {
+            id: id.into(),
+            subject: subject.into(),
+            start: start.into(),
+            end: start.replace("T11:00", "T11:30").replace("T09:45", "T10:00"),
+            organizer_address: "someone@circana.com".into(),
+            is_cancelled: cancelled,
+        };
+        let start = parse_graph_time("2026-10-12T00:00:00Z").unwrap();
+        let end = parse_graph_time("2026-10-13T00:00:00Z").unwrap();
+        let rows = calendar_rows(
+            vec![
+                event("a", "Canceled: T4_Daily_BHW", "2026-10-12T09:45:00Z", false),
+                event("b", "UPDATED: MMN UCO Call", "2026-10-12T11:00:00Z", false),
+                event("c", "MMN Uco Call", "2026-10-12T11:00:00Z", false),
+                event("d", "Weekly review", "2026-10-12T09:45:00Z", true),
+            ],
+            start,
+            end,
+            "UTC",
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].comments, "MMN Uco Call");
     }
 }

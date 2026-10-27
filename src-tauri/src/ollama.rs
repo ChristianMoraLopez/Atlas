@@ -422,10 +422,19 @@ impl ManagedRuntime {
             );
         }
         let batches = evidence_batches(evidence);
+        let total = batches.len();
         let mut seen = HashSet::new();
         let mut result = Vec::new();
         let mut submission_lines = Vec::new();
-        for batch in batches {
+        for (index, batch) in batches.into_iter().enumerate() {
+            crate::progress::report(
+                "Interpreting {source}: batch {current} of {total}",
+                &[
+                    ("source", source_label.to_string()),
+                    ("current", (index + 1).to_string()),
+                    ("total", total.to_string()),
+                ],
+            );
             let bounded = bounded_evidence(&batch);
             let aliased = aliased_evidence(&bounded);
             let lines = build_evidence_lines(&aliased);
@@ -1018,7 +1027,7 @@ fn looks_personal(summary: &str) -> bool {
 
 /// Teams evidence must mention some piece of the job (in Spanish or English):
 /// chats that never do are personal conversation, whatever the model says.
-fn has_work_signal(text: &str) -> bool {
+pub(crate) fn has_work_signal(text: &str) -> bool {
     let padded = format!(" {} ", normalized_evidence(text));
     const WORK: &[&str] = &[
         // English

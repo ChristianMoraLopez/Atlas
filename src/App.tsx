@@ -460,6 +460,16 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
   };
   const saveProfile = async (p: UserProfile) => { await api.saveProfile(p); setEditingProfile(false); await refreshStatus(); };
   useEffect(() => {
+    // What the backend is reading or interpreting right now, so a long import
+    // never looks stuck. Only shown while Atlas is busy.
+    const progress = listen<{ key: string; values: [string, string][] }>("atlas-progress", event => {
+      if (!busyRef.current) return;
+      const detail = t(event.payload.key, Object.fromEntries(event.payload.values.map(([name, value]) => [name, t(value)])));
+      setWorkStatus(current => current ? { ...current, detail } : current);
+    });
+    return () => { void progress.then(stop => stop()); };
+  }, [t]);
+  useEffect(() => {
     // The backend keeps the rows and retries while Excel holds the tracker open.
     const waiting = listen("atlas-export-waiting-for-excel", () => setWorkStatus({ message: t("Close the tracker in Excel"), detail: t("Atlas saves the activities automatically as soon as Excel releases the file.") }));
     return () => { void waiting.then(stop => stop()); };

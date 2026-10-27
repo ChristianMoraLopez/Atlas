@@ -9,6 +9,7 @@ mod excel;
 mod graph;
 mod models;
 mod ollama;
+mod progress;
 mod qa;
 mod qa_engine;
 mod sharepoint;
@@ -1139,6 +1140,13 @@ async fn export_configured_tracker(
             tracker_catalog::missing_fields(item).join(", ")
         )));
     }
+    progress::report(
+        "Writing {count} rows to the tracker",
+        &[(
+            "count",
+            interactions.iter().filter(|item| item.selected).count().to_string(),
+        )],
+    );
     let result = match destination.kind {
         TrackerDestinationKind::LocalExisting | TrackerDestinationKind::LocalNew => {
             let existing = destination.kind == TrackerDestinationKind::LocalExisting;
@@ -1383,6 +1391,7 @@ pub fn run() {
                 .app_config_dir()
                 .map_err(|e| Box::<dyn std::error::Error>::from(e))?;
             diagnostics::init(&config_dir).map_err(|e| Box::<dyn std::error::Error>::from(e))?;
+            progress::init(app.handle().clone());
             diagnostics::install_panic_hook();
             let background_launch = scheduled_launch || startup_launch;
             let state = AppState::new(config_dir.clone(), background_launch)?;
