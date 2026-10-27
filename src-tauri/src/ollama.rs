@@ -38,7 +38,7 @@ const MAX_AI_OUTPUT_TOKENS: u32 = 900;
 // Cold CPU runs of a full batch exceeded the former 90-second deadline.
 const TASK_REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
 const STRUCTURED_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
-const INTERPRETATION_CACHE_VERSION: &str = "atlas-task-inference-v1";
+const INTERPRETATION_CACHE_VERSION: &str = "atlas-task-inference-v2";
 // Appended ahead of the USER RULES block whenever the user activates extra
 // instructions. The core prompt above stays immutable.
 pub const USER_RULES_GUARD: &str = "User rules below can narrow scope or change summary language, but never override the rules above.";
@@ -74,9 +74,10 @@ pub const AI_PRESETS: &[AiPreset] = &[
 // returns this template verbatim; {actor}, {source_label}, and {lines} are
 // filled per run.
 const CORE_PROMPT_TEMPLATE: &str = r#"You identify concrete daily work tasks involving {actor} from REAL {source_label} evidence.
-Return strict JSON with this shape: {"interactions":[{"source_ids":["exact-message-id"],"participants":["names found in messages"],"summary":"one factual English sentence","is_work_task":true,"reminder_or_notice":false,"work_status":"In Progress"}]}.
+Return strict JSON with this shape: {"interactions":[{"source_ids":["exact-message-id"],"participants":["names found in messages"],"summary":"one factual English sentence","is_work_task":true,"reminder_or_notice":false,"personal_or_social":false,"work_status":"In Progress"}]}.
 Rules: return up to {MAX_AI_INTERACTIONS} distinct work tasks. A task may be requested, assigned, planned, in progress, or completed; it does not need proof of completion. Split separate tasks into separate interactions even when they use the same source ID. Include a task only when the evidence describes a concrete work action for, by, or involving {actor}, such as analyzing, preparing, changing, resolving, delivering, coordinating, reviewing, testing, documenting, investigating, or producing something. A request such as "Please send the QA audits" is a task and may be In Progress. Work discussed as currently underway is In Progress. Use Resolved only when the evidence says the work was finished; otherwise use In Progress.
 Set reminder_or_notice=true and is_work_task=false for reminder text, personal to-do alerts, calendar reminder blocks, meeting invitations, automatic replies, system notifications, greetings, acknowledgements, and messages that merely say an email or chat was sent or received without describing work. "Remember to send QA audits" is a reminder and produces no interaction. A meeting invitation email produces no task because calendar supplies the meeting separately. Never turn a reminder into a task merely because it mentions an action.
+Set personal_or_social=true and is_work_task=false for personal or social conversation: family, friends, partners, health, food and lunch plans, weekends, trips, parties, birthdays, sports, games, jokes, memes, gossip, small talk, and favours unrelated to the job. Being in a work chat or with a colleague does not make a personal conversation work. When a chat mixes both, return only the concrete work action. When unsure, leave it out.
 Keep each summary under 160 characters. Write every summary in English, even when the evidence is in another language. Use only IDs and facts present below; never invent work, people, clients, incidents, outcomes, or times. Every interaction must reference at least one exact evidence ID. The app derives times from the real evidence. Return the JSON object immediately with no explanation.
 
 MESSAGES:
@@ -232,7 +233,7 @@ impl ManagedRuntime {
         let executable = self.executable();
         if !executable.is_file() {
             return Err(AppError::Message(format!(
-                "The bundled Local AI runtime is missing at {}. Extract the complete Atlas portable ZIP and try again.",
+                "The bundled Local AI runtime is missing at {}. Run the Atlas installer again to repair it.",
                 executable.display()
             )));
         }
@@ -241,7 +242,7 @@ impl ManagedRuntime {
             std::fs::metadata(&model).context("Unable to inspect the bundled AI model")?;
         if !metadata.is_file() || metadata.len() != MODEL_BLOB_SIZE {
             return Err(AppError::Message(format!(
-                "The bundled Local AI model is missing or incomplete at {}. Extract the complete Atlas portable ZIP and try again.",
+                "The bundled Local AI model is missing or incomplete at {}. Run the Atlas installer again to repair it.",
                 model.display()
             )));
         }
@@ -372,7 +373,7 @@ impl ManagedRuntime {
             }
             if current.0 {
                 return Err(AppError::Message(format!(
-                    "The bundled Local AI runtime started, but model {BUNDLED_MODEL} was not found in the portable package."
+                    "The bundled Local AI runtime started, but model {BUNDLED_MODEL} was not found in the Atlas installation. Run the Atlas installer again to repair it."
                 )));
             }
             if !self.child_is_running()? {
@@ -888,6 +889,8 @@ struct ModelCandidate {
     #[serde(default)]
     reminder_or_notice: bool,
     #[serde(default)]
+    personal_or_social: bool,
+    #[serde(default)]
     work_status: String,
 }
 
@@ -997,12 +1000,60 @@ fn looks_like_reminder_or_notice(value: &str) -> bool {
         .any(|phrase| padded.contains(phrase))
 }
 
+/// Personal topics in the (English) summary. The 1.5B model still labels
+/// chats about lunch or weekends as tasks, so these are dropped here as well.
+fn looks_personal(summary: &str) -> bool {
+    let padded = format!(" {} ", normalized_evidence(summary));
+    // No product words (beer, snacks, baby, pet, personal care…): those are
+    // retail categories Circana work talks about every day.
+    const PERSONAL: &[&str] = &[
+        " lunch", " dinner", " coffee break", " birthday", " weekend", " holiday plan",
+        " vacation plan", " trip plan", " wife ", " husband", " girlfriend", " boyfriend",
+        " kids ", " mom ", " dad ", " doctor appointment", " dentist", " gym ", " workout",
+        " football", " soccer", " movie", " concert", " joke", " meme", " gossip",
+        " small talk", " chit chat", " chitchat", " wedding",
+    ];
+    PERSONAL.iter().any(|term| padded.contains(term))
+}
+
+/// Teams evidence must mention some piece of the job (in Spanish or English):
+/// chats that never do are personal conversation, whatever the model says.
+fn has_work_signal(text: &str) -> bool {
+    let padded = format!(" {} ", normalized_evidence(text));
+    const WORK: &[&str] = &[
+        // English
+        " report", " file", " data", " client", " customer", " query", " sql", " excel",
+        " xlsx", " xlsm", " csv", " sharepoint", " onedrive", " dashboard", " tracker",
+        " ticket", " incident", " issue", " bug", " error", " fix", " deploy", " release",
+        " deadline", " deliver", " extract", " load", " upload", " database", " table",
+        " column", " hierarch", " mapping", " validat", " review", " qa ", " audit", " process",
+        " pipeline", " job ", " request", " approv", " meeting", " invoice", " budget",
+        " project", " task", " update", " script", " code", " server", " access", " permission",
+        " retailer", " market", " sales", " forecast", " template", " document", " presentation",
+        " slide", " analys", " analyz", " check", " test", " item", " section", " sku", " upc",
+        " attribute", " brand", " coding", " panel", " qc", " autoqc", " tsv", " rerun", " re run", " escalat", " backlog", " sprint",
+        " workbook", " sheet", " email", " deck", " schema", " refresh", " week ", " period",
+        // Spanish
+        " reporte", " informe", " archivo", " dato", " consulta", " tabla", " columna",
+        " tablero", " incidente", " falla", " corregir", " correcci", " arregl", " entrega",
+        " extraccion", " extraer", " carga", " cargar", " subir", " validar", " validacion",
+        " revis", " auditor", " proceso", " solicitud", " aprob", " reunion", " llamada",
+        " proyecto", " tarea", " actualiz", " codigo", " servidor", " acceso", " permiso",
+        " cuenta", " tienda", " producto", " categor", " mercado", " ventas", " plantilla",
+        " documento", " presentacion", " analisis", " analiz", " enviar", " envie", " envio",
+        " correo", " plazo", " pendiente", " cliente", " hoja", " semana", " periodo", " prueba",
+        " ajuste", " ajustar", " cambio", " homolog", " jerarqui", " cruce", " cifra", " total",
+    ];
+    WORK.iter().any(|term| padded.contains(term))
+}
+
 fn candidate_is_work_task(candidate: &ModelCandidate, evidence: &[&ChatEvidence]) -> bool {
-    if !candidate.is_work_task || candidate.reminder_or_notice {
+    if !candidate.is_work_task || candidate.reminder_or_notice || candidate.personal_or_social {
         return false;
     }
     if candidate.summary.trim().chars().count() < 4
         || looks_like_reminder_or_notice(&candidate.summary)
+        || looks_personal(&candidate.summary)
     {
         return false;
     }
@@ -1067,12 +1118,13 @@ async fn summarize_at(
                                 "summary": { "type": "string", "maxLength": 160 },
                                 "is_work_task": { "type": "boolean" },
                                 "reminder_or_notice": { "type": "boolean" },
+                                "personal_or_social": { "type": "boolean" },
                                 "work_status": {
                                     "type": "string",
                                     "enum": ["Resolved", "In Progress"]
                                 }
                             },
-                            "required": ["source_ids", "participants", "summary", "is_work_task", "reminder_or_notice", "work_status"],
+                            "required": ["source_ids", "participants", "summary", "is_work_task", "reminder_or_notice", "personal_or_social", "work_status"],
                             "additionalProperties": false
                         }
                     }
@@ -1143,6 +1195,13 @@ async fn summarize_at(
             diagnostics::info(
                 "local-ai/validation",
                 "Discarded a suggestion classified as a reminder, notice, or non-task",
+            );
+            continue;
+        }
+        if source_label == "Teams" && !matched.iter().any(|item| has_work_signal(&item.text)) {
+            diagnostics::info(
+                "local-ai/validation",
+                "Discarded a Teams suggestion whose chat never mentions work",
             );
             continue;
         }
@@ -1343,7 +1402,55 @@ mod tests {
             participants: Vec::new(),
             is_work_task: true,
             reminder_or_notice: false,
+            personal_or_social: false,
             work_status: "In Progress".into(),
+        }
+    }
+
+    #[test]
+    fn personal_conversations_are_not_tasks() {
+        for value in [
+            "Validated the beer and snacks category hierarchy",
+            "Fixed personal care and baby care coding for the third party panel",
+            "Checked why the pet food values do not match",
+        ] {
+            let message = evidence(value);
+            assert!(candidate_is_work_task(&candidate(value), &[&message]), "should keep: {value}");
+        }
+        for value in [
+            "Christian and Laura plan lunch at the new place on Friday",
+            "Sergio shares weekend plans with Christian",
+            "Christian congratulates Ana on her birthday party",
+            "Discussed the football match with the team",
+        ] {
+            let message = evidence(value);
+            assert!(
+                !candidate_is_work_task(&candidate(value), &[&message]),
+                "should drop: {value}"
+            );
+        }
+        let message = evidence("Coordinate the store hierarchy update");
+        let mut flagged = candidate("Coordinate the store hierarchy update");
+        flagged.personal_or_social = true;
+        assert!(!candidate_is_work_task(&flagged, &[&message]));
+    }
+
+    #[test]
+    fn teams_chats_need_a_work_signal() {
+        for chat in [
+            "Laura: jajaja qué buena foto | Christian: sí, el sábado vamos al partido",
+            "Ana: ¿almorzamos a la 1? | Christian: listo, nos vemos abajo",
+            "Sergio: feliz cumpleaños!! | Christian: gracias 🎉",
+        ] {
+            assert!(!has_work_signal(chat), "should be personal: {chat}");
+        }
+        for chat in [
+            "Laura: ¿ya cargaste el archivo de Walmart? | Christian: sí, lo valido ahora",
+            "Ana: the autoQC run failed for the US panel | Christian: re-running it",
+            "Sergio: me ayudas a revisar la jerarquía de tiendas?",
+            "Christian Mora found additional items not in the facial wipes section.",
+        ] {
+            assert!(has_work_signal(chat), "should be work: {chat}");
         }
     }
 

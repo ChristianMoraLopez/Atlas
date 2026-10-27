@@ -1,0 +1,42 @@
+# Installing Atlas
+
+Atlas creates Circana interaction trackers from real Microsoft 365 activity.
+
+## First launch
+
+1. Run `Atlas_<version>_Windows_x64_Setup.exe`. It installs Atlas only for your Windows user in `%LOCALAPPDATA%\Atlas` (no administrator rights), adds Atlas to the Start menu and offers a desktop shortcut. Atlas appears in **Settings → Apps → Installed apps**, where it can be uninstalled. Running a newer setup updates Atlas in place and keeps your settings. If you used the old portable folder, close it and delete that folder after installing.
+2. Atlas opens **Instalar conector de Microsoft 365**, creates the local OneDrive inbox and guides the one-time official Power Automate solution import. It never asks for an Application ID or tenant ID. See `power-automate/INSTALLER.md`. The final PC doesn't need PAC, .NET, Node.js, Rust, Visual Studio, or administrator rights.
+3. Sign in with the Circana account in Microsoft's page and associate that account's Outlook, Teams and OneDrive connections during import. The single solution activates the scheduled Outlook flow and the per-message Teams capture flow.
+4. Enter your Corp ID, name, Area, Team Lead, and Circana Manager.
+5. Configure the tracker once: select an existing `.xlsx` / `.xlsm`, create a new `.xlsx`, or paste a SharePoint/OneDrive workbook link.
+6. Keep the daily automatic tracker enabled and choose its time (17:30 by default). Windows starts Atlas hidden when the user signs in and triggers the daily run with that user's limited privileges. Administrator rights are not required. Atlas opens only when fewer than three activities need attention.
+
+Atlas uses Microsoft WebView2 for its interface. WebView2 is normally already installed on supported Windows 10 and Windows 11 systems; if Windows reports that it is missing, install the Evergreen WebView2 Runtime from Microsoft.
+
+For the supplied Circana workbook, choose **Existing Excel tracker**. Your Atlas profile name must match the worksheet name (for example, `Sebastian Galindo`) so the app cannot write to another person's tab.
+
+The installation already contains Atlas Local AI: a CPU-only Ollama runtime and the `qwen2.5:1.5b-instruct-q4_K_M` model. Atlas starts and stops it automatically on an available port from `127.0.0.1:11435` through `127.0.0.1:11445`; no separate Ollama installation or model download is required. It lives in the `AtlasAI` folder beside `Atlas.exe`; if it is damaged, run the setup again to repair it.
+
+The Entra app must be a public desktop client with a `http://localhost` loopback redirect and delegated `User.Read`, `Calendars.Read`, `Mail.Read`, and `Chat.Read` permissions. Add `Files.ReadWrite` when using a SharePoint tracker. Do not create or enter a client secret.
+
+For SharePoint, paste the full link that opens the workbook. In Power Automate Inbox mode, the owner must share the containing folder with edit permission. Open **Shared → Shared with you**, select the folder, choose **Add shortcut to My files**, wait for it below `OneDrive - Circana` in File Explorer, and select the exact synced workbook in Atlas. The shortcut command applies to folders, not individual files. In Graph mode Atlas updates the remote workbook directly. Both paths preserve `.xlsm` macros and workbook structure.
+
+Power Automate Inbox mode also offers **SharePoint cloud flow**. Paste the Excel Online link and save the selected daily time. Atlas creates a personalized second solution ZIP and places `Atlas Write Tracker.osts` in the synchronized `Documents/Office Scripts` folder. Import the ZIP once in **Power Automate → Solutions → Import solution**, map OneDrive for Business, SharePoint, and Excel Online (Business), and complete the import. Atlas keeps dated JSON history in `AtlasBridge/tracker-outbox/<date>` and the active flow publishes the current package without replacing the workbook.
+
+To rebuild a past day, choose it under **Workday** and press **Import selected day**. Atlas requests the date through the synced `AtlasBridge/requests` folder, waits for solution 1.11 to export it, and imports the result automatically. Scheduled, Teams-event, and requested JSON packages remain separated by source folders.
+
+If anything fails, use the document button in the Atlas header to open the persistent diagnostic log. It is stored at `%APPDATA%\com.capgemini.atlas-tracker\logs\atlas.log`; Local AI process output is stored beside it as `local-ai.log`. Invalid settings are backed up and reset instead of causing a silent startup exit.
+
+**Atlas never invents interactions.** Atlas records finished meetings, concrete work tasks supported by mail or Teams evidence, and factual manual entries. A task can be assigned, in progress, or resolved. Reminders, invitations, automatic notices, and messages without a concrete task are excluded. AI summaries are written in English. Partial days are saved and a warning explains how many activities are missing from the daily minimum of three.
+
+## Development: release build on this machine
+
+There is no MSVC here; builds use the GNU toolchain plus the portable MinGW in `tmp/w64devkit-out/w64devkit`. Run `src-tauri/build-release-gnu.sh`, which executes:
+
+```
+cargo +stable-x86_64-pc-windows-gnu build --release --target x86_64-pc-windows-gnu --features tauri/custom-protocol
+```
+
+The `--features tauri/custom-protocol` flag is **mandatory**: Tauri picks dev vs production mode from that feature (tauri's `build.rs`: `let dev = !custom_protocol`). The Tauri CLI injects it automatically, but `Cargo.toml` intentionally keeps `tauri = { version = "2", features = [] }`, so a plain `cargo build --release` embeds the devUrl `http://127.0.0.1:1420` instead of the `dist/` assets and the portable exe shows `ERR_CONNECTION_REFUSED` (this broke v0.2.24 and the first v0.2.25 upload).
+
+Verification after every release build is **obligatory**: copy the exe to `output/portable/Atlas.exe`, launch it with `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9229`, and check `http://127.0.0.1:9229/json`. The page URL must be `http://tauri.localhost/` (never `http://127.0.0.1:1420`) and the title `Atlas — Circana Interactions Tracker`. Checking only that the process does not crash is not enough. Kill the process when done.
