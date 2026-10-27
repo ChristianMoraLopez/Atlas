@@ -23,8 +23,24 @@ const MAX_MAIL_ITEMS: usize = 2_000;
 const MAX_TEAMS_ITEMS: usize = 20_000;
 const MAX_INBOX_FILES: usize = 10_000;
 
-fn evidence_files(folder: &Path) -> Result<Vec<PathBuf>> {
+/// Power Automate names every package `atlas-evidence-<installation>-<date>-…json`.
+/// Returns that date so packages for other days can be skipped without reading them.
+fn file_name_date(path: &Path) -> Option<&str> {
+    let name = path.file_name()?.to_str()?;
+    let rest = name.strip_prefix("atlas-evidence-")?;
+    // The installation id is a 36-character UUID followed by `-`.
+    let date = rest.get(37..47)?;
+    (rest.as_bytes().get(36) == Some(&b'-') && NaiveDate::parse_from_str(date, "%Y-%m-%d").is_ok())
+        .then_some(date)
+}
+
+/// Lists the evidence files that may hold `date`. The Teams capture writes one file
+/// per chat message and never prunes them, so the inbox grows without bound; files
+/// named for another day are skipped (and only the newest such date is remembered)
+/// so they can no longer crowd the scheduled calendar and mail packages out.
+fn evidence_files(folder: &Path, date: &str) -> Result<(Vec<PathBuf>, Option<String>)> {
     let mut files = Vec::new();
+    let mut latest_other_date: Option<String> = None;
     let mut pending = vec![(folder.to_path_buf(), 0usize)];
     while let Some((directory, depth)) = pending.pop() {
         for entry in fs::read_dir(&directory).context("Unable to read the Power Automate inbox")? {
@@ -44,14 +60,23 @@ fn evidence_files(folder: &Path) -> Result<Vec<PathBuf>> {
                     .and_then(|value| value.to_str())
                     .is_some_and(|value| value.eq_ignore_ascii_case("json"))
             {
+                if let Some(named) = file_name_date(&path).filter(|named| *named != date) {
+                    if latest_other_date
+                        .as_deref()
+                        .is_none_or(|current| named > current)
+                    {
+                        latest_other_date = Some(named.to_string());
+                    }
+                    continue;
+                }
                 files.push(path);
                 if files.len() >= MAX_INBOX_FILES {
-                    return Ok(files);
+                    return Ok((files, latest_other_date));
                 }
             }
         }
     }
-    Ok(files)
+    Ok((files, latest_other_date))
 }
 
 fn request_path(folder: &Path) -> Result<PathBuf> {
@@ -164,9 +189,10 @@ fn newest_bundle(folder: &Path, date: &str) -> Result<(PathBuf, EvidenceBundle)>
         )));
     }
     let mut candidates = Vec::new();
+    let (files, latest_other_name) = evidence_files(folder, date)?;
     let mut latest_other_date: Option<(DateTime<Utc>, String)> = None;
     let mut unavailable_files = 0usize;
-    for path in evidence_files(folder)? {
+    for path in files {
         let metadata =
             fs::metadata(&path).context("Unable to inspect a Power Automate evidence file")?;
         if metadata.len() == 0 {
@@ -221,6 +247,10 @@ fn newest_bundle(folder: &Path, date: &str) -> Result<(PathBuf, EvidenceBundle)>
             format!(
                 "El paquete válido más reciente corresponde a {target} y fue exportado a las {}. El flujo no ha entregado el día solicitado; comprueba que 'Atlas - Export evidence to OneDrive' esté activo y que OneDrive esté sincronizando.",
                 exported.to_rfc3339()
+            )
+        } else if let Some(target) = latest_other_name {
+            format!(
+                "El paquete más reciente corresponde a {target}. El flujo no ha entregado el día solicitado; comprueba que 'Atlas - Export evidence to OneDrive' esté activo y que OneDrive esté sincronizando."
             )
         } else {
             "No hay ningún paquete Atlas válido. Comprueba que el flujo esté activo y que OneDrive esté sincronizando.".into()
@@ -1059,6 +1089,39 @@ mod tests {
             .teams
             .iter()
             .any(|message| message.chat_id == "chat-2"));
+    }
+
+    #[test]
+    fn old_teams_packages_cannot_hide_the_scheduled_calendar_and_mail() {
+        let directory = tempfile::tempdir().unwrap();
+        let installation = "6331cee0-d233-41d6-bde7-58ad902fe5b3";
+        let teams = directory.path().join("teams");
+        let scheduled = directory.path().join("scheduled");
+        fs::create_dir(&teams).unwrap();
+        fs::create_dir(&scheduled).unwrap();
+        for index in 0..MAX_INBOX_FILES + 5 {
+            fs::write(
+                teams.join(format!(
+                    "atlas-evidence-{installation}-2026-09-06-teams-{index}.json"
+                )),
+                "{}",
+            )
+            .unwrap();
+        }
+        fs::write(
+            scheduled.join(format!(
+                "atlas-evidence-{installation}-2026-09-07-20260908T045826Z.json"
+            )),
+            r#"{"schemaVersion":3,"exportedAt":"2026-09-08T04:58:26Z","targetDate":"2026-09-07","sources":{"calendar":true,"mail":true,"teams":true},"calendar":[],"mail":[{"id":"mail-1","subject":"Follow-up","receivedDateTime":"2026-09-07T10:30:00Z","senderAddress":"client@example.com","bodyPreview":"Completed the follow-up","direction":"sent","isDraft":false}],"teams":[]}"#,
+        )
+        .unwrap();
+
+        let (_, bundle) = newest_bundle(directory.path(), "2026-09-07").unwrap();
+        assert_eq!(bundle.mail.len(), 1);
+        let message = newest_bundle(directory.path(), "2026-09-09")
+            .unwrap_err()
+            .to_string();
+        assert!(message.contains("2026-09-07"));
     }
 
     #[test]
