@@ -9,9 +9,9 @@ import TopoMap from "./design/TopoMap";
 import { AccentPicker, DayHero, PersonalSeal } from "./design/Personal";
 import { seedFrom } from "./design/identity";
 import {
-  AlertCircle, ArrowRight, Bot, CalendarDays, CalendarRange, Check, ChevronDown, Cloud,
+  AlertCircle, ArrowRight, Bot, CalendarDays, CalendarRange, Check, ChevronDown, Cloud, Columns3,
   ExternalLink, FilePlus2, FileSpreadsheet, FileText, FolderOpen, HardDrive, Home,
-  Inbox, Loader2, LogOut, Mail, PenLine, Plus, RefreshCw, Save, Settings,
+  Inbox, ListFilter, Loader2, LogOut, Mail, PenLine, Plus, RefreshCw, Save, Search, Settings,
   ShieldCheck, Sparkles, Trash2, UserRound, X
 } from "lucide-react";
 import { api, fromLocalInput, localDate, toLocalInput, workdaysBetween } from "./lib";
@@ -202,39 +202,138 @@ function SelectCell({ value, options, onChange }: { value: string; options: stri
   return <div className="relative"><select className={`w-full appearance-none bg-transparent py-1 pr-5 text-xs outline-none ${value ? "" : "text-red-600"}`} value={value} onChange={e => onChange(e.target.value)}>{choices.map(x => <option key={x} value={x}>{x.trim()}</option>)}</select><ChevronDown className="pointer-events-none absolute right-0 top-1.5 h-3 w-3 text-ink/35" /></div>;
 }
 
+type ColumnKey = "source" | "type" | "start" | "end" | "status" | "clientType" | "endClient" | "category" | "subcategory" | "priority" | "incident" | "comments";
+type RowFilter = "all" | "selected" | "unselected" | "review";
+
+const COLUMNS: { key: ColumnKey; label: string; className?: string }[] = [
+  { key: "source", label: "Source" }, { key: "type", label: "Type" }, { key: "start", label: "Start" }, { key: "end", label: "End" },
+  { key: "status", label: "Status" }, { key: "clientType", label: "Client type" }, { key: "endClient", label: "End client" },
+  { key: "category", label: "Category" }, { key: "subcategory", label: "Subcategory" }, { key: "priority", label: "Priority" },
+  { key: "incident", label: "Incident" }, { key: "comments", label: "Comments", className: "w-[300px]" },
+];
+const HIDDEN_COLUMNS_KEY = "atlas.preview.hiddenColumns";
+const SOURCE_FILTERS: { kind: Interaction["sourceKind"] | "all"; label: string }[] = [
+  { kind: "all", label: "All" }, { kind: "calendar", label: "Meetings" }, { kind: "email", label: "Mail" }, { kind: "teams_chat", label: "Teams" }, { kind: "manual", label: "Manual" },
+];
+const ROW_FILTERS: { value: RowFilter; label: string }[] = [
+  { value: "all", label: "Every row" }, { value: "selected", label: "Selected" }, { value: "unselected", label: "Not selected" }, { value: "review", label: "To review" },
+];
+
+function readHiddenColumns(): ColumnKey[] {
+  try { const stored = JSON.parse(localStorage.getItem(HIDDEN_COLUMNS_KEY) ?? "[]"); return Array.isArray(stored) ? stored : []; } catch { return []; }
+}
+
+/** What the row is about, in one glance: the evidence title and the first line of its note. */
+function rowDescription(item: Interaction) {
+  const title = item.evidenceLabel.trim() || item.comments.trim();
+  const note = item.comments.trim() && item.comments.trim() !== title ? item.comments.trim() : "";
+  return { title, note };
+}
+
 function InteractionTable({ items, setItems, catalog }: { items: Interaction[]; setItems: React.Dispatch<React.SetStateAction<Interaction[]>>; catalog?: TrackerCatalog }) {
   const t = useT();
   const subcategories = (category: string) => catalog?.categories.find(entry => entry.name === category)?.subcategories ?? [];
   const clientsFor = (clientType: string) => catalog?.clients[clientType] ?? [];
   const set = (index: number, patch: Partial<Interaction>) => setItems(old => old.map((v, i) => i === index ? { ...v, ...patch } : v));
   const removeManual = (index: number) => setItems(old => old.filter((_, i) => i !== index));
-  return <div className="overflow-auto rounded-xl border border-ink/10 bg-white">
-    <table className="w-full min-w-[1420px] border-collapse text-left">
+  // Hidden columns, search and filters only change this preview; the export always writes the full tracker format.
+  const [hidden, setHidden] = useState<ColumnKey[]>(readHiddenColumns);
+  const [columnsOpen, setColumnsOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [source, setSource] = useState<Interaction["sourceKind"] | "all">("all");
+  const [rowFilter, setRowFilter] = useState<RowFilter>("all");
+  const toggleColumn = (key: ColumnKey) => setHidden(old => {
+    const next = old.includes(key) ? old.filter(value => value !== key) : [...old, key];
+    try { localStorage.setItem(HIDDEN_COLUMNS_KEY, JSON.stringify(next)); } catch { /* preview preference only */ }
+    return next;
+  });
+  const shown = (key: ColumnKey) => !hidden.includes(key);
+  const visible = useMemo(() => {
+    const words = query.toLocaleLowerCase().split(/\s+/).filter(Boolean);
+    return items.map((item, index) => ({ item, index })).filter(({ item }) => {
+      if (source !== "all" && item.sourceKind !== source) return false;
+      if (rowFilter === "selected" && !item.selected) return false;
+      if (rowFilter === "unselected" && item.selected) return false;
+      if (rowFilter === "review" && item.reviewed) return false;
+      if (!words.length) return true;
+      const text = [item.evidenceLabel, item.comments, item.interactionType, item.clientType, item.endClient, item.category, item.subcategory, item.priority, item.incidentNumber, item.status].join(" ").toLocaleLowerCase();
+      return words.every(word => text.includes(word));
+    });
+  }, [items, query, source, rowFilter]);
+  const visibleIds = new Set(visible.map(({ item }) => item.sourceId));
+  const allVisibleSelected = visible.length > 0 && visible.every(({ item }) => item.selected);
+  const selectVisible = (selected: boolean) => setItems(old => old.map(item => visibleIds.has(item.sourceId) ? { ...item, selected, reviewed: selected ? true : item.reviewed } : item));
+  const filtered = visible.length !== items.length;
+  return <div className="rounded-xl border border-ink/10 bg-white">
+    <div className="flex flex-wrap items-center gap-2 border-b border-ink/10 p-3">
+      <label className="flex min-w-[220px] flex-1 items-center gap-2 rounded-lg border border-ink/10 bg-cream/40 px-3 py-2 focus-within:border-pine/40">
+        <Search className="h-4 w-4 text-ink/35" />
+        <input className="w-full bg-transparent text-xs outline-none" placeholder={t("Search subject, note, client, category…")} value={query} onChange={e => setQuery(e.target.value)} />
+        {query && <button type="button" className="text-ink/35 hover:text-ink" title={t("Clear search")} onClick={() => setQuery("")}><X className="h-3.5 w-3.5" /></button>}
+      </label>
+      <div className="flex rounded-lg border border-ink/10 p-0.5" role="group" aria-label={t("Source")}>
+        {SOURCE_FILTERS.map(option => <button key={option.kind} type="button" onClick={() => setSource(option.kind)} className={`rounded-md px-2.5 py-1.5 text-[11px] font-bold ${source === option.kind ? "bg-pine text-white" : "text-ink/55 hover:bg-cream"}`}>{t(option.label)}</button>)}
+      </div>
+      <label className="relative flex items-center gap-1 rounded-lg border border-ink/10 px-2.5 py-1.5 text-[11px] font-bold text-ink/60">
+        <ListFilter className="h-3.5 w-3.5" />
+        <select className="appearance-none bg-transparent pr-4 outline-none" value={rowFilter} onChange={e => setRowFilter(e.target.value as RowFilter)}>{ROW_FILTERS.map(option => <option key={option.value} value={option.value}>{t(option.label)}</option>)}</select>
+        <ChevronDown className="pointer-events-none absolute right-2 h-3 w-3 text-ink/35" />
+      </label>
+      <div className="relative">
+        <button type="button" className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-bold ${hidden.length ? "border-pine/30 bg-mint/50 text-pine" : "border-ink/10 text-ink/60 hover:bg-cream"}`} onClick={() => setColumnsOpen(open => !open)} aria-expanded={columnsOpen}>
+          <Columns3 className="h-3.5 w-3.5" />{hidden.length ? t("Columns · {count} hidden", { count: hidden.length }) : t("Columns")}
+        </button>
+        {columnsOpen && <>
+          <button type="button" aria-label={t("Close")} className="fixed inset-0 z-20 cursor-default" onClick={() => setColumnsOpen(false)} />
+          <div className="absolute right-0 z-30 mt-2 w-56 rounded-xl border border-ink/10 bg-white p-2 shadow-xl">
+            <p className="px-2 pb-2 pt-1 text-[10px] leading-4 text-ink/45">{t("Hiding a column only changes this preview. The tracker keeps every column.")}</p>
+            {COLUMNS.map(column => <label key={column.key} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-cream/60">
+              <input type="checkbox" className="h-3.5 w-3.5 accent-pine" checked={shown(column.key)} onChange={() => toggleColumn(column.key)} />{t(column.label)}
+            </label>)}
+            {hidden.length > 0 && <button type="button" className="mt-1 w-full rounded-md px-2 py-1.5 text-left text-[11px] font-bold text-pine hover:bg-mint/40" onClick={() => { setHidden([]); try { localStorage.removeItem(HIDDEN_COLUMNS_KEY); } catch { /* preview preference only */ } }}>{t("Show every column")}</button>}
+          </div>
+        </>}
+      </div>
+      {filtered && <span className="text-[11px] text-ink/45">{t("Showing {shown} of {total}", { shown: visible.length, total: items.length })}</span>}
+    </div>
+    <div className="overflow-auto">
+    <table className="w-full border-collapse text-left" style={{ minWidth: `${560 + COLUMNS.filter(column => shown(column.key)).length * 72}px` }}>
       <thead className="sticky top-0 z-10 bg-[#f2f4ef] text-[10px] font-extrabold uppercase tracking-[.13em] text-ink/45"><tr>
-        <th className="w-12 px-3 py-3">{t("Use")}</th><th className="px-3 py-3">{t("Source")}</th><th className="px-3 py-3">{t("Type")}</th><th className="px-3 py-3">{t("Start")}</th><th className="px-3 py-3">{t("End")}</th><th className="px-3 py-3">{t("Status")}</th><th className="px-3 py-3">{t("Client type")}</th><th className="px-3 py-3">{t("End client")}</th><th className="px-3 py-3">{t("Category")}</th><th className="px-3 py-3">{t("Subcategory")}</th><th className="px-3 py-3">{t("Priority")}</th><th className="px-3 py-3">{t("Incident")}</th><th className="w-[300px] px-3 py-3">{t("Comments")}</th><th className="w-10" />
+        <th className="w-12 px-3 py-3"><input type="checkbox" className="h-4 w-4 accent-pine" title={t("Select the rows shown")} disabled={!visible.length} checked={allVisibleSelected} onChange={e => selectVisible(e.target.checked)} /></th>
+        <th className="min-w-[260px] px-3 py-3">{t("Description")}</th>
+        {COLUMNS.filter(column => shown(column.key)).map(column => <th key={column.key} className={`px-3 py-3 ${column.className ?? ""}`}>{t(column.label)}</th>)}
+        <th className="w-10" />
       </tr></thead>
       <tbody className="divide-y divide-ink/5">
-      {items.map((item, i) => {
+      {visible.map(({ item, index: i }) => {
         const fullyEditable = item.sourceKind === "manual" || item.aiSuggested;
+        const { title, note } = rowDescription(item);
         return <tr key={item.sourceId} className={`${item.selected ? "" : "opacity-50"} align-top hover:bg-cream/35`}>
           <td className="px-3 py-3"><input type="checkbox" className="h-4 w-4 accent-pine" checked={item.selected} onChange={e => set(i, { selected: e.target.checked, reviewed: e.target.checked ? true : item.reviewed })} /></td>
-          <td className="whitespace-nowrap px-3 py-3"><SourceBadge item={item} />{item.aiSuggested ? <input className="mt-1 block w-40 bg-transparent text-[10px] text-ink/45 outline-none" value={item.evidenceLabel} onChange={e => set(i, { evidenceLabel: e.target.value })} /> : <p className="mt-1 max-w-40 truncate text-[10px] text-ink/35" title={item.evidenceLabel}>{item.evidenceLabel}</p>}</td>
-          <td className="px-3 py-3">{fullyEditable ? <SelectCell value={item.interactionType} options={catalog?.interactions ?? ["Meeting", "Task"]} onChange={v => set(i, { interactionType: v })} /> : <span className="text-xs">{item.interactionType}</span>}</td>
-          <td className="px-3 py-3">{fullyEditable ? <input type="datetime-local" className="w-[155px] bg-transparent text-xs outline-none" value={toLocalInput(item.interactionDateTime)} onChange={e => set(i, { interactionDateTime: fromLocalInput(e.target.value), receptionDateTime: fromLocalInput(e.target.value) })} /> : <span className="whitespace-nowrap text-xs">{new Date(item.interactionDateTime).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>}</td>
-          <td className="px-3 py-3">{fullyEditable ? <input type="datetime-local" className="w-[155px] bg-transparent text-xs outline-none" value={toLocalInput(item.resolutionDateTime)} onChange={e => set(i, { resolutionDateTime: fromLocalInput(e.target.value) })} /> : <span className="whitespace-nowrap text-xs">{item.resolutionDateTime ? new Date(item.resolutionDateTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"}</span>}</td>
-          <td className="whitespace-nowrap px-3 py-3"><span className={`chip ${item.status === "Resolved" ? "bg-mint text-pine" : "bg-[#fff0df] text-[#9a5a1e]"}`}>{item.status}</span></td>
-          <td className="px-3 py-3">{fullyEditable ? <SelectCell value={item.clientType} options={catalog?.clientTypes ?? ["Circana", "End_Client", "Capgemini", "Others"]} onChange={v => set(i, { clientType: v, endClient: clientsFor(v)[0] ?? v })} /> : <span className="text-xs">{item.clientType || "—"}</span>}</td>
-          <td className="px-3 py-3">{fullyEditable && clientsFor(item.clientType).length ? <SelectCell value={item.endClient} options={clientsFor(item.clientType)} onChange={v => set(i, { endClient: v })} /> : <span className="text-xs">{item.endClient || "—"}</span>}</td>
-          <td className="w-32 px-3 py-3">{catalog ? <SelectCell value={item.category} options={catalog.categories.map(entry => entry.name)} onChange={v => set(i, { category: v, subcategory: subcategories(v)[0] ?? v })} /> : <input className="w-28 bg-transparent text-xs outline-none" value={item.category} onChange={e => set(i, { category: e.target.value })} />}</td>
-          <td className="w-40 px-3 py-3">{catalog ? <SelectCell value={item.subcategory} options={subcategories(item.category)} onChange={v => set(i, { subcategory: v })} /> : <input className="w-28 bg-transparent text-xs outline-none" value={item.subcategory} onChange={e => set(i, { subcategory: e.target.value })} />}</td>
-          <td className="px-3 py-3"><SelectCell value={item.priority} options={catalog?.priorities ?? ["Low", "Intermediate", "High"]} onChange={v => set(i, { priority: v })} /></td>
-          <td className="px-3 py-3"><input className="w-24 bg-transparent text-xs outline-none" placeholder="N/A" value={item.incidentNumber} onChange={e => set(i, { incidentNumber: e.target.value || "N/A" })} /></td>
-          <td className="px-3 py-3"><textarea rows={2} className="w-full resize-none bg-transparent text-xs leading-5 outline-none" placeholder={t("Add a factual note")} value={item.comments} onChange={e => set(i, { comments: e.target.value })} /></td>
+          <td className="max-w-[340px] px-3 py-3">
+            {item.aiSuggested ? <input className="block w-full bg-transparent text-xs font-bold outline-none" value={item.evidenceLabel} onChange={e => set(i, { evidenceLabel: e.target.value })} /> : <p className="truncate text-xs font-bold" title={title}>{title || "—"}</p>}
+            {note && <p className="mt-0.5 line-clamp-2 text-[11px] leading-4 text-ink/50" title={note}>{note}</p>}
+            {!shown("source") && <div className="mt-1"><SourceBadge item={item} /></div>}
+          </td>
+          {shown("source") && <td className="whitespace-nowrap px-3 py-3"><SourceBadge item={item} /></td>}
+          {shown("type") && <td className="px-3 py-3">{fullyEditable ? <SelectCell value={item.interactionType} options={catalog?.interactions ?? ["Meeting", "Task"]} onChange={v => set(i, { interactionType: v })} /> : <span className="text-xs">{item.interactionType}</span>}</td>}
+          {shown("start") && <td className="px-3 py-3">{fullyEditable ? <input type="datetime-local" className="w-[155px] bg-transparent text-xs outline-none" value={toLocalInput(item.interactionDateTime)} onChange={e => set(i, { interactionDateTime: fromLocalInput(e.target.value), receptionDateTime: fromLocalInput(e.target.value) })} /> : <span className="whitespace-nowrap text-xs">{new Date(item.interactionDateTime).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>}</td>}
+          {shown("end") && <td className="px-3 py-3">{fullyEditable ? <input type="datetime-local" className="w-[155px] bg-transparent text-xs outline-none" value={toLocalInput(item.resolutionDateTime)} onChange={e => set(i, { resolutionDateTime: fromLocalInput(e.target.value) })} /> : <span className="whitespace-nowrap text-xs">{item.resolutionDateTime ? new Date(item.resolutionDateTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"}</span>}</td>}
+          {shown("status") && <td className="whitespace-nowrap px-3 py-3"><span className={`chip ${item.status === "Resolved" ? "bg-mint text-pine" : "bg-[#fff0df] text-[#9a5a1e]"}`}>{item.status}</span></td>}
+          {shown("clientType") && <td className="px-3 py-3">{fullyEditable ? <SelectCell value={item.clientType} options={catalog?.clientTypes ?? ["Circana", "End_Client", "Capgemini", "Others"]} onChange={v => set(i, { clientType: v, endClient: clientsFor(v)[0] ?? v })} /> : <span className="text-xs">{item.clientType || "—"}</span>}</td>}
+          {shown("endClient") && <td className="px-3 py-3">{fullyEditable && clientsFor(item.clientType).length ? <SelectCell value={item.endClient} options={clientsFor(item.clientType)} onChange={v => set(i, { endClient: v })} /> : <span className="text-xs">{item.endClient || "—"}</span>}</td>}
+          {shown("category") && <td className="w-32 px-3 py-3">{catalog ? <SelectCell value={item.category} options={catalog.categories.map(entry => entry.name)} onChange={v => set(i, { category: v, subcategory: subcategories(v)[0] ?? v })} /> : <input className="w-28 bg-transparent text-xs outline-none" value={item.category} onChange={e => set(i, { category: e.target.value })} />}</td>}
+          {shown("subcategory") && <td className="w-40 px-3 py-3">{catalog ? <SelectCell value={item.subcategory} options={subcategories(item.category)} onChange={v => set(i, { subcategory: v })} /> : <input className="w-28 bg-transparent text-xs outline-none" value={item.subcategory} onChange={e => set(i, { subcategory: e.target.value })} />}</td>}
+          {shown("priority") && <td className="px-3 py-3"><SelectCell value={item.priority} options={catalog?.priorities ?? ["Low", "Intermediate", "High"]} onChange={v => set(i, { priority: v })} /></td>}
+          {shown("incident") && <td className="px-3 py-3"><input className="w-24 bg-transparent text-xs outline-none" placeholder="N/A" value={item.incidentNumber} onChange={e => set(i, { incidentNumber: e.target.value || "N/A" })} /></td>}
+          {shown("comments") && <td className="px-3 py-3"><textarea rows={2} className="w-full resize-none bg-transparent text-xs leading-5 outline-none" placeholder={t("Add a factual note")} value={item.comments} onChange={e => set(i, { comments: e.target.value })} /></td>}
           <td className="px-2 py-3">{item.sourceKind === "manual" && <button title={t("Remove manual entry")} onClick={() => removeManual(i)} className="rounded-md p-1 text-ink/35 hover:bg-red-50 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>}</td>
         </tr>;
       })}
+      {!visible.length && <tr><td colSpan={COLUMNS.length + 3} className="px-3 py-10 text-center text-xs text-ink/45">{t("No rows match the search or filters.")}</td></tr>}
       </tbody>
     </table>
+    </div>
   </div>;
 }
 
