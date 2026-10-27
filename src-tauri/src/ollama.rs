@@ -1041,19 +1041,58 @@ pub(crate) fn has_work_signal(text: &str) -> bool {
         " retailer", " market", " sales", " forecast", " template", " document", " presentation",
         " slide", " analys", " analyz", " check", " test", " item", " section", " sku", " upc",
         " attribute", " brand", " coding", " panel", " qc", " autoqc", " tsv", " rerun", " re run", " escalat", " backlog", " sprint",
-        " workbook", " sheet", " email", " deck", " schema", " refresh", " week ", " period",
+        " workbook", " sheet", " email", " deck", " schema", " refresh", " period",
         // Spanish
         " reporte", " informe", " archivo", " dato", " consulta", " tabla", " columna",
         " tablero", " incidente", " falla", " corregir", " correcci", " arregl", " entrega",
-        " extraccion", " extraer", " carga", " cargar", " subir", " validar", " validacion",
+        " extraccion", " extraer", " cargar", " cargue", " cargad", " subir", " validar", " validacion",
         " revis", " auditor", " proceso", " solicitud", " aprob", " reunion", " llamada",
         " proyecto", " tarea", " actualiz", " codigo", " servidor", " acceso", " permiso",
-        " cuenta", " tienda", " producto", " categor", " mercado", " ventas", " plantilla",
+        " tienda", " producto", " categor", " mercado", " ventas", " plantilla",
         " documento", " presentacion", " analisis", " analiz", " enviar", " envie", " envio",
-        " correo", " plazo", " pendiente", " cliente", " hoja", " semana", " periodo", " prueba",
-        " ajuste", " ajustar", " cambio", " homolog", " jerarqui", " cruce", " cifra", " total",
+        " correo", " plazo", " pendiente", " cliente", " hoja", " periodo", " prueba",
+        " ajuste", " ajustar", " homolog", " jerarqui", " cruce", " cifra", " nir ",
     ];
     WORK.iter().any(|term| padded.contains(term))
+}
+
+/// Drops leading "Name Surname:" speaker labels that the model sometimes
+/// copies from the chat instead of describing the task.
+fn without_speakers(summary: &str) -> &str {
+    static SPEAKER: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let speaker = SPEAKER.get_or_init(|| {
+        regex::Regex::new(r"^\s*\p{Lu}[\p{L}'.-]*(?:\s+[\p{L}'.-]+){0,4}(?:\s*,\s*\p{Lu}[\p{L}'.-]*(?:\s+[\p{L}'.-]+){0,4})*\s*:\s").unwrap()
+    });
+    let mut rest = summary;
+    while let Some(found) = speaker.find(rest) {
+        rest = &rest[found.end()..];
+    }
+    rest
+}
+
+/// A Teams suggestion is kept only when its own text describes work (not a
+/// copied personal line from a chat that mentions work elsewhere) and the
+/// user actually takes part in, or is named in, the cited messages. Applied
+/// after the cache too, so earlier interpretations are filtered the same way.
+pub(crate) fn teams_suggestion_is_work(summary: &str, actor: &str, cited: &[&str]) -> bool {
+    let copied_chat = summary.contains(" | ") || without_speakers(summary).len() < summary.len();
+    if copied_chat && (summary.contains(" | ") || !has_work_signal(without_speakers(summary))) {
+        return false;
+    }
+    if !has_work_signal(without_speakers(summary)) || looks_personal(summary) {
+        return false;
+    }
+    let first_name = normalized_evidence(actor)
+        .split_whitespace()
+        .next()
+        .filter(|name| name.len() >= 3 && *name != "the")
+        .map(|name| format!(" {name}"));
+    match first_name {
+        Some(name) => cited
+            .iter()
+            .any(|text| format!(" {} ", normalized_evidence(text)).contains(&name)),
+        None => true,
+    }
 }
 
 fn candidate_is_work_task(candidate: &ModelCandidate, evidence: &[&ChatEvidence]) -> bool {
@@ -1440,11 +1479,31 @@ mod tests {
     }
 
     #[test]
+    fn copied_or_foreign_teams_lines_are_not_tasks() {
+        let actor = "Christian Rey Mora López";
+        let chat = "Teams chat · Christian Mora, Joan Garzon Christian Mora: Bro, mi carga laboral esta semana | Joan Garzon: revisa el NIR";
+        for summary in [
+            "Christian Mora: Bro, no estoy hablando en generalidades",
+            "Christian Mora: Cuando digo que no, esta semana tenia una carga laboral más alta",
+            "Christian Mora: No te he dicho eso | Christian Mora: O si? | Joan Garzon: Asi suena",
+            "Christian Mora: Elige la que quieras",
+        ] {
+            assert!(!teams_suggestion_is_work(summary, actor, &[chat]), "should be dropped: {summary}");
+        }
+        let channel = "General · Anthony Dobbins Anthony Dobbins: Has anyone added SupplyTrack to their models? Trying to get the implementation timing";
+        assert!(!teams_suggestion_is_work("Anthony Dobbins asks about the SupplyTrack implementation timing for models.", actor, &[channel]));
+        let work = "Teams chat · Christian Mora Christian Mora: ya encontré los UPC de private label";
+        assert!(teams_suggestion_is_work("Christian Mora found UPCs for Private label items.", actor, &[work]));
+        assert!(teams_suggestion_is_work("Bahar Hajian: how is the Honest category review going?", actor, &["Christian Mora, Bahar Hajian Bahar Hajian: how are you with the Honest category review?"]));
+    }
+
+    #[test]
     fn teams_chats_need_a_work_signal() {
         for chat in [
             "Laura: jajaja qué buena foto | Christian: sí, el sábado vamos al partido",
             "Ana: ¿almorzamos a la 1? | Christian: listo, nos vemos abajo",
             "Sergio: feliz cumpleaños!! | Christian: gracias 🎉",
+            "Christian: esta semana tuve más carga laboral, bro | Joan: todo good",
         ] {
             assert!(!has_work_signal(chat), "should be personal: {chat}");
         }

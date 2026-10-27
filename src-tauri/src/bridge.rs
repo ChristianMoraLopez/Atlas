@@ -784,6 +784,31 @@ async fn interpret_teams(
             &state.last_ai_submission,
         )
         .await?;
+    let texts: HashMap<_, _> = rows
+        .iter()
+        .map(|row| (row.source_id.as_str(), format!("{} {}", row.evidence_label, row.comments)))
+        .collect();
+    let total = suggestions.len();
+    let suggestions = suggestions
+        .into_iter()
+        .filter(|suggestion| {
+            let cited = suggestion
+                .source_ids
+                .iter()
+                .filter_map(|id| texts.get(id.as_str()).map(String::as_str))
+                .collect::<Vec<_>>();
+            ollama::teams_suggestion_is_work(&suggestion.summary, actor, &cited)
+        })
+        .collect::<Vec<_>>();
+    if suggestions.len() < total {
+        crate::diagnostics::info(
+            "bridge/teams",
+            &format!(
+                "Dropped {} of {total} Teams suggestions that copy a personal line or do not involve the user",
+                total - suggestions.len()
+            ),
+        );
+    }
     Ok(suggestions
         .into_iter()
         .map(|suggestion| {
