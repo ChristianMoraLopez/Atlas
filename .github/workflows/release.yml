@@ -3,6 +3,13 @@ name: Publish Windows release
 on:
   push:
     tags: ["v*"]
+  # Publish from the Actions tab or the API: the release action creates the tag
+  # on the commit being built.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to create and publish, e.g. v0.3.0"
+        required: true
 
 permissions:
   contents: write
@@ -43,6 +50,8 @@ jobs:
           files: |
             release-output/${{ steps.package.outputs.installer }}
             release-output/SHA256SUMS.txt
-          name: Atlas ${{ github.ref_name }}
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          target_commitish: ${{ github.sha }}
+          name: Atlas ${{ inputs.tag || github.ref_name }}
           body: Download the Windows setup, run it and open Atlas from the Start menu or the desktop shortcut. It installs only for your Windows user (no administrator rights) and includes the CPU-only Ollama runtime and the Qwen2.5 model; no separate AI installation is required. If you used the portable folder before, delete it after installing; your settings are kept.
           fail_on_unmatched_files: true
