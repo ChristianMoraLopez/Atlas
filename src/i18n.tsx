@@ -161,6 +161,8 @@ const es: Record<string, string> = {
   "Hiding a column only changes this preview. The tracker keeps every column.": "Ocultar una columna solo cambia esta vista. El tracker conserva todas las columnas.",
   "Showing {shown} of {total}": "Mostrando {shown} de {total}",
   "No rows match the search or filters.": "Ninguna fila coincide con la búsqueda o los filtros.",
+  "Show all {count} rows": "Mostrar las {count} filas",
+  "Clear filters": "Quitar filtros",
   "Remove manual entry": "Eliminar entrada manual",
   "AI summary": "Resumen IA",
   "Teams evidence": "Evidencia de Teams",

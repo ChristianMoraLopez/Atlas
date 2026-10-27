@@ -264,6 +264,7 @@ function InteractionTable({ items, setItems, catalog }: { items: Interaction[]; 
   const allVisibleSelected = visible.length > 0 && visible.every(({ item }) => item.selected);
   const selectVisible = (selected: boolean) => setItems(old => old.map(item => visibleIds.has(item.sourceId) ? { ...item, selected, reviewed: selected ? true : item.reviewed } : item));
   const filtered = visible.length !== items.length;
+  const clearFilters = () => { setQuery(""); setSource("all"); setRowFilter("all"); };
   return <div className="rounded-xl border border-ink/10 bg-white">
     <div className="flex flex-wrap items-center gap-2 border-b border-ink/10 p-3">
       <label className="flex min-w-[220px] flex-1 items-center gap-2 rounded-lg border border-ink/10 bg-cream/40 px-3 py-2 focus-within:border-pine/40">
@@ -294,7 +295,7 @@ function InteractionTable({ items, setItems, catalog }: { items: Interaction[]; 
           </div>
         </>}
       </div>
-      {filtered && <span className="text-[11px] text-ink/45">{t("Showing {shown} of {total}", { shown: visible.length, total: items.length })}</span>}
+      {filtered && <span className="flex items-center gap-2 rounded-lg bg-[#fff0df] px-2.5 py-1.5 text-[11px] font-bold text-[#9a5a1e]">{t("Showing {shown} of {total}", { shown: visible.length, total: items.length })}<button type="button" className="underline hover:no-underline" onClick={clearFilters}>{t("Clear filters")}</button></span>}
     </div>
     <div className="overflow-auto">
     <table className="w-full border-collapse text-left" style={{ minWidth: `${560 + COLUMNS.filter(column => shown(column.key)).length * 72}px` }}>
@@ -330,7 +331,7 @@ function InteractionTable({ items, setItems, catalog }: { items: Interaction[]; 
           <td className="px-2 py-3">{item.sourceKind === "manual" && <button title={t("Remove manual entry")} onClick={() => removeManual(i)} className="rounded-md p-1 text-ink/35 hover:bg-red-50 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>}</td>
         </tr>;
       })}
-      {!visible.length && <tr><td colSpan={COLUMNS.length + 3} className="px-3 py-10 text-center text-xs text-ink/45">{t("No rows match the search or filters.")}</td></tr>}
+      {!visible.length && <tr><td colSpan={COLUMNS.length + 3} className="px-3 py-10 text-center text-xs text-ink/45">{t("No rows match the search or filters.")}<div className="mt-3"><button type="button" className="btn-secondary px-4 py-2 text-xs" onClick={clearFilters}><X className="h-3.5 w-3.5" />{t("Show all {count} rows", { count: items.length })}</button></div></td></tr>}
       </tbody>
     </table>
     </div>
