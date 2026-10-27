@@ -35,6 +35,27 @@ const es: Record<string, string> = {
   "Close the tracker in Excel": "Cierra el tracker en Excel",
   "Atlas saves the activities automatically as soon as Excel releases the file.": "Atlas guarda las actividades automáticamente en cuanto Excel libere el archivo.",
 
+  // Multi-day import
+  "Several days": "Varios días",
+  "One day": "Un solo día",
+  "First day": "Desde",
+  "Last day": "Hasta",
+  "Import {count} workdays": "Importar {count} días hábiles",
+  "Importing {count} workdays": "Importando {count} días hábiles",
+  "Importing day {current} of {total}": "Importando el día {current} de {total}",
+  "{date}: collecting evidence, interpreting work tasks and updating the tracker.": "{date}: reuniendo la evidencia, interpretando las tareas y actualizando el tracker.",
+  "The selected range has no workdays.": "El rango elegido no tiene días hábiles.",
+  "Choose at most {count} workdays at a time.": "Elige como máximo {count} días hábiles a la vez.",
+  "Stop after this day": "Detener después de este día",
+  "Stopping after the current day…": "Se detendrá al terminar el día actual…",
+  "Import stopped": "Importación detenida",
+  "Days imported": "Días importados",
+  "{days} workdays processed · {rows} rows saved in the tracker. Open a day to review it or add what is missing.": "{days} días hábiles procesados · {rows} filas guardadas en el tracker. Abre un día para revisarlo o añadir lo que falte.",
+  "{found} found · {saved} saved": "{found} encontradas · {saved} guardadas",
+  "{count} missing": "Faltan {count}",
+  "Complete": "Completo",
+  "Error": "Error",
+
   // Login
   "Your work, accounted for": "Tu trabajo, registrado",
   "Real interactions.": "Interacciones reales.",

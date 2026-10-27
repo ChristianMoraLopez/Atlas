@@ -9,12 +9,12 @@ import TopoMap from "./design/TopoMap";
 import { AccentPicker, DayHero, PersonalSeal } from "./design/Personal";
 import { seedFrom } from "./design/identity";
 import {
-  AlertCircle, ArrowRight, Bot, CalendarDays, Check, ChevronDown, Cloud,
+  AlertCircle, ArrowRight, Bot, CalendarDays, CalendarRange, Check, ChevronDown, Cloud,
   ExternalLink, FilePlus2, FileSpreadsheet, FileText, FolderOpen, HardDrive, Home,
   Inbox, Loader2, LogOut, Mail, PenLine, Plus, RefreshCw, Save, Settings,
   ShieldCheck, Sparkles, Trash2, UserRound, X
 } from "lucide-react";
-import { api, fromLocalInput, localDate, toLocalInput } from "./lib";
+import { api, fromLocalInput, localDate, toLocalInput, workdaysBetween } from "./lib";
 import AiTransparencyModal from "./AiTransparencyModal";
 import LottieIcon, { type LottieName } from "./LottieIcon";
 import QaPanel from "./QaPanel";
@@ -279,11 +279,42 @@ function SuccessModal({ result, onClose }: { result: ExportResult; onClose: () =
   return <div className="fixed inset-0 z-50 grid place-items-center bg-night/45 p-8 backdrop-blur-sm"><div className="card pop w-full max-w-lg p-8 text-center"><div className="lottie-frame lottie-frame--round mx-auto h-24 w-24"><LottieIcon name="trophy" loop={false} className="h-20 w-20" /></div><h2 className="mt-5 font-display text-3xl">{result.queued ? t("Sent to SharePoint queue") : t("Tracker saved")}</h2><p className="mt-2 text-sm text-ink/50">{result.queued ? t("{count} rows are ready for the cloud writer", { count: result.inserted }) : t("{added} added · {updated} refreshed · {skipped} skipped", { added: result.inserted, updated: result.updated, skipped: result.skipped })}</p><p className="mt-5 break-all rounded-xl bg-cream p-3 text-xs text-ink/55">{result.path}</p>{remote ? <button className="btn-primary mt-6 w-full" onClick={() => void api.openTracker().catch(failure => window.alert(String(failure)))}><ExternalLink className="h-4 w-4" />{t("Open in SharePoint")}</button> : <div className="mt-6 grid grid-cols-2 gap-3"><button className="btn-secondary" onClick={() => void api.revealTracker().catch(failure => window.alert(String(failure)))}><FolderOpen className="h-4 w-4" />{t("Open folder")}</button><button className="btn-primary" onClick={() => void api.openTracker().catch(failure => window.alert(String(failure)))}><ExternalLink className="h-4 w-4" />{t("Open file")}</button></div>}<button className="mt-5 text-xs font-bold text-ink/45 hover:text-ink" onClick={onClose}>{t("Back to tracker")}</button></div></div>;
 }
 
+type RangeDay = { date: string; found: number; saved: number; missing: number; error?: string };
+
+const MAX_RANGE_DAYS = 31;
+
+function RangeReportModal({ days, stopped, onOpenDay, onClose }: { days: RangeDay[]; stopped: boolean; onOpenDay: (date: string) => void; onClose: () => void }) {
+  const { t, lang } = useI18n();
+  const label = (date: string) => {
+    const text = new Date(`${date}T12:00:00`).toLocaleDateString(lang === "es" ? "es-CO" : "en-US", { weekday: "short", day: "numeric", month: "short" });
+    return text.charAt(0).toUpperCase() + text.slice(1);
+  };
+  const saved = days.reduce((total, day) => total + day.saved, 0);
+  return <div className="fixed inset-0 z-50 grid place-items-center bg-night/45 p-8 backdrop-blur-sm"><div className="card pop flex max-h-[85vh] w-full max-w-2xl flex-col p-7">
+    <div className="flex items-start justify-between"><div><p className="text-xs font-bold uppercase tracking-[.16em] text-pine">{t("Several days")}</p><h2 className="mt-2 font-display text-3xl">{stopped ? t("Import stopped") : t("Days imported")}</h2><p className="mt-2 text-sm text-ink/50">{t("{days} workdays processed · {rows} rows saved in the tracker. Open a day to review it or add what is missing.", { days: days.length, rows: saved })}</p></div><button type="button" className="rounded-lg p-2 hover:bg-cream" onClick={onClose}><X /></button></div>
+    <ul className="mt-6 divide-y divide-ink/5 overflow-auto rounded-xl border border-ink/10 bg-white">
+      {days.map(day => <li key={day.date}><button type="button" onClick={() => onOpenDay(day.date)} className="flex w-full items-center gap-4 px-4 py-3 text-left hover:bg-cream/50">
+        <span className="w-28 shrink-0 text-sm font-bold">{label(day.date)}</span>
+        <span className="flex-1 truncate text-xs text-ink/55">{day.error ? day.error : t("{found} found · {saved} saved", { found: day.found, saved: day.saved })}</span>
+        {day.error ? <span className="chip bg-red-50 text-red-700">{t("Error")}</span> : day.missing > 0 ? <span className="chip bg-[#fff0df] text-[#9a5a1e]">{t("{count} missing", { count: day.missing })}</span> : <span className="chip bg-mint text-pine"><Check className="h-3 w-3" />{t("Complete")}</span>}
+        <ArrowRight className="h-4 w-4 shrink-0 text-ink/30" />
+      </button></li>)}
+    </ul>
+    <div className="mt-6 flex justify-end"><button className="btn-primary" onClick={onClose}>{t("Back to tracker")}</button></div>
+  </div></div>;
+}
+
 function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestination, exitRole }: { status: AppStatus; refreshStatus: () => Promise<void>; signOut: () => Promise<void>; editMicrosoft: () => void; editDestination: () => void; exitRole: () => Promise<void> }) {
   const { lang, setLang } = useI18n();
   const t = useT();
   const profile = status.profile!; const destination = status.destination!; const bridgeMode = status.sourceMode === "power_automate_folder"; const [date, setDate] = useState(localDate()); const [includeEmail, setIncludeEmail] = useState(true); const [includeTeams, setIncludeTeams] = useState(true); const [items, setItems] = useState<Interaction[]>([]); const [warnings, setWarnings] = useState<string[]>([]); const [busy, setBusy] = useState(false); const busyRef = useRef(false); const [error, setError] = useState(""); const [syncNotice, setSyncNotice] = useState(""); const [manual, setManual] = useState(false); const [editingProfile, setEditingProfile] = useState(false); const [success, setSuccess] = useState<ExportResult>();
   const [aiPanel, setAiPanel] = useState(false);
+  // Multi-day import: rangeEnd set means "from date to rangeEnd".
+  const [rangeEnd, setRangeEnd] = useState<string>();
+  const [rangeReport, setRangeReport] = useState<{ days: RangeDay[]; stopped: boolean }>();
+  const [rangeRunning, setRangeRunning] = useState(false);
+  const [rangeStopping, setRangeStopping] = useState(false);
+  const stopRange = useRef(false);
   const [catalog, setCatalog] = useState<TrackerCatalog>();
   useEffect(() => { void api.trackerCatalog().then(setCatalog).catch(failure => void api.logError("tracker-catalog", String(failure))); }, [destination.value, destination.localPath]);
   const [workStatus, setWorkStatus] = useState<{ message: string; detail: string }>();
@@ -340,6 +371,40 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
   };
   const extract = async () => { if (!startWork(bridgeMode ? t("Importing evidence for {date}", { date }) : t("Interpreting your workday for {date}", { date }), bridgeMode ? t("Waiting for Power Automate and OneDrive, then separating meetings and work tasks.") : t("Atlas Local AI is reviewing meetings, mail, and Teams evidence on this computer."))) return; setWarnings([]); try { const result = await loadEvidence(date, includeEmail, includeTeams); setItems(result.interactions); const warning = completionWarning(result.interactions); setWarnings(warning ? [...result.warnings, warning] : result.warnings); setSyncNotice(bridgeMode ? t("Evidence for {date} imported and organized by source.", { date }) : ""); } catch (e) { setError(String(e)); } finally { endWork(); } };
   const changeTeams = (enabled: boolean) => setIncludeTeams(enabled);
+  const rangeDays = rangeEnd ? workdaysBetween(date, rangeEnd) : [];
+  // Each day is imported, kept as its saved preview and written to the tracker,
+  // exactly like the automatic daily run; the report links back to every day.
+  const importRange = async () => {
+    if (rangeDays.length === 0) return setError(t("The selected range has no workdays."));
+    if (rangeDays.length > MAX_RANGE_DAYS) return setError(t("Choose at most {count} workdays at a time.", { count: MAX_RANGE_DAYS }));
+    if (!startWork(t("Importing {count} workdays", { count: rangeDays.length }), "")) return;
+    stopRange.current = false; setRangeStopping(false); setRangeRunning(true); setWarnings([]);
+    const report: RangeDay[] = [];
+    try {
+      for (const [index, day] of rangeDays.entries()) {
+        if (stopRange.current) break;
+        setWorkStatus({ message: t("Importing day {current} of {total}", { current: index + 1, total: rangeDays.length }), detail: t("{date}: collecting evidence, interpreting work tasks and updating the tracker.", { date: day }) });
+        try {
+          const result = await loadEvidence(day, includeEmail, includeTeams);
+          await api.saveDayPreview(day, result.interactions, result.warnings);
+          const selected = result.interactions.filter(item => item.selected).length;
+          let saved = 0;
+          if (selected > 0) { const written = await api.export(day, profile, result.interactions); saved = written.inserted + written.updated; }
+          report.push({ date: day, found: result.interactions.length, saved, missing: Math.max(0, 3 - selected) });
+        } catch (failure) {
+          report.push({ date: day, found: 0, saved: 0, missing: 3, error: String(failure) });
+        }
+      }
+      if (report.some(day => day.saved > 0)) await refreshStatus();
+    } finally {
+      endWork(); setRangeRunning(false); setRangeStopping(false);
+    }
+    if (report.length) {
+      setRangeReport({ days: report, stopped: report.length < rangeDays.length });
+      setSyncNotice("");
+      setDate(report[report.length - 1].date);
+    }
+  };
   const saveSelected = async () => {
     const selectedItems = items.filter(i => i.selected);
     if (selectedItems.length === 0) return setError(t("Select at least one real interaction to save."));
@@ -420,7 +485,7 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
       <div className="grid grid-cols-[minmax(0,1fr)_290px] gap-6">
         <section className="min-w-0">
           <DayHero name={profile.fullName} date={date} items={items}><span className="mx-1 h-4 w-px bg-ink/15" /><span className="chip bg-white text-ink/55"><Inbox className="h-3 w-3" />{t("{count} found", { count: counts.all })}</span><span className="chip bg-mint text-pine"><Check className="h-3 w-3" />{t("{count} selected", { count: counts.selected })}</span>{counts.review > 0 && <span className="chip bg-[#fff0df] text-[#9a5a1e]">{t("{count} to review", { count: counts.review })}</span>}</DayHero>
-          <div className="card rise rise-1 p-5"><div className="grid grid-cols-[220px_1fr_1fr_auto] items-end gap-4 max-[1360px]:grid-cols-[200px_1fr_1fr]"><label><span className="label">{t("Workday")}</span><input type="date" max={localDate()} className="field" value={date} disabled={busy} onChange={e => { setDate(e.target.value); setItems([]); setSyncNotice(""); }} /></label><Toggle checked={includeEmail} onChange={setIncludeEmail} label={t("Infer from mail")} detail={t("Work tasks, without inbox noise")} icon={<Mail className="h-4 w-4" />} /><Toggle checked={includeTeams} onChange={changeTeams} label={t("Infer from Teams")} detail={t("Separate task for each activity")} icon={<Bot className="h-4 w-4" />} /><button className="btn-primary h-[46px] px-5 max-[1360px]:col-span-3 max-[1360px]:justify-self-end" disabled={busy || ((includeEmail || includeTeams) && (!status.ollamaRunning || !status.ollamaModelAvailable))} onClick={extract}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}{bridgeMode ? t("Import selected day") : t("Extract selected day")}</button></div>
+          <div className="card rise rise-1 p-5"><div className="grid grid-cols-[220px_1fr_1fr_auto] items-end gap-4 max-[1360px]:grid-cols-[200px_1fr_1fr]"><div><div className="mb-1.5 flex items-center justify-between"><span className="label mb-0">{rangeEnd ? t("First day") : t("Workday")}</span><button type="button" disabled={busy} className="flex items-center gap-1 text-[11px] font-bold text-pine hover:underline" onClick={() => setRangeEnd(rangeEnd ? undefined : date)}><CalendarRange className="h-3 w-3" />{rangeEnd ? t("One day") : t("Several days")}</button></div><input type="date" max={localDate()} className="field" value={date} disabled={busy} onChange={e => { setDate(e.target.value); setItems([]); setSyncNotice(""); }} />{rangeEnd && <label className="mt-2 block"><span className="label">{t("Last day")}</span><input type="date" min={date} max={localDate()} className="field" value={rangeEnd} disabled={busy} onChange={e => setRangeEnd(e.target.value)} /></label>}</div><Toggle checked={includeEmail} onChange={setIncludeEmail} label={t("Infer from mail")} detail={t("Work tasks, without inbox noise")} icon={<Mail className="h-4 w-4" />} /><Toggle checked={includeTeams} onChange={changeTeams} label={t("Infer from Teams")} detail={t("Separate task for each activity")} icon={<Bot className="h-4 w-4" />} /><button className="btn-primary h-[46px] px-5 max-[1360px]:col-span-3 max-[1360px]:justify-self-end" disabled={busy || ((includeEmail || includeTeams) && (!status.ollamaRunning || !status.ollamaModelAvailable))} onClick={() => void (rangeEnd ? importRange() : extract())}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : rangeEnd ? <CalendarRange className="h-4 w-4" /> : <RefreshCw className="h-4 w-4" />}{rangeEnd ? t("Import {count} workdays", { count: rangeDays.length }) : bridgeMode ? t("Import selected day") : t("Extract selected day")}</button></div>
             {status.ollamaRunning && status.ollamaModelAvailable && <button type="button" onClick={() => setAiPanel(true)} title={t("View AI prompt")} className="mt-4 flex w-full items-center gap-3 rounded-xl border border-pine/15 bg-mint/55 px-4 py-3 text-left text-xs text-pine hover:bg-mint"><Bot className="h-5 w-5" /><span className="flex-1"><b>{t("Atlas Local AI is ready.")}</b> {t("Mail and Teams evidence stay on this computer and are interpreted by")} <code>{status.ollamaModel}</code>.</span><span className="shrink-0 font-bold underline">{t("View prompt")}</span></button>}
             {(!status.ollamaRunning || !status.ollamaModelAvailable) && <div role="button" tabIndex={0} onClick={() => setAiPanel(true)} onKeyDown={e => { if (e.key === "Enter") setAiPanel(true); }} title={t("View AI prompt")} className="mt-4 flex cursor-pointer items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-800"><Bot className="h-5 w-5" /><span className="flex-1"><b>{t("Bundled Local AI could not start.")}</b> {status.localAiError ?? t("Run the Atlas installer again to repair it.")}</span><button className="font-bold underline" onClick={e => { e.stopPropagation(); void recheckLocalAi(); }}>{t("Recheck")}</button></div>}
           </div>
@@ -435,7 +500,8 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
     {manual && <ManualModal date={date} onClose={() => setManual(false)} onAdd={item => { setItems(old => [...old, item]); setManual(false); }} />}
     {editingProfile && <div className="fixed inset-0 z-50 grid place-items-center bg-night/45 p-8 backdrop-blur-sm"><ProfileForm initial={profile} title={t("Profile settings")} onSave={saveProfile} cancel={() => setEditingProfile(false)} /></div>}
     {success && <SuccessModal result={success} onClose={() => setSuccess(undefined)} />}
-    <AtlasLoader show={busy} message={workStatus?.message ?? t("Atlas is working")} detail={workStatus?.detail} />
+    {rangeReport && <RangeReportModal days={rangeReport.days} stopped={rangeReport.stopped} onClose={() => setRangeReport(undefined)} onOpenDay={day => { setRangeReport(undefined); setRangeEnd(undefined); setDate(day); }} />}
+    <AtlasLoader show={busy} message={workStatus?.message ?? t("Atlas is working")} detail={rangeStopping ? t("Stopping after the current day…") : workStatus?.detail} action={rangeRunning && !rangeStopping ? { label: t("Stop after this day"), onClick: () => { stopRange.current = true; setRangeStopping(true); } } : undefined} />
   </div>;
 }
 

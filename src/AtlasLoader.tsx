@@ -6,6 +6,8 @@ type AtlasLoaderProps = {
   detail?: string;
   mode?: "overlay" | "screen";
   delay?: number;
+  /** Optional button under the message, e.g. to stop a multi-day import. */
+  action?: { label: string; onClick: () => void };
 };
 
 export default function AtlasLoader({
@@ -14,6 +16,7 @@ export default function AtlasLoader({
   detail,
   mode = "overlay",
   delay = 180,
+  action,
 }: AtlasLoaderProps) {
   const [visible, setVisible] = useState(show && delay === 0);
 
@@ -51,6 +54,7 @@ export default function AtlasLoader({
         <p className="atlas-loader__message">{message}</p>
         {detail && <p className="atlas-loader__detail">{detail}</p>}
         <div className="atlas-loader__progress" aria-hidden="true"><span /></div>
+        {action && <button type="button" className="btn-secondary mt-5" onClick={action.onClick}>{action.label}</button>}
       </div>
     </div>
   </div>;

@@ -84,3 +84,17 @@ export function toLocalInput(value?: string): string {
 export function fromLocalInput(value: string): string {
   return value ? new Date(value).toISOString() : "";
 }
+
+/** Monday–Friday dates from `from` to `to` (inclusive, either order), as YYYY-MM-DD. */
+export function workdaysBetween(from: string, to: string): string[] {
+  const [start, end] = from <= to ? [from, to] : [to, from];
+  const days: string[] = [];
+  const cursor = new Date(`${start}T12:00:00`);
+  const last = new Date(`${end}T12:00:00`);
+  while (cursor <= last) {
+    const weekday = cursor.getDay();
+    if (weekday !== 0 && weekday !== 6) days.push(cursor.toLocaleDateString("en-CA"));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return days;
+}
