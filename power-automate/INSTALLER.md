@@ -4,7 +4,7 @@ Atlas instala el puente mediante la experiencia oficial de importación de soluc
 
 ## Primera ejecución en el PC corporativo
 
-1. Extrae el ZIP portátil completo y ejecuta `Atlas.exe`. No se necesita instalación ni elevación UAC.
+1. Ejecuta el instalador `Atlas_<versión>_Windows_x64_Setup.exe` y abre Atlas desde el menú Inicio. Se instala solo para tu usuario, sin elevación UAC.
 2. Pulsa **Instalar conector de Microsoft 365**.
 3. Selecciona la raíz del OneDrive corporativo que ya está sincronizado. Atlas crea `AtlasBridge\inbox\scheduled`, `inbox\teams`, `inbox\requested` y `AtlasBridge\requests`.
 4. Atlas abre `https://make.powerautomate.com/` en el navegador predeterminado. Completa el inicio de sesión o MFA con la cuenta Circana si Microsoft lo solicita.

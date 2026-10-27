@@ -33,7 +33,7 @@ Atlas is a Tauri v2 Windows application for creating the Circana Interactions Tr
 - **Local-first interpretation** with the bundled CPU-only Ollama runtime and Qwen2.5 model.
 - **Human-in-the-loop by design**: review, edit, select or add a manual interaction before export.
 - **Excel-safe writes** for `.xlsx`, `.xlsm`, OneDrive and SharePoint destinations.
-- **Portable and automation-friendly**: no administrator rights, optional Windows startup and Power Automate support.
+- **Per-user installer**: Start menu entry, no administrator rights, Power Automate support.
 - **Privacy-aware authentication** through Microsoft Authorization Code + PKCE; short-lived access tokens remain in memory.
 
 ## 🔄 How it works
@@ -96,9 +96,9 @@ The preview above is a lightweight animated illustration of that workflow. It is
 
 ## 🚀 Download
 
-Download the latest self-contained Windows x64 portable ZIP from the [latest release](https://github.com/ChristianMoraLopez/Atlas/releases/latest), extract the complete folder to a stable location and run `Atlas.exe`.
+Download `Atlas_<version>_Windows_x64_Setup.exe` from the [latest release](https://github.com/ChristianMoraLopez/Atlas/releases/latest) and run it. Atlas installs for your Windows user only (no administrator rights), appears in the Start menu with an optional desktop shortcut, and can be removed from **Settings → Apps**. A newer setup updates it in place and keeps your settings.
 
-The portable package includes the managed CPU-only Ollama runtime and the pinned Qwen2.5 model. No separate AI installation or administrator permission is required.
+The installer includes the managed CPU-only Ollama runtime and the pinned Qwen2.5 model. No separate AI installation or administrator permission is required.
 
 > Unsigned internal builds may trigger Microsoft SmartScreen. Configure Windows code signing in the release workflow before broad distribution.
 
@@ -162,7 +162,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 | [`src-tauri/src/ollama.rs`](src-tauri/src/ollama.rs) | Managed local runtime and loopback-only inference |
 | [`src-tauri/src/excel.rs`](src-tauri/src/excel.rs) | Workbook mapping, safe writes and source-ID upserts |
 | [`.github/workflows/`](.github/workflows) | Windows verification and tagged release builds |
-| [`docs/`](docs) | Portable-package notes and local AI notices |
+| [`docs/`](docs) | Installation notes and local AI notices |
 
 ## 🛡️ Privacy and safety
 

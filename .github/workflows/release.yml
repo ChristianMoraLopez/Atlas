@@ -33,20 +33,16 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: cargo test --manifest-path src-tauri/Cargo.toml
-      - name: Build portable Windows executable
-        uses: tauri-apps/tauri-action@v1
-        with:
-          args: --no-bundle
-      - name: Package portable executable
+      - name: Build and verify the Windows installer
+        id: package
         shell: pwsh
-        run: |
-          .github/scripts/package-portable.ps1 -AtlasExecutable src-tauri/target/release/atlas-tracker.exe -ArchiveName "Atlas_${{ github.ref_name }}_portable_windows_x64.zip"
-      - name: Publish portable GitHub Release
+        run: .github/scripts/build-installer.ps1
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            release-output/Atlas_${{ github.ref_name }}_portable_windows_x64.zip
+            release-output/${{ steps.package.outputs.installer }}
             release-output/SHA256SUMS.txt
           name: Atlas ${{ github.ref_name }}
-          body: Download the portable Windows zip, extract the complete folder, and run Atlas.exe. The managed CPU-only Ollama runtime and Qwen2.5 model are included; no separate AI installation is required.
+          body: Download the Windows setup, run it and open Atlas from the Start menu or the desktop shortcut. It installs only for your Windows user (no administrator rights) and includes the CPU-only Ollama runtime and the Qwen2.5 model; no separate AI installation is required. If you used the portable folder before, delete it after installing; your settings are kept.
           fail_on_unmatched_files: true

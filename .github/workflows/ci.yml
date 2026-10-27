@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   build:
-    name: Portable Windows x64
+    name: Windows x64 installer
     runs-on: windows-latest
     timeout-minutes: 90
     env:
@@ -40,23 +40,13 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: cargo test --manifest-path src-tauri/Cargo.toml
-      - name: Build portable Windows executable
-        uses: tauri-apps/tauri-action@v1
-        with:
-          args: --no-bundle
-      - name: Package and verify portable ZIP
+      - name: Build and verify the Windows installer
         id: package
         shell: pwsh
-        run: |
-          $version = (Get-Content -Raw -LiteralPath package.json | ConvertFrom-Json).version
-          $archive = "Atlas-$version-Windows-x64.zip"
-          .github/scripts/package-portable.ps1 -AtlasExecutable src-tauri/target/release/atlas-tracker.exe -ArchiveName $archive
-          "artifact=Atlas-$version-Windows-x64" >> $env:GITHUB_OUTPUT
-      - name: Upload Atlas portable ZIP
+        run: .github/scripts/build-installer.ps1
+      - name: Upload Atlas installer
         uses: actions/upload-artifact@v6
         with:
-          name: ${{ steps.package.outputs.artifact }}
+          name: Atlas-Windows-x64-Setup
           path: release-output/
           if-no-files-found: error
-          compression-level: 0
-          retention-days: 7
