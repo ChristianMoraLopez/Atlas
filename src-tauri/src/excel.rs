@@ -1317,6 +1317,21 @@ fn initialize_new(book: &mut Spreadsheet, profile: &UserProfile) -> Result<Strin
     Ok(name)
 }
 
+/// Message of the error returned while Excel (or another program) holds the
+/// tracker open; callers match on it to wait for the file instead of failing.
+pub const WORKBOOK_LOCKED: &str =
+    "The tracker is open in Excel. Close it so Atlas can save the selected activities.";
+
+pub fn is_workbook_locked(error: &AppError) -> bool {
+    matches!(error, AppError::Message(message) if message == WORKBOOK_LOCKED)
+}
+
+/// ERROR_SHARING_VIOLATION (32) and ERROR_LOCK_VIOLATION (33): another process
+/// has the file open, which for a tracker almost always means Excel.
+fn is_sharing_violation(error: &std::io::Error) -> bool {
+    matches!(error.raw_os_error(), Some(32 | 33))
+}
+
 fn replace_safely(temp: &Path, path: &Path, existing: bool) -> Result<()> {
     let parent = path
         .parent()
@@ -1327,8 +1342,15 @@ fn replace_safely(temp: &Path, path: &Path, existing: bool) -> Result<()> {
         fs::copy(path, &backup)
             .context("Unable to create a safety copy before updating the workbook")?;
     }
-    let copy_result = fs::copy(temp, path)
-        .context("Unable to replace the workbook. Close it in Excel and try again");
+    let copy_result = fs::copy(temp, path).map_err(|error| {
+        if is_sharing_violation(&error) {
+            AppError::Message(WORKBOOK_LOCKED.into())
+        } else {
+            AppError::Message(format!(
+                "Unable to replace the workbook. Close it in Excel and try again: {error}"
+            ))
+        }
+    });
     let _ = fs::remove_file(temp);
     if let Err(error) = copy_result {
         if existing && backup.exists() {
@@ -1706,5 +1728,14 @@ mod tests {
                 "missing copied date style for {coordinate}: {patched}"
             );
         }
+    }
+
+    #[test]
+    fn excel_holding_the_tracker_is_recognized_as_a_lock() {
+        assert!(is_sharing_violation(&std::io::Error::from_raw_os_error(32)));
+        assert!(is_sharing_violation(&std::io::Error::from_raw_os_error(33)));
+        assert!(!is_sharing_violation(&std::io::Error::from_raw_os_error(2)));
+        assert!(is_workbook_locked(&AppError::Message(WORKBOOK_LOCKED.into())));
+        assert!(!is_workbook_locked(&AppError::Message("Disk full".into())));
     }
 }

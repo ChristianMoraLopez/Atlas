@@ -1030,8 +1030,78 @@ fn validate_provenance(state: &AppState, interactions: &[Interaction]) -> Result
     Ok(())
 }
 
+/// How long Atlas waits for Excel to release the tracker: one try every 10 s for 5 min.
+const EXCEL_LOCK_RETRY: std::time::Duration = std::time::Duration::from_secs(10);
+const EXCEL_LOCK_ATTEMPTS: u32 = 30;
+
+fn notify(app: &tauri::AppHandle, title: &str, body: &str) {
+    use tauri_plugin_notification::NotificationExt;
+    if let Err(error) = app.notification().builder().title(title).body(body).show() {
+        diagnostics::error("notification", &error.to_string());
+    }
+}
+
+/// Writes a local (or OneDrive-synced) workbook. While Excel holds it open the
+/// rows are kept in memory: Atlas shows a Windows notification asking to close
+/// Excel, tells the window, and retries until the file is released.
+async fn export_local_workbook(
+    app: &tauri::AppHandle,
+    spanish: bool,
+    path: String,
+    existing: bool,
+    profile: UserProfile,
+    interactions: Vec<Interaction>,
+) -> Result<ExportResult> {
+    let mut waited = false;
+    for attempt in 1..=EXCEL_LOCK_ATTEMPTS {
+        let (target, owner, rows) = (path.clone(), profile.clone(), interactions.clone());
+        let outcome = tauri::async_runtime::spawn_blocking(move || {
+            excel::export(&target, existing, &owner, &rows)
+        })
+        .await
+        .map_err(|e| AppError::Message(format!("Excel export task failed: {e}")))?;
+        match outcome {
+            Err(error) if excel::is_workbook_locked(&error) && attempt < EXCEL_LOCK_ATTEMPTS => {
+                if !waited {
+                    waited = true;
+                    diagnostics::info("export", "The tracker is open in Excel; waiting for it to close");
+                    let _ = app.emit("atlas-export-waiting-for-excel", ());
+                    if spanish {
+                        notify(app, "Cierra el tracker en Excel", "Atlas no puede guardar mientras el archivo está abierto. Ciérralo y Atlas guardará las actividades automáticamente.");
+                    } else {
+                        notify(app, "Close the tracker in Excel", "Atlas can't save while the workbook is open. Close it and Atlas will save the activities automatically.");
+                    }
+                }
+                tokio::time::sleep(EXCEL_LOCK_RETRY).await;
+            }
+            Err(error) => {
+                if excel::is_workbook_locked(&error) {
+                    if spanish {
+                        notify(app, "El tracker sigue abierto en Excel", "Atlas no guardó las actividades. Cierra Excel y vuelve a guardar desde Atlas.");
+                    } else {
+                        notify(app, "The tracker is still open in Excel", "Atlas did not save the activities. Close Excel and save again from Atlas.");
+                    }
+                }
+                return Err(error);
+            }
+            Ok(result) => {
+                if waited {
+                    if spanish {
+                        notify(app, "Tracker guardado", "Excel se cerró y Atlas guardó las actividades.");
+                    } else {
+                        notify(app, "Tracker saved", "Excel was closed and Atlas saved the activities.");
+                    }
+                }
+                return Ok(result);
+            }
+        }
+    }
+    unreachable!("the last attempt always returns")
+}
+
 #[tauri::command]
 async fn export_configured_tracker(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     date: String,
     profile: UserProfile,
@@ -1040,6 +1110,7 @@ async fn export_configured_tracker(
     chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d")
         .map_err(|_| AppError::Message("Choose a valid export date.".into()))?;
     let settings = state.read_settings()?;
+    let spanish = settings.language != "en";
     let saved = settings
         .profile
         .ok_or_else(|| AppError::Message("Complete your profile before exporting.".into()))?;
@@ -1072,11 +1143,8 @@ async fn export_configured_tracker(
         TrackerDestinationKind::LocalExisting | TrackerDestinationKind::LocalNew => {
             let existing = destination.kind == TrackerDestinationKind::LocalExisting;
             let path = destination.value.clone();
-            let result = tauri::async_runtime::spawn_blocking(move || {
-                excel::export(&path, existing, &saved, &interactions)
-            })
-            .await
-            .map_err(|e| AppError::Message(format!("Excel export task failed: {e}")))??;
+            let result =
+                export_local_workbook(&app, spanish, path, existing, saved, interactions).await?;
             if !existing {
                 state.update_settings(|settings| {
                     if let Some(saved_destination) = settings.destination.as_mut() {
@@ -1093,11 +1161,8 @@ async fn export_configured_tracker(
                         "Choose the locally synced copy of the SharePoint tracker first.".into(),
                     )
                 })?;
-                let mut result = tauri::async_runtime::spawn_blocking(move || {
-                    excel::export(&path, true, &saved, &interactions)
-                })
-                .await
-                .map_err(|e| AppError::Message(format!("Excel export task failed: {e}")))??;
+                let mut result =
+                    export_local_workbook(&app, spanish, path, true, saved, interactions).await?;
                 result.path = destination.value.clone();
                 result
             } else {
@@ -1310,6 +1375,7 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
             let config_dir = app

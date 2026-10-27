@@ -395,6 +395,11 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
   };
   const saveProfile = async (p: UserProfile) => { await api.saveProfile(p); setEditingProfile(false); await refreshStatus(); };
   useEffect(() => {
+    // The backend keeps the rows and retries while Excel holds the tracker open.
+    const waiting = listen("atlas-export-waiting-for-excel", () => setWorkStatus({ message: t("Close the tracker in Excel"), detail: t("Atlas saves the activities automatically as soon as Excel releases the file.") }));
+    return () => { void waiting.then(stop => stop()); };
+  }, [t]);
+  useEffect(() => {
     let disposed = false;
     let unlistenBackground: (() => void) | undefined;
     void listen<AutomationRequest>("atlas-background-daily-run", event => { void syncCalendar(true, event.payload); })

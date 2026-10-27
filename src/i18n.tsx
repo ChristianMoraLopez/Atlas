@@ -32,6 +32,9 @@ const es: Record<string, string> = {
   "Good afternoon": "Buenas tardes",
   "Good evening": "Buenas noches",
 
+  "Close the tracker in Excel": "Cierra el tracker en Excel",
+  "Atlas saves the activities automatically as soon as Excel releases the file.": "Atlas guarda las actividades automáticamente en cuanto Excel libere el archivo.",
+
   // Login
   "Your work, accounted for": "Tu trabajo, registrado",
   "Real interactions.": "Interacciones reales.",
