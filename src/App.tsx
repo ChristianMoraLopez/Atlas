@@ -428,6 +428,9 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
       ? `Atlas encontró y guardará ${count} ${count === 1 ? "actividad" : "actividades"}. Añade ${missing} ${missing === 1 ? "tarea real" : "tareas reales"} para llegar al mínimo diario de 3.`
       : `Atlas found and will save ${count} ${count === 1 ? "activity" : "activities"}. Add ${missing} more real ${missing === 1 ? "task" : "tasks"} to reach the daily minimum of 3.`;
   };
+  // Bumped whenever a day is opened, so choosing the day already shown reloads it too.
+  const [dayOpened, setDayOpened] = useState(0);
+  const openDay = (day: string) => { setDate(day); setItems([]); setWarnings([]); setSyncNotice(""); setDayOpened(count => count + 1); };
   useEffect(() => {
     let disposed = false;
     void api.loadCachedDay(date).then(result => {
@@ -438,7 +441,7 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
       setSyncNotice(t("Restored the saved Atlas preview for {date}.", { date }));
     }).catch(failure => void api.logError("load-cached-day", String(failure)));
     return () => { disposed = true; };
-  }, [date]);
+  }, [date, dayOpened]);
   useEffect(() => {
     if (items.length === 0 || busyRef.current) return;
     const timer = window.setTimeout(() => {
@@ -500,8 +503,7 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
     }
     if (report.length) {
       setRangeReport({ days: report, stopped: report.length < rangeDays.length });
-      setSyncNotice("");
-      setDate(report[report.length - 1].date);
+      openDay(report[report.length - 1].date);
     }
   };
   const saveSelected = async () => {
@@ -594,7 +596,7 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
       <div className="grid grid-cols-[minmax(0,1fr)_290px] gap-6">
         <section className="min-w-0">
           <DayHero name={profile.fullName} date={date} items={items}><span className="mx-1 h-4 w-px bg-ink/15" /><span className="chip bg-white text-ink/55"><Inbox className="h-3 w-3" />{t("{count} found", { count: counts.all })}</span><span className="chip bg-mint text-pine"><Check className="h-3 w-3" />{t("{count} selected", { count: counts.selected })}</span>{counts.review > 0 && <span className="chip bg-[#fff0df] text-[#9a5a1e]">{t("{count} to review", { count: counts.review })}</span>}</DayHero>
-          <div className="card rise rise-1 p-5"><div className="grid grid-cols-[220px_1fr_1fr_auto] items-end gap-4 max-[1360px]:grid-cols-[200px_1fr_1fr]"><div><div className="mb-1.5 flex items-center justify-between"><span className="label mb-0">{rangeEnd ? t("First day") : t("Workday")}</span><button type="button" disabled={busy} className="flex items-center gap-1 text-[11px] font-bold text-pine hover:underline" onClick={() => setRangeEnd(rangeEnd ? undefined : date)}><CalendarRange className="h-3 w-3" />{rangeEnd ? t("One day") : t("Several days")}</button></div><input type="date" max={localDate()} className="field" value={date} disabled={busy} onChange={e => { setDate(e.target.value); setItems([]); setSyncNotice(""); }} />{rangeEnd && <label className="mt-2 block"><span className="label">{t("Last day")}</span><input type="date" min={date} max={localDate()} className="field" value={rangeEnd} disabled={busy} onChange={e => setRangeEnd(e.target.value)} /></label>}</div><Toggle checked={includeEmail} onChange={setIncludeEmail} label={t("Infer from mail")} detail={t("Work tasks, without inbox noise")} icon={<Mail className="h-4 w-4" />} /><Toggle checked={includeTeams} onChange={changeTeams} label={t("Infer from Teams")} detail={t("Separate task for each activity")} icon={<Bot className="h-4 w-4" />} /><button className="btn-primary h-[46px] px-5 max-[1360px]:col-span-3 max-[1360px]:justify-self-end" disabled={busy || ((includeEmail || includeTeams) && (!status.ollamaRunning || !status.ollamaModelAvailable))} onClick={() => void (rangeEnd ? importRange() : extract())}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : rangeEnd ? <CalendarRange className="h-4 w-4" /> : <RefreshCw className="h-4 w-4" />}{rangeEnd ? t("Import {count} workdays", { count: rangeDays.length }) : bridgeMode ? t("Import selected day") : t("Extract selected day")}</button></div>
+          <div className="card rise rise-1 p-5"><div className="grid grid-cols-[220px_1fr_1fr_auto] items-end gap-4 max-[1360px]:grid-cols-[200px_1fr_1fr]"><div><div className="mb-1.5 flex items-center justify-between"><span className="label mb-0">{rangeEnd ? t("First day") : t("Workday")}</span><button type="button" disabled={busy} className="flex items-center gap-1 text-[11px] font-bold text-pine hover:underline" onClick={() => setRangeEnd(rangeEnd ? undefined : date)}><CalendarRange className="h-3 w-3" />{rangeEnd ? t("One day") : t("Several days")}</button></div><input type="date" max={localDate()} className="field" value={date} disabled={busy} onChange={e => { if (e.target.value) openDay(e.target.value); }} />{rangeEnd && <label className="mt-2 block"><span className="label">{t("Last day")}</span><input type="date" min={date} max={localDate()} className="field" value={rangeEnd} disabled={busy} onChange={e => setRangeEnd(e.target.value)} /></label>}</div><Toggle checked={includeEmail} onChange={setIncludeEmail} label={t("Infer from mail")} detail={t("Work tasks, without inbox noise")} icon={<Mail className="h-4 w-4" />} /><Toggle checked={includeTeams} onChange={changeTeams} label={t("Infer from Teams")} detail={t("Separate task for each activity")} icon={<Bot className="h-4 w-4" />} /><button className="btn-primary h-[46px] px-5 max-[1360px]:col-span-3 max-[1360px]:justify-self-end" disabled={busy || ((includeEmail || includeTeams) && (!status.ollamaRunning || !status.ollamaModelAvailable))} onClick={() => void (rangeEnd ? importRange() : extract())}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : rangeEnd ? <CalendarRange className="h-4 w-4" /> : <RefreshCw className="h-4 w-4" />}{rangeEnd ? t("Import {count} workdays", { count: rangeDays.length }) : bridgeMode ? t("Import selected day") : t("Extract selected day")}</button></div>
             {status.ollamaRunning && status.ollamaModelAvailable && <button type="button" onClick={() => setAiPanel(true)} title={t("View AI prompt")} className="mt-4 flex w-full items-center gap-3 rounded-xl border border-pine/15 bg-mint/55 px-4 py-3 text-left text-xs text-pine hover:bg-mint"><Bot className="h-5 w-5" /><span className="flex-1"><b>{t("Atlas Local AI is ready.")}</b> {t("Mail and Teams evidence stay on this computer and are interpreted by")} <code>{status.ollamaModel}</code>.</span><span className="shrink-0 font-bold underline">{t("View prompt")}</span></button>}
             {(!status.ollamaRunning || !status.ollamaModelAvailable) && <div role="button" tabIndex={0} onClick={() => setAiPanel(true)} onKeyDown={e => { if (e.key === "Enter") setAiPanel(true); }} title={t("View AI prompt")} className="mt-4 flex cursor-pointer items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-800"><Bot className="h-5 w-5" /><span className="flex-1"><b>{t("Bundled Local AI could not start.")}</b> {status.localAiError ?? t("Run the Atlas installer again to repair it.")}</span><button className="font-bold underline" onClick={e => { e.stopPropagation(); void recheckLocalAi(); }}>{t("Recheck")}</button></div>}
           </div>
@@ -609,7 +611,7 @@ function Workspace({ status, refreshStatus, signOut, editMicrosoft, editDestinat
     {manual && <ManualModal date={date} onClose={() => setManual(false)} onAdd={item => { setItems(old => [...old, item]); setManual(false); }} />}
     {editingProfile && <div className="fixed inset-0 z-50 grid place-items-center bg-night/45 p-8 backdrop-blur-sm"><ProfileForm initial={profile} title={t("Profile settings")} onSave={saveProfile} cancel={() => setEditingProfile(false)} /></div>}
     {success && <SuccessModal result={success} onClose={() => setSuccess(undefined)} />}
-    {rangeReport && <RangeReportModal days={rangeReport.days} stopped={rangeReport.stopped} onClose={() => setRangeReport(undefined)} onOpenDay={day => { setRangeReport(undefined); setRangeEnd(undefined); setDate(day); }} />}
+    {rangeReport && <RangeReportModal days={rangeReport.days} stopped={rangeReport.stopped} onClose={() => setRangeReport(undefined)} onOpenDay={day => { setRangeReport(undefined); setRangeEnd(undefined); openDay(day); }} />}
     <AtlasLoader show={busy} message={workStatus?.message ?? t("Atlas is working")} detail={rangeStopping ? t("Stopping after the current day…") : workStatus?.detail} action={rangeRunning && !rangeStopping ? { label: t("Stop after this day"), onClick: () => { stopRange.current = true; setRangeStopping(true); } } : undefined} />
   </div>;
 }
